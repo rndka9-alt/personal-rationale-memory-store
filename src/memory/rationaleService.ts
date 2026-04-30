@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { findMemoryEntry, listRecentMemoryEntries, searchMemoryEntriesLexical, searchMemoryEntriesVector, updateMemoryStatus } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
+import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { IndexingService } from "./indexingService.js";
@@ -18,6 +19,10 @@ export class RationaleService {
   async recordCandidate(input: RecordCandidateInput) {
     const validatedInput = recordCandidateInputSchema.parse(input);
     const id = createRationaleId();
+    logInfo("Recording rationale candidate started.", {
+      entryId: id,
+      title: validatedInput.title
+    });
     const entry: RationaleEntry = {
       frontmatter: {
         id,
@@ -46,32 +51,64 @@ export class RationaleService {
 
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
+    logInfo("Recording rationale candidate completed.", {
+      entryId: id,
+      canonicalPath
+    });
     return { id, canonicalPath, entry };
   }
 
   async getRationale(id: string) {
+    logInfo("Reading rationale started.", {
+      entryId: id
+    });
     const databaseEntry = await findMemoryEntry(this.pool, id);
     const canonicalPath = databaseEntry ? databaseEntry.canonicalPath : this.fileStore.pathForId(id);
-    return this.fileStore.readEntry(canonicalPath);
+    const entry = await this.fileStore.readEntry(canonicalPath);
+    logInfo("Reading rationale completed.", {
+      entryId: id,
+      canonicalPath,
+      foundInDatabase: Boolean(databaseEntry)
+    });
+    return entry;
   }
 
   async acceptCandidate(id: string) {
+    logInfo("Accepting rationale candidate started.", {
+      entryId: id
+    });
     const entry = await this.getRationale(id);
     entry.frontmatter.status = "accepted";
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
+    logInfo("Accepting rationale candidate completed.", {
+      entryId: id,
+      canonicalPath
+    });
     return entry;
   }
 
   async updateRationale(id: string, patch: Record<string, unknown>) {
+    logInfo("Updating rationale started.", {
+      entryId: id,
+      patchKeys: Object.keys(patch)
+    });
     const entry = await this.getRationale(id);
     const updatedEntry = applyRationalePatch(entry, patch);
     const canonicalPath = await this.fileStore.writeEntry(updatedEntry);
     await this.indexingService.indexEntry(updatedEntry, canonicalPath);
+    logInfo("Updating rationale completed.", {
+      entryId: id,
+      canonicalPath
+    });
     return updatedEntry;
   }
 
   async deprecateRationale(id: string, reason: string, replacementId?: string) {
+    logInfo("Deprecating rationale started.", {
+      entryId: id,
+      replacementId
+    });
     const entry = await this.getRationale(id);
     entry.frontmatter.status = "deprecated";
     entry.frontmatter.deprecatedBy = replacementId ?? reason;
@@ -83,10 +120,18 @@ export class RationaleService {
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
     await updateMemoryStatus(this.pool, id, "deprecated", { deprecatedBy: replacementId ?? reason });
+    logInfo("Deprecating rationale completed.", {
+      entryId: id,
+      canonicalPath
+    });
     return entry;
   }
 
   async promoteToPrinciple(id: string, title: string | undefined, reason: string) {
+    logInfo("Promoting rationale to principle started.", {
+      entryId: id,
+      hasTitleOverride: typeof title === "string"
+    });
     const entry = await this.getRationale(id);
     entry.frontmatter.type = "principle";
     entry.frontmatter.status = "accepted";
@@ -99,15 +144,34 @@ export class RationaleService {
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
     await updateMemoryStatus(this.pool, id, "accepted", { promotedTo: "principle" });
+    logInfo("Promoting rationale to principle completed.", {
+      entryId: id,
+      canonicalPath
+    });
     return entry;
   }
 
   async listRecent(limit: number) {
-    return listRecentMemoryEntries(this.pool, limit);
+    logInfo("Listing recent rationales.", {
+      limit
+    });
+    const entries = await listRecentMemoryEntries(this.pool, limit);
+    logInfo("Listed recent rationales.", {
+      limit,
+      resultCount: entries.length
+    });
+    return entries;
   }
 
   async search(input: unknown) {
     const parsedInput = searchInputSchema.parse(input);
+    logInfo("Searching rationales started.", {
+      query: parsedInput.query,
+      limit: parsedInput.limit,
+      domains: parsedInput.domains,
+      intents: parsedInput.intents,
+      modes: parsedInput.modes
+    });
     const filters = {
       domains: parsedInput.domains,
       intents: parsedInput.intents,
@@ -119,6 +183,10 @@ export class RationaleService {
     };
 
     const lexicalResults = await searchMemoryEntriesLexical(this.pool, parsedInput.query, filters);
+    logInfo("Lexical rationale search completed.", {
+      query: parsedInput.query,
+      resultCount: lexicalResults.length
+    });
     let vectorResults: typeof lexicalResults = [];
 
     try {
@@ -130,22 +198,49 @@ export class RationaleService {
       const firstEmbedding = queryEmbedding[0];
       if (firstEmbedding) {
         vectorResults = await searchMemoryEntriesVector(this.pool, firstEmbedding, filters);
+        logInfo("Vector rationale search completed.", {
+          query: parsedInput.query,
+          resultCount: vectorResults.length
+        });
+      } else {
+        logWarn("Vector rationale search skipped because embedding response was empty.", {
+          query: parsedInput.query
+        });
       }
     } catch (error) {
       if (lexicalResults.length === 0) {
+        logError("Vector rationale search failed without lexical fallback results.", error, {
+          query: parsedInput.query
+        });
         throw error;
       }
+      logError("Vector rationale search failed; returning lexical fallback results.", error, {
+        query: parsedInput.query,
+        lexicalResultCount: lexicalResults.length
+      });
     }
 
-    return mergeSearchResults(vectorResults, lexicalResults).slice(0, parsedInput.limit);
+    const results = mergeSearchResults(vectorResults, lexicalResults).slice(0, parsedInput.limit);
+    logInfo("Searching rationales completed.", {
+      query: parsedInput.query,
+      resultCount: results.length
+    });
+    return results;
   }
 
   async reindexMemory(scope: "all" | "changed" = "all", ids?: string[]) {
+    logInfo("Rationale reindex requested.", {
+      scope,
+      ids
+    });
     if (ids && ids.length > 0) {
       for (const id of ids) {
         const entry = await this.fileStore.readById(id);
         await this.indexingService.indexEntry(entry, this.fileStore.pathForId(id));
       }
+      logInfo("Rationale reindex completed for explicit ids.", {
+        count: ids.length
+      });
       return ids.length;
     }
 
@@ -218,4 +313,3 @@ function createRationaleId() {
   const randomPart = Math.random().toString(36).slice(2, 8);
   return `R${timestamp}-${randomPart}`;
 }
-

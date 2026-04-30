@@ -3,6 +3,7 @@ import path from "node:path";
 import YAML from "yaml";
 import type pg from "pg";
 import { z } from "zod";
+import { logInfo } from "../diagnostics/index.js";
 
 const proposalInputSchema = z.object({
   proposalType: z.enum(["add", "deprecate", "rename", "merge", "split"]),
@@ -31,6 +32,9 @@ export class OntologyService {
 
   async loadRegistry() {
     const ontologyDirectory = path.join(this.dataDirectory, "ontology");
+    logInfo("Loading ontology registry started.", {
+      ontologyDirectory
+    });
     await mkdir(ontologyDirectory, { recursive: true });
     const fileNames = (await readdir(ontologyDirectory)).filter((fileName) => fileName.endsWith(".yaml"));
     const terms: Array<{ kind: string; id: string; name: string; description?: string; status: string; metadata: Record<string, unknown> }> = [];
@@ -43,6 +47,11 @@ export class OntologyService {
       const yamlText = await readFile(path.join(ontologyDirectory, fileName), "utf8");
       const parsed = ontologyFileSchema.parse(YAML.parse(yamlText));
       const kind = kindFromFileName(fileName);
+      logInfo("Loading ontology file.", {
+        fileName,
+        kind,
+        termCount: parsed.terms.length
+      });
       for (const term of parsed.terms) {
         terms.push({
           kind,
@@ -68,12 +77,22 @@ export class OntologyService {
       }
     }
 
+    logInfo("Loading ontology registry completed.", {
+      fileCount: fileNames.length,
+      termCount: terms.length
+    });
     return terms;
   }
 
   async proposeOntologyChange(input: unknown) {
     const parsedInput = proposalInputSchema.parse(input);
     const id = `OP${new Date().toISOString().replaceAll("-", "").replaceAll(":", "").replaceAll(".", "")}`;
+    logInfo("Proposing ontology change started.", {
+      proposalId: id,
+      proposalType: parsedInput.proposalType,
+      targetKind: parsedInput.targetKind,
+      name: parsedInput.name
+    });
     await this.pool.query(
       `INSERT INTO ontology_proposals (id, proposal_type, target_kind, name, reason, proposed_change)
         VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -83,10 +102,17 @@ export class OntologyService {
     const proposalPath = path.join(this.dataDirectory, "ontology", "proposals", `${id}.yaml`);
     await mkdir(path.dirname(proposalPath), { recursive: true });
     await writeFile(proposalPath, YAML.stringify({ id, ...parsedInput, status: "proposed" }), "utf8");
+    logInfo("Proposing ontology change completed.", {
+      proposalId: id,
+      proposalPath
+    });
     return { id, proposalPath };
   }
 
   async acceptOntologyProposal(id: string) {
+    logInfo("Accepting ontology proposal started.", {
+      proposalId: id
+    });
     const result = await this.pool.query("SELECT * FROM ontology_proposals WHERE id = $1", [id]);
     const row = result.rows[0];
     if (!row) {
@@ -113,6 +139,9 @@ export class OntologyService {
       );
     }
 
+    logInfo("Accepting ontology proposal completed.", {
+      proposalId: id
+    });
     return { id, status: "accepted" };
   }
 }

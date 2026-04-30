@@ -9,8 +9,25 @@ import { ContextComposer } from "./memory/contextComposer.js";
 import { OntologyService } from "./ontology/ontologyService.js";
 import { startStdioMcpServer } from "./mcp/server.js";
 import { startHttpMcpServer } from "./mcp/httpServer.js";
+import { logError, logInfo } from "./diagnostics/index.js";
+
+process.on("uncaughtException", (error) => {
+  logError("Uncaught exception terminated the process.", error);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logError("Unhandled promise rejection.", reason);
+});
 
 const config = loadConfig();
+logInfo("Rationale Memory Store process starting.", {
+  transport: config.mcp.transport,
+  dataDirectory: config.dataDirectory,
+  embeddingProvider: config.embedding.provider,
+  embeddingModel: config.embedding.model,
+  embeddingMode: config.embedding.mode
+});
 const pool = createPool(config.databaseUrl);
 const fileStore = new MemoryFileStore(config.dataDirectory);
 const embeddingProvider = createEmbeddingProvider(config);
@@ -30,7 +47,9 @@ const mcpServices = {
 };
 
 if (config.mcp.transport === "stdio") {
+  logInfo("Starting stdio MCP server.");
   await startStdioMcpServer(mcpServices);
 } else {
+  logInfo("Starting HTTP MCP server.");
   await startHttpMcpServer(config, mcpServices);
 }

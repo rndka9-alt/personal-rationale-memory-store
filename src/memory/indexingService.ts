@@ -1,6 +1,7 @@
 import type pg from "pg";
 import type { AppConfig } from "../config.js";
 import { replaceMemoryChunks, upsertMemoryEntry } from "../db/queries.js";
+import { logInfo } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { toMemoryEntryRecord, type RationaleEntry } from "./schema.js";
 import { MemoryFileStore } from "./fileStore.js";
@@ -14,6 +15,10 @@ export class IndexingService {
   ) {}
 
   async indexEntry(entry: RationaleEntry, canonicalPath: string) {
+    logInfo("Indexing memory entry started.", {
+      entryId: entry.frontmatter.id,
+      canonicalPath
+    });
     const chunks = splitRationaleIntoChunks(entry);
     const embeddings = await this.embedChunks(entry.frontmatter.id, chunks);
     await upsertMemoryEntry(this.pool, toMemoryEntryRecord(entry, canonicalPath));
@@ -35,13 +40,24 @@ export class IndexingService {
         }
       }))
     );
+    logInfo("Indexing memory entry completed.", {
+      entryId: entry.frontmatter.id,
+      chunkCount: chunks.length,
+      embeddingCount: embeddings.length
+    });
   }
 
   async reindexAll() {
     const entries = await this.fileStore.listEntries();
+    logInfo("Reindexing all memory entries started.", {
+      entryCount: entries.length
+    });
     for (const { canonicalPath, entry } of entries) {
       await this.indexEntry(entry, canonicalPath);
     }
+    logInfo("Reindexing all memory entries completed.", {
+      entryCount: entries.length
+    });
     return entries.length;
   }
 
@@ -54,6 +70,12 @@ export class IndexingService {
     };
 
     if (this.config.embedding.mode === "contextualized" && this.embeddingProvider.embedDocumentChunks) {
+      logInfo("Embedding memory chunks with contextualized provider.", {
+        documentId,
+        chunkCount: texts.length,
+        outputDimension: options.outputDimension,
+        outputDtype: options.outputDtype
+      });
       const documents = await this.embeddingProvider.embedDocumentChunks([{ documentId, chunks: texts }], options);
       const documentEmbeddings = documents.find((document) => document.documentId === documentId);
       if (!documentEmbeddings) {
@@ -62,6 +84,12 @@ export class IndexingService {
       return documentEmbeddings.embeddings;
     }
 
+    logInfo("Embedding memory chunks with standard provider.", {
+      documentId,
+      chunkCount: texts.length,
+      outputDimension: options.outputDimension,
+      outputDtype: options.outputDtype
+    });
     return this.embeddingProvider.embedTexts(texts, options);
   }
 }
@@ -97,4 +125,3 @@ function estimateTokens(text: string) {
 function isString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
-

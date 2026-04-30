@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
+import { logInfo, logWarn } from "../diagnostics/index.js";
 import { rationaleEntrySchema, type RationaleEntry } from "./schema.js";
 
 type ParsedFrontmatter = {
@@ -27,13 +28,29 @@ export class MemoryFileStore {
     const directory = path.join(this.dataDirectory, "rationales");
     await mkdir(directory, { recursive: true });
     const canonicalPath = path.join(directory, `${entry.frontmatter.id}.md`);
+    logInfo("Writing rationale file started.", {
+      entryId: entry.frontmatter.id,
+      canonicalPath
+    });
     await writeFile(canonicalPath, serializeRationaleEntry(entry), "utf8");
+    logInfo("Writing rationale file completed.", {
+      entryId: entry.frontmatter.id,
+      canonicalPath
+    });
     return canonicalPath;
   }
 
   async readEntry(canonicalPath: string) {
+    logInfo("Reading rationale file started.", {
+      canonicalPath
+    });
     const markdown = await readFile(canonicalPath, "utf8");
-    return parseRationaleMarkdown(markdown);
+    const entry = parseRationaleMarkdown(markdown);
+    logInfo("Reading rationale file completed.", {
+      entryId: entry.frontmatter.id,
+      canonicalPath
+    });
+    return entry;
   }
 
   async readById(id: string) {
@@ -46,12 +63,18 @@ export class MemoryFileStore {
 
   async listEntries() {
     const directory = path.join(this.dataDirectory, "rationales");
+    logInfo("Listing rationale files started.", {
+      directory
+    });
     await mkdir(directory, { recursive: true });
     const fileNames = await readdir(directory);
     const entries: Array<{ canonicalPath: string; entry: RationaleEntry }> = [];
 
     for (const fileName of fileNames) {
       if (!fileName.endsWith(".md")) {
+        logWarn("Skipping non-markdown file in rationale directory.", {
+          fileName
+        });
         continue;
       }
 
@@ -60,6 +83,10 @@ export class MemoryFileStore {
       entries.push({ canonicalPath, entry });
     }
 
+    logInfo("Listing rationale files completed.", {
+      directory,
+      entryCount: entries.length
+    });
     return entries;
   }
 }
@@ -89,12 +116,15 @@ export function serializeRationaleEntry(entry: RationaleEntry) {
 }
 
 export function parseRationaleMarkdown(markdown: string) {
+  logInfo("Parsing rationale markdown started.", {
+    characters: markdown.length
+  });
   const parsed = parseFrontmatter(markdown);
   const title = parseTitle(parsed.body);
   const sections = parseSections(parsed.body);
   const frontmatterResult = rationaleEntrySchema.shape.frontmatter.parse(parsed.frontmatter);
 
-  return rationaleEntrySchema.parse({
+  const entry = rationaleEntrySchema.parse({
     frontmatter: frontmatterResult,
     title,
     situation: sections.get("Situation"),
@@ -108,6 +138,10 @@ export function parseRationaleMarkdown(markdown: string) {
     avoidWhen: parseBulletList(sections.get("Avoid when")),
     rawMarkdown: markdown
   });
+  logInfo("Parsing rationale markdown completed.", {
+    entryId: entry.frontmatter.id
+  });
+  return entry;
 }
 
 function parseFrontmatter(markdown: string): ParsedFrontmatter {
@@ -232,4 +266,3 @@ function appendRejectedAlternatives(lines: string[], alternatives: Array<{ optio
   }
   lines.push("");
 }
-

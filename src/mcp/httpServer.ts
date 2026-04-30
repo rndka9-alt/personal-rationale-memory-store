@@ -8,6 +8,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig } from "../config.js";
 import type { McpServices } from "./server.js";
 import { configureMcpServer } from "./server.js";
+import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 
 export async function startHttpMcpServer(config: AppConfig, services: McpServices) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
@@ -21,6 +22,7 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
         });
         return;
       }
+
 
       if (!isExpectedPath(request, config.mcp.path)) {
         writePlainResponse(response, 404, "Not found");
@@ -46,6 +48,10 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
       writePlainResponse(response, 405, "Method not allowed");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown MCP HTTP error";
+      logError("MCP HTTP request failed.", error, {
+        method: request.method,
+        url: request.url
+      });
       writePlainResponse(response, 500, message);
     }
   };
@@ -61,6 +67,12 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
   process.stderr.write(
     `Rationale Memory Store MCP ${config.mcp.transport.toUpperCase()} server listening on ${config.mcp.host}:${config.mcp.port}${config.mcp.path}\n`
   );
+  logInfo("MCP HTTP server started.", {
+    transport: config.mcp.transport,
+    host: config.mcp.host,
+    port: config.mcp.port,
+    path: config.mcp.path
+  });
 
   return server;
 }
@@ -75,16 +87,30 @@ async function handlePostRequest(
   if (sessionId) {
     const transport = transports.get(sessionId);
     if (!transport) {
+      logWarn("MCP session request referenced an unknown session.", {
+        method: request.method,
+        url: request.url,
+        sessionId
+      });
       writeJsonRpcError(response, 404, -32000, "Session not found");
       return;
     }
 
+    logInfo("MCP session request received.", {
+      method: request.method,
+      url: request.url,
+      sessionId
+    });
     await transport.handleRequest(request, response);
     return;
   }
 
   const body = await readJsonBody(request);
   if (!isInitializeRequest(body)) {
+    logWarn("MCP POST rejected without a valid session initialization.", {
+      method: request.method,
+      url: request.url
+    });
     writeJsonRpcError(response, 400, -32000, "Bad Request: No valid session ID provided");
     return;
   }
@@ -96,6 +122,9 @@ async function handlePostRequest(
       if (!transport) {
         throw new Error("Transport was not created before session initialization.");
       }
+      logInfo("MCP session initialized.", {
+        sessionId: initializedSessionId
+      });
       transports.set(initializedSessionId, transport);
     }
   });
@@ -103,6 +132,9 @@ async function handlePostRequest(
   transport.onclose = () => {
     const initializedSessionId = transport?.sessionId;
     if (initializedSessionId) {
+      logInfo("MCP session closed.", {
+        sessionId: initializedSessionId
+      });
       transports.delete(initializedSessionId);
     }
   };
@@ -119,16 +151,30 @@ async function handleSessionRequest(
 ) {
   const sessionId = readHeader(request, "mcp-session-id");
   if (!sessionId) {
+    logWarn("MCP session request rejected without a session id.", {
+      method: request.method,
+      url: request.url
+    });
     writePlainResponse(response, 400, "Invalid or missing session ID");
     return;
   }
 
   const transport = transports.get(sessionId);
   if (!transport) {
+    logWarn("MCP session request referenced an unknown session.", {
+      method: request.method,
+      url: request.url,
+      sessionId
+    });
     writePlainResponse(response, 404, "Session not found");
     return;
   }
 
+  logInfo("MCP session request received.", {
+    method: request.method,
+    url: request.url,
+    sessionId
+  });
   await transport.handleRequest(request, response);
 }
 
@@ -166,6 +212,7 @@ async function readJsonBody(request: IncomingMessage) {
 
   const rawBody = Buffer.concat(chunks).toString("utf8");
   if (rawBody.trim().length === 0) {
+    logWarn("MCP request body was empty.");
     throw new Error("Request body is empty.");
   }
 

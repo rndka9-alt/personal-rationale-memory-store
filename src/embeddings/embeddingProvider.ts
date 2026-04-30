@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config.js";
+import { logInfo } from "../diagnostics/index.js";
 import { MockEmbeddingProvider } from "./mockEmbeddingProvider.js";
 import { VoyageEmbeddingProvider } from "./voyageEmbeddingProvider.js";
 
@@ -28,6 +29,12 @@ export type EmbeddingProvider = {
 
 export function createEmbeddingProvider(config: AppConfig): EmbeddingProvider {
   if (config.embedding.mode === "mock" || config.embedding.provider === "mock") {
+    logInfo("Embedding provider initialized.", {
+      provider: "mock",
+      mode: config.embedding.mode,
+      dimension: config.embedding.dimension,
+      dtype: config.embedding.dtype
+    });
     return new MockEmbeddingProvider();
   }
 
@@ -36,6 +43,13 @@ export function createEmbeddingProvider(config: AppConfig): EmbeddingProvider {
       throw new Error("VOYAGE_API_KEY is required when EMBEDDING_PROVIDER=voyage.");
     }
 
+    logInfo("Embedding provider initialized.", {
+      provider: "voyage",
+      model: config.embedding.model,
+      mode: config.embedding.mode,
+      dimension: config.embedding.dimension,
+      dtype: config.embedding.dtype
+    });
     return new VoyageEmbeddingProvider({
       apiKey: config.embedding.voyageApiKey,
       model: config.embedding.model,
@@ -45,4 +59,3 @@ export function createEmbeddingProvider(config: AppConfig): EmbeddingProvider {
 
   throw new Error(`Unsupported embedding provider: ${config.embedding.provider}`);
 }
-

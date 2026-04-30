@@ -1,3 +1,4 @@
+import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbedOptions, EmbeddingMode, EmbeddingProvider } from "./embeddingProvider.js";
 
 type VoyageProviderOptions = {
@@ -27,8 +28,22 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 
   async embedTexts(texts: string[], options: EmbedOptions) {
     if (texts.length === 0) {
+      logInfo("Voyage embedTexts skipped empty input.", {
+        model: this.options.model,
+        mode: this.options.mode,
+        inputType: options.inputType
+      });
       return [];
     }
+
+    logInfo("Voyage embedTexts started.", {
+      model: this.options.model,
+      mode: this.options.mode,
+      inputType: options.inputType,
+      textCount: texts.length,
+      outputDimension: options.outputDimension,
+      outputDtype: options.outputDtype
+    });
 
     if (this.options.mode === "contextualized" && this.options.model === "voyage-context-3") {
       const contextualizedDocuments = options.inputType === "query"
@@ -38,6 +53,13 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
         contextualizedDocuments,
         options
       );
+      logInfo("Voyage contextualized embedTexts completed.", {
+        model: this.options.model,
+        inputType: options.inputType,
+        textCount: texts.length,
+        documentCount: contextualized.length,
+        embeddingCount: contextualized.reduce((sum, document) => sum + document.embeddings.length, 0)
+      });
       return contextualized.flatMap((document) => document.embeddings);
     }
 
@@ -50,10 +72,21 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
     });
 
     if (!Array.isArray(response.data)) {
+      logWarn("Voyage embedding response did not include data.", {
+        model: this.options.model,
+        inputType: options.inputType
+      });
       throw new Error("Voyage embedding response did not include data.");
     }
 
-    return response.data.map((item) => parseEmbedding(item.embedding));
+    const embeddings = response.data.map((item) => parseEmbedding(item.embedding));
+    logInfo("Voyage embedTexts completed.", {
+      model: this.options.model,
+      inputType: options.inputType,
+      textCount: texts.length,
+      embeddingCount: embeddings.length
+    });
+    return embeddings;
   }
 
   async embedDocumentChunks(
@@ -61,8 +94,23 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
     options: EmbedOptions
   ) {
     if (documents.length === 0) {
+      logInfo("Voyage embedDocumentChunks skipped empty input.", {
+        model: this.options.model,
+        mode: this.options.mode,
+        inputType: options.inputType
+      });
       return [];
     }
+
+    logInfo("Voyage embedDocumentChunks started.", {
+      model: this.options.model,
+      mode: this.options.mode,
+      inputType: options.inputType,
+      documentCount: documents.length,
+      chunkCount: documents.reduce((sum, document) => sum + document.chunks.length, 0),
+      outputDimension: options.outputDimension,
+      outputDtype: options.outputDtype
+    });
 
     const response = await this.post<VoyageContextualizedResponse>("/contextualizedembeddings", {
       inputs: documents.map((document) => document.chunks),
@@ -73,20 +121,36 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
     });
 
     if (!Array.isArray(response.data)) {
+      logWarn("Voyage contextualized embedding response did not include data.", {
+        model: this.options.model,
+        inputType: options.inputType,
+        documentCount: documents.length
+      });
       throw new Error("Voyage contextualized embedding response did not include data.");
     }
 
     const responseDocuments = getContextualizedResponseDocuments(response);
-    return documents.map((document, documentIndex) => {
+    const embeddedDocuments = documents.map((document, documentIndex) => {
       const embeddings = getContextualizedEmbeddings(responseDocuments, documentIndex, document.documentId);
       return {
         documentId: document.documentId,
         embeddings
       };
     });
+    logInfo("Voyage embedDocumentChunks completed.", {
+      model: this.options.model,
+      inputType: options.inputType,
+      documentCount: embeddedDocuments.length,
+      embeddingCount: embeddedDocuments.reduce((sum, document) => sum + document.embeddings.length, 0)
+    });
+    return embeddedDocuments;
   }
 
   private async post<TResponse>(path: string, payload: unknown): Promise<TResponse> {
+    logInfo("Voyage API request started.", {
+      path,
+      model: this.options.model
+    });
     const response = await fetch(`${voyageApiBaseUrl}${path}`, {
       method: "POST",
       headers: {
@@ -98,10 +162,20 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 
     if (!response.ok) {
       const body = await response.text();
+      logError("Voyage API request failed.", new Error(body), {
+        path,
+        status: response.status,
+        model: this.options.model
+      });
       throw new Error(`Voyage API request failed with ${response.status}: ${body}`);
     }
 
     const json = await response.json();
+    logInfo("Voyage API request completed.", {
+      path,
+      status: response.status,
+      model: this.options.model
+    });
     return json;
   }
 }
@@ -115,6 +189,7 @@ function getContextualizedResponseDocuments(response: VoyageContextualizedRespon
     return response.results;
   }
 
+  logWarn("Voyage contextualized embedding response did not include data.", {});
   throw new Error("Voyage contextualized embedding response did not include data.");
 }
 

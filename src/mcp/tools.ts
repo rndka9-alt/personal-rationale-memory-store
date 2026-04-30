@@ -3,6 +3,7 @@ import type { ContextComposer } from "../memory/contextComposer.js";
 import type { RationaleService } from "../memory/rationaleService.js";
 import type { OntologyService } from "../ontology/ontologyService.js";
 import { recordCandidateInputSchema, searchInputSchema } from "../memory/schema.js";
+import { logError, logInfo } from "../diagnostics/index.js";
 
 export type ToolServices = {
   rationaleService: RationaleService;
@@ -36,7 +37,7 @@ const sessionCandidateInputSchema = z.object({
 });
 
 export function toolDefinitions(services: ToolServices): ToolDefinition[] {
-  return [
+  const definitions: ToolDefinition[] = [
     {
       name: "search_rationales",
       description: "Search rationale memories with lexical, vector, and metadata signals.",
@@ -160,6 +161,8 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       }
     }
   ];
+
+  return definitions.map(withToolLogging);
 }
 
 const composeInputSchema = z.object({
@@ -200,5 +203,29 @@ const ingestSessionInputSchema = z.object({
 function jsonToolResult(value: unknown): ToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }]
+  };
+}
+
+function withToolLogging(definition: ToolDefinition): ToolDefinition {
+  return {
+    ...definition,
+    handler: async (input) => {
+      logInfo("MCP tool started.", {
+        tool: definition.name
+      });
+
+      try {
+        const result = await definition.handler(input);
+        logInfo("MCP tool completed.", {
+          tool: definition.name
+        });
+        return result;
+      } catch (error) {
+        logError("MCP tool failed.", error, {
+          tool: definition.name
+        });
+        throw error;
+      }
+    }
   };
 }
