@@ -298,6 +298,11 @@ export class RationaleService {
     return formatCandidateReview(reviewedCandidates);
   }
 
+  async reviewRationale(id: string) {
+    const entry = await this.getRationale(id);
+    return reviewCandidateEntry(entry);
+  }
+
   async markReviewQueueItem(
     id: string,
     action: "accept" | "keep_candidate" | "needs_revision" | "deprecate",

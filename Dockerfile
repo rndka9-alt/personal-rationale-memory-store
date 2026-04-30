@@ -6,7 +6,7 @@ RUN npm install
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
-COPY package.json tsconfig.json ./
+COPY package.json tsconfig.json tsconfig.web.json vite.config.ts tailwind.config.js postcss.config.js ./
 COPY src ./src
 RUN npm run build
 

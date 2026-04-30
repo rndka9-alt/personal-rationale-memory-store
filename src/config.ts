@@ -15,6 +15,9 @@ const environmentSchema = z.object({
   MCP_AUTH_TOKEN: z.string().optional(),
   MCP_TLS_CERT_PATH: z.string().optional(),
   MCP_TLS_KEY_PATH: z.string().optional(),
+  WEB_HOST: z.string().default("0.0.0.0"),
+  WEB_PORT: z.coerce.number().int().positive().default(3450),
+  WEB_AUTH_TOKEN: z.string().optional(),
   VOYAGE_API_KEY: z.string().optional(),
   EMBEDDING_PROVIDER: z.string().default("mock"),
   EMBEDDING_MODEL: z.string().default("mock"),
@@ -42,6 +45,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
       authToken: parsedEnvironment.MCP_AUTH_TOKEN,
       tlsCertPath: parsedEnvironment.MCP_TLS_CERT_PATH,
       tlsKeyPath: parsedEnvironment.MCP_TLS_KEY_PATH
+    },
+    web: {
+      host: parsedEnvironment.WEB_HOST,
+      port: parsedEnvironment.WEB_PORT,
+      authToken: parsedEnvironment.WEB_AUTH_TOKEN
     },
     embedding: {
       provider,

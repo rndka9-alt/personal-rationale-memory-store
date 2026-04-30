@@ -12,7 +12,7 @@ npm run build
 docker compose up
 ```
 
-The MCP server runs in the `app` container. Postgres is reachable only on the Docker Compose internal network by default and is not exposed on a host port.
+The MCP server runs in the `mcp` container. The review UI runs in the `web` container. Postgres is reachable only on the Docker Compose internal network by default and is not exposed on a host port.
 
 By default, Docker Compose starts the MCP server as internal HTTP on `0.0.0.0:3443` and publishes it only to host loopback:
 
@@ -20,7 +20,13 @@ By default, Docker Compose starts the MCP server as internal HTTP on `0.0.0.0:34
 http://127.0.0.1:3443/mcp
 ```
 
-Use Cloudflare Tunnel or another trusted reverse proxy to terminate HTTPS in front of that local HTTP endpoint.
+The review UI is available on:
+
+```text
+http://127.0.0.1:3450
+```
+
+Use Cloudflare Tunnel or another trusted reverse proxy to terminate HTTPS in front of the local HTTP endpoints.
 
 Health and status endpoints are available on the same HTTP listener:
 
@@ -77,6 +83,12 @@ The public URL served by Cloudflare should route to:
 /mcp
 ```
 
+For the review UI, point a separate Cloudflare Tunnel/public hostname at:
+
+```text
+http://127.0.0.1:3450
+```
+
 When `MCP_AUTH_TOKEN` is set, MCP clients must send:
 
 ```text
@@ -120,6 +132,22 @@ npm run cli -- review-candidates
 npm run cli -- reindex
 npm run cli -- reindex changed
 ```
+
+## Review UI
+
+The web UI is a light, minimal review surface for queued rationale candidates. It intentionally starts with only two workflows:
+
+- list queued memories
+- inspect and review a selected memory
+
+Review actions available in the first UI pass:
+
+- accept
+- keep as candidate
+- needs revision
+- deprecate
+
+The UI uses React, Tailwind CSS, TanStack Query, and a small fetch wrapper. It talks to the separate `web` server API, not directly to the MCP transport.
 
 ## Embeddings
 

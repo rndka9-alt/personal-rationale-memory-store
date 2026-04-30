@@ -1,5 +1,5 @@
 services:
-  app:
+  mcp:
     build: .
     env_file:
       - .env
@@ -19,6 +19,23 @@ services:
     command: ["npm", "run", "start:mcp"]
     stdin_open: true
     tty: true
+
+  web:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:3450:3450"
+    environment:
+      WEB_HOST: ${WEB_HOST:-0.0.0.0}
+      WEB_PORT: ${WEB_PORT:-3450}
+      WEB_AUTH_TOKEN: ${WEB_AUTH_TOKEN:-}
+    command: ["npm", "run", "start:web"]
 
   postgres:
     image: pgvector/pgvector:pg16

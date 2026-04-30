@@ -1,0 +1,202 @@
+import { requestJson } from "./http";
+import type { ReviewAction, ReviewQueueDetail, ReviewQueueItem } from "../types/review";
+
+export type ReviewQueueFilters = {
+  limit: number;
+  captureKind?: string;
+  reviewState: string;
+};
+
+export async function fetchReviewQueue(filters: ReviewQueueFilters) {
+  const params = new URLSearchParams({
+    limit: String(filters.limit),
+    reviewState: filters.reviewState
+  });
+
+  if (filters.captureKind) {
+    params.set("captureKind", filters.captureKind);
+  }
+
+  const data = await requestJson(`/api/review-queue?${params.toString()}`);
+  return parseReviewQueueResponse(data);
+}
+
+export async function fetchReviewQueueDetail(id: string) {
+  const data = await requestJson(`/api/review-queue/${encodeURIComponent(id)}`);
+  return parseReviewQueueDetail(data);
+}
+
+export async function submitReviewAction(input: {
+  id: string;
+  action: ReviewAction;
+  notes?: string;
+  reason?: string;
+}) {
+  await requestJson(`/api/review-queue/${encodeURIComponent(input.id)}/review`, {
+    method: "POST",
+    body: {
+      action: input.action,
+      notes: input.notes,
+      reason: input.reason
+    }
+  });
+}
+
+function parseReviewQueueResponse(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new Error("Invalid review queue response.");
+  }
+
+  return value.items.map(parseReviewQueueItem);
+}
+
+function parseReviewQueueItem(value: unknown): ReviewQueueItem {
+  if (!isRecord(value)) {
+    throw new Error("Invalid review queue item.");
+  }
+
+  const id = readRequiredString(value, "id");
+  const title = readRequiredString(value, "title");
+  const type = readRequiredString(value, "type");
+  const status = readRequiredString(value, "status");
+  const canonicalPath = readRequiredString(value, "canonicalPath");
+  const scope = readRequiredString(value, "scope");
+  const confidence = readNumber(value, "confidence");
+
+  return {
+    id,
+    title,
+    type,
+    status,
+    canonicalPath,
+    scope,
+    confidence,
+    summary: readOptionalString(value, "summary"),
+    sourceKind: readOptionalString(value, "sourceKind"),
+    sourceRef: readOptionalString(value, "sourceRef"),
+    metadata: readRecord(value, "metadata")
+  };
+}
+
+function parseReviewQueueDetail(value: unknown): ReviewQueueDetail {
+  if (!isRecord(value) || !isRecord(value.entry) || !isRecord(value.review)) {
+    throw new Error("Invalid review queue detail response.");
+  }
+
+  return {
+    entry: parseRationaleEntry(value.entry),
+    review: {
+      id: readRequiredString(value.review, "id"),
+      title: readRequiredString(value.review, "title"),
+      score: readNumber(value.review, "score"),
+      recommendation: parseRecommendation(readRequiredString(value.review, "recommendation")),
+      missingSections: readStringArray(value.review, "missingSections"),
+      strengths: readStringArray(value.review, "strengths"),
+      cautions: readStringArray(value.review, "cautions")
+    }
+  };
+}
+
+function parseRationaleEntry(value: Record<string, unknown>) {
+  const frontmatterValue = value.frontmatter;
+  if (!isRecord(frontmatterValue)) {
+    throw new Error("Invalid rationale frontmatter.");
+  }
+
+  return {
+    frontmatter: {
+      id: readRequiredString(frontmatterValue, "id"),
+      type: readRequiredString(frontmatterValue, "type"),
+      status: readRequiredString(frontmatterValue, "status"),
+      scope: readRequiredString(frontmatterValue, "scope"),
+      domains: readStringArray(frontmatterValue, "domains"),
+      intents: readStringArray(frontmatterValue, "intents"),
+      modes: readStringArray(frontmatterValue, "modes"),
+      confidence: readNumber(frontmatterValue, "confidence"),
+      metadata: readRecord(frontmatterValue, "metadata"),
+      source: parseSource(frontmatterValue.source)
+    },
+    title: readRequiredString(value, "title"),
+    situation: readOptionalString(value, "situation"),
+    goal: readOptionalString(value, "goal"),
+    constraints: readStringArray(value, "constraints"),
+    decision: readOptionalString(value, "decision"),
+    rationale: readRequiredString(value, "rationale"),
+    rejectedAlternatives: readRejectedAlternatives(value.rejectedAlternatives),
+    tradeoff: readOptionalString(value, "tradeoff"),
+    reuseWhen: readStringArray(value, "reuseWhen"),
+    avoidWhen: readStringArray(value, "avoidWhen"),
+    rawMarkdown: readRequiredString(value, "rawMarkdown")
+  };
+}
+
+function readRejectedAlternatives(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isRecord)
+    .map((item) => ({
+      option: readRequiredString(item, "option"),
+      reason: readRequiredString(item, "reason")
+    }));
+}
+
+function parseSource(value: unknown) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  return {
+    kind: readRequiredString(value, "kind"),
+    ref: readRequiredString(value, "ref")
+  };
+}
+
+function parseRecommendation(value: string) {
+  if (value === "accept" || value === "revise" || value === "deprecate") {
+    return value;
+  }
+
+  throw new Error("Invalid recommendation.");
+}
+
+function readRequiredString(value: Record<string, unknown>, key: string) {
+  const fieldValue = value[key];
+  if (typeof fieldValue !== "string") {
+    throw new Error(`Missing string field: ${key}`);
+  }
+  return fieldValue;
+}
+
+function readOptionalString(value: Record<string, unknown>, key: string) {
+  const fieldValue = value[key];
+  return typeof fieldValue === "string" ? fieldValue : undefined;
+}
+
+function readNumber(value: Record<string, unknown>, key: string) {
+  const fieldValue = value[key];
+  if (typeof fieldValue !== "number") {
+    throw new Error(`Missing number field: ${key}`);
+  }
+  return fieldValue;
+}
+
+function readStringArray(value: Record<string, unknown>, key: string) {
+  const fieldValue = value[key];
+  if (!Array.isArray(fieldValue)) {
+    return [];
+  }
+  return fieldValue.filter((item): item is string => typeof item === "string");
+}
+
+function readRecord(value: Record<string, unknown>, key: string) {
+  const fieldValue = value[key];
+  return isRecord(fieldValue) ? fieldValue : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
