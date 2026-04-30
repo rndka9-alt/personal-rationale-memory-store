@@ -114,6 +114,8 @@ npm run cli -- record-candidate "Prefer rationale" "Reasons transfer better than
 npm run cli -- search "why store rationale"
 npm run cli -- compose "Design a memory retrieval strategy"
 npm run cli -- candidates
+npm run cli -- review-queue
+npm run cli -- auto-capture "Keep DB private" "This is reusable for tunnel-backed Docker services" "When an app and Postgres run in the same Compose project, keep the database private on the Docker network."
 npm run cli -- review-candidates
 npm run cli -- reindex
 npm run cli -- reindex changed
@@ -160,6 +162,11 @@ Tools:
 - `get_status`
 - `get_rationale`
 - `compose_context`
+- `auto_capture_rationale`
+- `list_review_queue`
+- `review_queue`
+- `mark_review_queue_item`
+- `bulk_deprecate_review_queue`
 - `record_candidate`
 - `accept_candidate`
 - `update_rationale`
@@ -208,9 +215,32 @@ Candidate review is available through:
 ```text
 list_rationale_candidates
 review_rationale_candidates
+list_review_queue
+review_queue
+mark_review_queue_item
+bulk_deprecate_review_queue
 ```
 
-The review output is Markdown and highlights missing sections, strengths, cautions, and an accept/revise/deprecate recommendation. It does not mutate candidates by itself; acceptance or deprecation stays explicit.
+LLMs may autonomously call `auto_capture_rationale` when they encounter a reusable decision rationale. Auto-captured memories are stored as `status: candidate` with metadata such as:
+
+```yaml
+capture_kind: auto
+review_state: unreviewed
+capture_reason: ...
+```
+
+Auto-captured unreviewed candidates remain searchable, but ranking applies a small penalty so they do not overpower human-accepted rationale. Use the review queue later to accept, keep as candidate, mark as needing revision, or deprecate entries.
+
+The review output is Markdown and highlights missing sections, strengths, cautions, and an accept/revise/deprecate recommendation. `review_queue` does not mutate candidates by itself; `mark_review_queue_item` or explicit lifecycle tools perform the mutation.
+
+Recommended LLM instruction:
+
+```text
+When a reusable rationale emerges, you may call auto_capture_rationale.
+Only auto-capture when the rationale includes constraints, tradeoffs, reuseWhen, and avoidWhen.
+Prefer no capture over weak or one-off memories.
+Auto-captured memories must remain candidates until reviewed later.
+```
 
 ## Safety
 

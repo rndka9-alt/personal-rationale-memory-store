@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rationaleEntrySchema } from "../src/memory/schema.js";
+import { autoCaptureRationaleInputSchema, rationaleEntrySchema } from "../src/memory/schema.js";
 
 describe("rationaleEntrySchema", () => {
   it("requires rationale-centered content", () => {
@@ -24,3 +24,25 @@ describe("rationaleEntrySchema", () => {
   });
 });
 
+describe("autoCaptureRationaleInputSchema", () => {
+  it("requires reuse and avoid boundaries for autonomous capture", () => {
+    expect(() => autoCaptureRationaleInputSchema.parse({
+      title: "Capture reusable rationale",
+      rationale: "This should not be auto-captured without boundaries.",
+      captureReason: "It may be useful later.",
+      reuseWhen: [],
+      avoidWhen: []
+    })).toThrow();
+
+    const input = autoCaptureRationaleInputSchema.parse({
+      title: "Capture reusable rationale",
+      rationale: "This rationale includes enough boundary information to be queued safely.",
+      captureReason: "The decision pattern is likely reusable.",
+      reuseWhen: ["A similar constrained decision appears."],
+      avoidWhen: ["The future task is unrelated."]
+    });
+
+    expect(input.reuseWhen).toHaveLength(1);
+    expect(input.avoidWhen).toHaveLength(1);
+  });
+});

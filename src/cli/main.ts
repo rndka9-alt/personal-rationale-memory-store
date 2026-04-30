@@ -27,8 +27,22 @@ if (command === "search") {
   console.log(await contextComposer.compose({ task }));
 } else if (command === "candidates") {
   console.log(JSON.stringify(await rationaleService.listCandidates(parseLimit(rest[0])), null, 2));
+} else if (command === "review-queue") {
+  console.log(await rationaleService.reviewQueue(parseLimit(rest[0]), rest[1], rest[2] ?? "unreviewed"));
 } else if (command === "review-candidates") {
   console.log(await rationaleService.reviewCandidates(parseLimit(rest[0])));
+} else if (command === "auto-capture") {
+  const [title, captureReason, ...rationaleParts] = rest;
+  if (!title || !captureReason || rationaleParts.length === 0) {
+    throw new Error("Usage: npm run cli -- auto-capture <title> <captureReason> <rationale>");
+  }
+  console.log(JSON.stringify(await rationaleService.autoCaptureRationale({
+    title,
+    captureReason,
+    rationale: rationaleParts.join(" "),
+    reuseWhen: ["A similar rationale-centered decision appears in a future task."],
+    avoidWhen: ["The future task is unrelated to this rationale."]
+  }), null, 2));
 } else if (command === "record-candidate") {
   const [title, ...rationaleParts] = rest;
   if (!title || rationaleParts.length === 0) {
@@ -42,7 +56,7 @@ if (command === "search") {
   const scope = rest[0] === "changed" ? "changed" : "all";
   console.log(JSON.stringify({ indexed: await rationaleService.reindexMemory(scope) }, null, 2));
 } else {
-  throw new Error("Usage: npm run cli -- <search|compose|candidates|review-candidates|record-candidate|reindex> ...");
+  throw new Error("Usage: npm run cli -- <search|compose|candidates|review-queue|review-candidates|auto-capture|record-candidate|reindex> ...");
 }
 
 await pool.end();

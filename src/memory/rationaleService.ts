@@ -6,7 +6,15 @@ import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { IndexingService } from "./indexingService.js";
-import { recordCandidateInputSchema, searchInputSchema, type RecordCandidateInput, type RationaleEntry } from "./schema.js";
+import {
+  autoCaptureRationaleInputSchema,
+  recordCandidateInputSchema,
+  searchInputSchema,
+  type AutoCaptureRationaleInput,
+  type MemoryEntryRecord,
+  type RecordCandidateInput,
+  type RationaleEntry
+} from "./schema.js";
 
 const rationalePatchSchema = z.object({
   title: z.string().optional(),
@@ -48,6 +56,7 @@ export class RationaleService {
   async recordCandidate(input: RecordCandidateInput) {
     const validatedInput = recordCandidateInputSchema.parse(input);
     const id = createRationaleId();
+    const metadata = normalizeCandidateMetadata(validatedInput.metadata, "manual");
     logInfo("Recording rationale candidate started.", {
       entryId: id,
       title: validatedInput.title
@@ -63,7 +72,7 @@ export class RationaleService {
         modes: getStringArray(validatedInput.metadata, "modes"),
         confidence: 0.5,
         source: validatedInput.source,
-        metadata: validatedInput.metadata ?? {}
+        metadata
       },
       title: validatedInput.title,
       situation: validatedInput.situation,
@@ -85,6 +94,46 @@ export class RationaleService {
       canonicalPath
     });
     return { id, canonicalPath, entry };
+  }
+
+  async autoCaptureRationale(input: AutoCaptureRationaleInput) {
+    const validatedInput = autoCaptureRationaleInputSchema.parse(input);
+    logInfo("Auto-capturing rationale candidate started.", {
+      title: validatedInput.title,
+      sessionRef: validatedInput.sessionRef
+    });
+
+    const metadata = {
+      ...validatedInput.metadata,
+      capture_kind: "auto",
+      review_state: "unreviewed",
+      capture_reason: validatedInput.captureReason,
+      session_ref: validatedInput.sessionRef,
+      captured_at: new Date().toISOString()
+    };
+
+    const result = await this.recordCandidate({
+      title: validatedInput.title,
+      situation: validatedInput.situation,
+      goal: validatedInput.goal,
+      constraints: validatedInput.constraints,
+      decision: validatedInput.decision,
+      rationale: validatedInput.rationale,
+      rejectedAlternatives: validatedInput.rejectedAlternatives,
+      tradeoff: validatedInput.tradeoff,
+      reuseWhen: validatedInput.reuseWhen,
+      avoidWhen: validatedInput.avoidWhen,
+      source: validatedInput.source ?? {
+        kind: "auto_capture",
+        ref: validatedInput.sessionRef ?? "llm-autonomous"
+      },
+      metadata
+    });
+
+    logInfo("Auto-capturing rationale candidate completed.", {
+      entryId: result.id
+    });
+    return result;
   }
 
   async getRationale(id: string) {
@@ -204,6 +253,27 @@ export class RationaleService {
     return entries;
   }
 
+  async listReviewQueue(limit: number, captureKind?: string, reviewState?: string) {
+    logInfo("Listing rationale review queue.", {
+      limit,
+      captureKind,
+      reviewState
+    });
+    const entries = await listMemoryEntriesByStatus(this.pool, "candidate", Math.max(limit, 50));
+    const filteredEntries = entries.filter((entry) => {
+      const metadataCaptureKind = readStringMetadata(entry.metadata, "capture_kind");
+      const metadataReviewState = readStringMetadata(entry.metadata, "review_state") ?? "unreviewed";
+      const captureKindMatches = !captureKind || metadataCaptureKind === captureKind;
+      const reviewStateMatches = !reviewState || metadataReviewState === reviewState;
+      return captureKindMatches && reviewStateMatches;
+    }).slice(0, limit);
+    logInfo("Listed rationale review queue.", {
+      limit,
+      resultCount: filteredEntries.length
+    });
+    return filteredEntries;
+  }
+
   async reviewCandidates(limit: number) {
     const candidates = await this.listCandidates(limit);
     const reviewedCandidates = [];
@@ -214,6 +284,67 @@ export class RationaleService {
     }
 
     return formatCandidateReview(reviewedCandidates);
+  }
+
+  async reviewQueue(limit: number, captureKind?: string, reviewState?: string) {
+    const queueEntries = await this.listReviewQueue(limit, captureKind, reviewState);
+    const reviewedCandidates = [];
+
+    for (const queueEntry of queueEntries) {
+      const entry = await this.getRationale(queueEntry.id);
+      reviewedCandidates.push(reviewCandidateEntry(entry));
+    }
+
+    return formatCandidateReview(reviewedCandidates);
+  }
+
+  async markReviewQueueItem(
+    id: string,
+    action: "accept" | "keep_candidate" | "needs_revision" | "deprecate",
+    options: { notes?: string; reason?: string; patch?: Record<string, unknown> } = {}
+  ) {
+    logInfo("Marking rationale review queue item started.", {
+      entryId: id,
+      action
+    });
+
+    if (options.patch) {
+      await this.updateRationale(id, options.patch);
+    }
+
+    if (action === "accept") {
+      return this.acceptCandidate(id);
+    }
+
+    if (action === "deprecate") {
+      return this.deprecateRationale(id, options.reason ?? "Deprecated during rationale review.");
+    }
+
+    const reviewState = action === "needs_revision" ? "needs_revision" : "reviewed";
+    const entry = await this.getRationale(id);
+    entry.frontmatter.metadata = {
+      ...entry.frontmatter.metadata,
+      review_state: reviewState,
+      review_notes: options.notes,
+      reviewed_at: new Date().toISOString()
+    };
+    const canonicalPath = await this.fileStore.writeEntry(entry);
+    await this.indexingService.indexEntry(entry, canonicalPath);
+
+    logInfo("Marking rationale review queue item completed.", {
+      entryId: id,
+      action,
+      reviewState
+    });
+    return entry;
+  }
+
+  async bulkDeprecateReviewQueue(ids: string[], reason: string) {
+    const deprecatedEntries = [];
+    for (const id of ids) {
+      deprecatedEntries.push(await this.deprecateRationale(id, reason));
+    }
+    return deprecatedEntries;
   }
 
   async search(input: unknown) {
@@ -569,6 +700,11 @@ function calculateSearchRanking(entry: {
     reasons.push("candidate");
   }
 
+  if (isAutoCapturedUnreviewedCandidate(entry)) {
+    score -= 0.75;
+    reasons.push("auto-unreviewed-penalty");
+  }
+
   if (entry.confidence > 0) {
     score += Math.min(entry.confidence, 1);
     reasons.push(`confidence:${entry.confidence.toFixed(2)}`);
@@ -600,6 +736,12 @@ function calculateSearchRanking(entry: {
   return { score, reasons };
 }
 
+function isAutoCapturedUnreviewedCandidate(entry: Pick<MemoryEntryRecord, "status" | "metadata">) {
+  return entry.status === "candidate"
+    && readStringMetadata(entry.metadata, "capture_kind") === "auto"
+    && (readStringMetadata(entry.metadata, "review_state") ?? "unreviewed") === "unreviewed";
+}
+
 function countMetadataMatches(metadata: Record<string, unknown>, key: string, expectedValues: string[] | undefined) {
   if (!expectedValues || expectedValues.length === 0) {
     return 0;
@@ -620,6 +762,20 @@ function getStringArray(metadata: Record<string, unknown> | undefined, key: stri
 
   const value = metadata[key];
   return Array.isArray(value) && value.every(isString) ? value : [];
+}
+
+function readStringMetadata(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function normalizeCandidateMetadata(metadata: Record<string, unknown> | undefined, defaultCaptureKind: string) {
+  const baseMetadata = metadata ?? {};
+  return {
+    ...baseMetadata,
+    capture_kind: readStringMetadata(baseMetadata, "capture_kind") ?? defaultCaptureKind,
+    review_state: readStringMetadata(baseMetadata, "review_state") ?? "unreviewed"
+  };
 }
 
 function isString(value: unknown): value is string {

@@ -55,6 +55,23 @@ export const recordCandidateInputSchema = z.object({
   metadata: z.record(z.unknown()).optional()
 });
 
+export const autoCaptureRationaleInputSchema = z.object({
+  title: recordCandidateInputSchema.shape.title,
+  situation: recordCandidateInputSchema.shape.situation,
+  goal: recordCandidateInputSchema.shape.goal,
+  constraints: recordCandidateInputSchema.shape.constraints,
+  decision: recordCandidateInputSchema.shape.decision,
+  rationale: recordCandidateInputSchema.shape.rationale,
+  rejectedAlternatives: recordCandidateInputSchema.shape.rejectedAlternatives,
+  tradeoff: recordCandidateInputSchema.shape.tradeoff,
+  reuseWhen: z.array(z.string()).min(1),
+  avoidWhen: z.array(z.string()).min(1),
+  source: sourceMetadataSchema.optional(),
+  captureReason: z.string().min(1),
+  sessionRef: z.string().optional(),
+  metadata: recordCandidateInputSchema.shape.metadata
+});
+
 export const searchInputSchema = z.object({
   query: z.string().min(1),
   domains: z.array(z.string()).optional(),
@@ -68,6 +85,7 @@ export const searchInputSchema = z.object({
 
 export type RationaleEntry = z.infer<typeof rationaleEntrySchema>;
 export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
+export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
 
 export type MemoryEntryRecord = {

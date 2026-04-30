@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { ContextComposer } from "../memory/contextComposer.js";
 import type { RationaleService } from "../memory/rationaleService.js";
 import type { OntologyService } from "../ontology/ontologyService.js";
-import { recordCandidateInputSchema, searchInputSchema } from "../memory/schema.js";
+import { autoCaptureRationaleInputSchema, recordCandidateInputSchema, searchInputSchema } from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
 import type { StatusService } from "../diagnostics/statusService.js";
 
@@ -91,6 +91,90 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         return {
           content: [{ type: "text", text: await services.rationaleService.reviewCandidates(parsedInput.limit) }]
         };
+      }
+    },
+    {
+      name: "auto_capture_rationale",
+      description: "Let an LLM autonomously record a reusable rationale candidate into the review queue.",
+      schema: autoCaptureRationaleInputSchema.shape,
+      handler: async (input: unknown) =>
+        jsonToolResult(await services.rationaleService.autoCaptureRationale(autoCaptureRationaleInputSchema.parse(input)))
+    },
+    {
+      name: "list_review_queue",
+      description: "List candidate rationales queued for later human review.",
+      schema: {
+        limit: z.number().int().positive().max(50).optional(),
+        captureKind: z.enum(["auto", "manual", "session"]).optional(),
+        reviewState: z.enum(["unreviewed", "reviewed", "needs_revision"]).optional()
+      },
+      handler: async (input) => {
+        const parsedInput = reviewQueueInputSchema.parse(input);
+        return jsonToolResult(await services.rationaleService.listReviewQueue(
+          parsedInput.limit,
+          parsedInput.captureKind,
+          parsedInput.reviewState
+        ));
+      }
+    },
+    {
+      name: "review_queue",
+      description: "Produce a Markdown review report for queued rationale candidates.",
+      schema: {
+        limit: z.number().int().positive().max(50).optional(),
+        captureKind: z.enum(["auto", "manual", "session"]).optional(),
+        reviewState: z.enum(["unreviewed", "reviewed", "needs_revision"]).optional()
+      },
+      handler: async (input) => {
+        const parsedInput = reviewQueueInputSchema.parse(input);
+        return {
+          content: [{
+            type: "text",
+            text: await services.rationaleService.reviewQueue(
+              parsedInput.limit,
+              parsedInput.captureKind,
+              parsedInput.reviewState
+            )
+          }]
+        };
+      }
+    },
+    {
+      name: "mark_review_queue_item",
+      description: "Mark a queued rationale as accepted, reviewed, needing revision, or deprecated.",
+      schema: {
+        id: z.string().min(1),
+        action: z.enum(["accept", "keep_candidate", "needs_revision", "deprecate"]),
+        notes: z.string().optional(),
+        reason: z.string().optional(),
+        patch: z.record(z.unknown()).optional()
+      },
+      handler: async (input) => {
+        const parsedInput = markReviewQueueItemInputSchema.parse(input);
+        return jsonToolResult(await services.rationaleService.markReviewQueueItem(
+          parsedInput.id,
+          parsedInput.action,
+          {
+            notes: parsedInput.notes,
+            reason: parsedInput.reason,
+            patch: parsedInput.patch
+          }
+        ));
+      }
+    },
+    {
+      name: "bulk_deprecate_review_queue",
+      description: "Deprecate several queued rationale candidates at once.",
+      schema: {
+        ids: z.array(z.string().min(1)).min(1).max(50),
+        reason: z.string().min(1)
+      },
+      handler: async (input) => {
+        const parsedInput = bulkDeprecateReviewQueueInputSchema.parse(input);
+        return jsonToolResult(await services.rationaleService.bulkDeprecateReviewQueue(
+          parsedInput.ids,
+          parsedInput.reason
+        ));
       }
     },
     {
@@ -183,7 +267,12 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         for (const candidate of parsedInput.candidates) {
           results.push(await services.rationaleService.recordCandidate({
             ...candidate,
-            source: { kind: "session", ref: parsedInput.sessionRef }
+            source: { kind: "session", ref: parsedInput.sessionRef },
+            metadata: {
+              ...candidate.metadata,
+              capture_kind: "session",
+              session_ref: parsedInput.sessionRef
+            }
           }));
         }
         return jsonToolResult(results);
@@ -205,6 +294,25 @@ const composeInputSchema = z.object({
 
 const listCandidatesInputSchema = z.object({
   limit: z.number().int().positive().max(50).default(10)
+});
+
+const reviewQueueInputSchema = z.object({
+  limit: z.number().int().positive().max(50).default(10),
+  captureKind: z.enum(["auto", "manual", "session"]).optional(),
+  reviewState: z.enum(["unreviewed", "reviewed", "needs_revision"]).default("unreviewed")
+});
+
+const markReviewQueueItemInputSchema = z.object({
+  id: z.string().min(1),
+  action: z.enum(["accept", "keep_candidate", "needs_revision", "deprecate"]),
+  notes: z.string().optional(),
+  reason: z.string().optional(),
+  patch: z.record(z.unknown()).optional()
+});
+
+const bulkDeprecateReviewQueueInputSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(50),
+  reason: z.string().min(1)
 });
 
 const updateRationaleInputSchema = z.object({
