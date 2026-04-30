@@ -37,6 +37,13 @@ services:
       WEB_AUTH_TOKEN: ${WEB_AUTH_TOKEN:-}
     command: ["npm", "run", "start:web"]
 
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - mcp
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
