@@ -23,6 +23,21 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
         return;
       }
 
+      if (isPath(request, "/health")) {
+        writeJsonResponse(response, 200, await services.statusService.health());
+        return;
+      }
+
+      if (isPath(request, "/status")) {
+        if (!isAuthorized(request, config.mcp.authToken)) {
+          response.setHeader("WWW-Authenticate", "Bearer");
+          writePlainResponse(response, 401, "Unauthorized");
+          return;
+        }
+
+        writeJsonResponse(response, 200, await services.statusService.status());
+        return;
+      }
 
       if (!isExpectedPath(request, config.mcp.path)) {
         writePlainResponse(response, 404, "Not found");
@@ -229,6 +244,10 @@ function isOauthDiscoveryPath(request: IncomingMessage) {
 }
 
 function isExpectedPath(request: IncomingMessage, expectedPath: string) {
+  return isPath(request, expectedPath);
+}
+
+function isPath(request: IncomingMessage, expectedPath: string) {
   if (!request.url) {
     return false;
   }

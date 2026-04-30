@@ -35,10 +35,10 @@ if (command === "search") {
     rationale: rationaleParts.join(" ")
   }), null, 2));
 } else if (command === "reindex") {
-  console.log(JSON.stringify({ indexed: await rationaleService.reindexMemory("all") }, null, 2));
+  const scope = rest[0] === "changed" ? "changed" : "all";
+  console.log(JSON.stringify({ indexed: await rationaleService.reindexMemory(scope) }, null, 2));
 } else {
   throw new Error("Usage: npm run cli -- <search|compose|record-candidate|reindex> ...");
 }
 
 await pool.end();
-

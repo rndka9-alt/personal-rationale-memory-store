@@ -22,6 +22,15 @@ http://127.0.0.1:3443/mcp
 
 Use Cloudflare Tunnel or another trusted reverse proxy to terminate HTTPS in front of that local HTTP endpoint.
 
+Health and status endpoints are available on the same HTTP listener:
+
+```text
+GET http://127.0.0.1:3443/health
+GET http://127.0.0.1:3443/status
+```
+
+`/health` checks that the app can reach the database. `/status` also reports MCP config, embedding mode, canonical file counts, changed file counts, and indexed DB counts. If `MCP_AUTH_TOKEN` is set, `/status` requires the same bearer token as `/mcp`.
+
 ## Persistence
 
 Postgres data is stored in a Docker named volume, not a host bind mount:
@@ -35,6 +44,14 @@ volumes:
 The only Postgres-side bind mount is `./migrations:/docker-entrypoint-initdb.d:ro`, which is used to seed schema files when the database volume is first created. It is not the database storage location.
 
 Canonical Markdown/YAML memories remain under `./data:/app/data` as a host bind mount because those files are intentionally human-readable and editable outside the container.
+
+Files are the canonical source of truth, but they are not watched automatically. If a human or an LLM-assisted workflow edits a Markdown file directly, run:
+
+```text
+reindex_memory({ "scope": "changed" })
+```
+
+Changed reindex compares canonical file hashes with the last indexed hash and updates only stale entries. This keeps file review explicit instead of silently mutating the index in the background.
 
 ## MCP Transport
 
@@ -97,6 +114,7 @@ npm run cli -- record-candidate "Prefer rationale" "Reasons transfer better than
 npm run cli -- search "why store rationale"
 npm run cli -- compose "Design a memory retrieval strategy"
 npm run cli -- reindex
+npm run cli -- reindex changed
 ```
 
 ## Embeddings
@@ -137,6 +155,7 @@ Query embeddings use `input_type=query`. Indexed document/chunk embeddings use `
 Tools:
 
 - `search_rationales`
+- `get_status`
 - `get_rationale`
 - `compose_context`
 - `record_candidate`
@@ -178,6 +197,8 @@ Canonical rationale files use YAML frontmatter plus Markdown sections:
 
 Postgres stores queryable metadata and pgvector embeddings. Files remain the canonical source of truth, so `reindex_memory` can rebuild the DB index from `data/memory/rationales`.
 
+Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, status, and confidence. Returned entries include ranking reasons such as vector score, lexical score, and domain/mode matches so callers can inspect why a memory was selected.
+
 ## Safety
 
-Mutation tools are intended for local stdio-oriented MCP usage. Normal deletion is implemented as deprecation. Ontology changes are proposals first, then explicit accept operations.
+Mutation tools are intended for private MCP usage behind local access control or Cloudflare Access. Normal deletion is implemented as deprecation. Ontology changes are proposals first, then explicit accept operations. Accepted ontology proposals can add, deprecate, rename, merge, or split terms through explicit proposal payloads.

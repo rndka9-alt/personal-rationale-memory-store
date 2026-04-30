@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { z } from "zod";
 import { findMemoryEntry, listRecentMemoryEntries, searchMemoryEntriesLexical, searchMemoryEntriesVector, updateMemoryStatus } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
@@ -6,6 +7,34 @@ import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { IndexingService } from "./indexingService.js";
 import { recordCandidateInputSchema, searchInputSchema, type RecordCandidateInput, type RationaleEntry } from "./schema.js";
+
+const rationalePatchSchema = z.object({
+  title: z.string().optional(),
+  situation: z.string().optional(),
+  goal: z.string().optional(),
+  constraints: z.array(z.string()).optional(),
+  decision: z.string().optional(),
+  rationale: z.string().optional(),
+  rejectedAlternatives: z.array(z.object({
+    option: z.string().min(1),
+    reason: z.string().min(1)
+  })).optional(),
+  tradeoff: z.string().optional(),
+  reuseWhen: z.array(z.string()).optional(),
+  avoidWhen: z.array(z.string()).optional(),
+  type: z.string().optional(),
+  status: z.string().optional(),
+  scope: z.string().optional(),
+  domains: z.array(z.string()).optional(),
+  intents: z.array(z.string()).optional(),
+  modes: z.array(z.string()).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  source: z.object({
+    kind: z.string().min(1),
+    ref: z.string().min(1)
+  }).optional(),
+  metadata: z.record(z.unknown()).optional()
+});
 
 export class RationaleService {
   constructor(
@@ -220,7 +249,10 @@ export class RationaleService {
       });
     }
 
-    const results = mergeSearchResults(vectorResults, lexicalResults).slice(0, parsedInput.limit);
+    const results = rankSearchResults(
+      mergeSearchResults(vectorResults, lexicalResults),
+      filters
+    ).slice(0, parsedInput.limit);
     logInfo("Searching rationales completed.", {
       query: parsedInput.query,
       resultCount: results.length
@@ -245,7 +277,7 @@ export class RationaleService {
     }
 
     if (scope === "changed") {
-      return this.indexingService.reindexAll();
+      return this.indexingService.reindexChanged();
     }
 
     return this.indexingService.reindexAll();
@@ -253,28 +285,68 @@ export class RationaleService {
 }
 
 function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknown>) {
+  const parsedPatch = rationalePatchSchema.parse(patch);
   const updatedEntry: RationaleEntry = { ...entry, frontmatter: { ...entry.frontmatter } };
 
-  if (typeof patch.title === "string") {
-    updatedEntry.title = patch.title;
+  if (typeof parsedPatch.title === "string") {
+    updatedEntry.title = parsedPatch.title;
   }
-  if (typeof patch.rationale === "string") {
-    updatedEntry.rationale = patch.rationale;
+  if (typeof parsedPatch.situation === "string") {
+    updatedEntry.situation = parsedPatch.situation;
   }
-  if (typeof patch.status === "string") {
-    updatedEntry.frontmatter.status = patch.status;
+  if (typeof parsedPatch.goal === "string") {
+    updatedEntry.goal = parsedPatch.goal;
   }
-  if (typeof patch.confidence === "number") {
-    updatedEntry.frontmatter.confidence = patch.confidence;
+  if (parsedPatch.constraints) {
+    updatedEntry.constraints = parsedPatch.constraints;
   }
-  if (Array.isArray(patch.domains) && patch.domains.every(isString)) {
-    updatedEntry.frontmatter.domains = patch.domains;
+  if (typeof parsedPatch.decision === "string") {
+    updatedEntry.decision = parsedPatch.decision;
   }
-  if (Array.isArray(patch.intents) && patch.intents.every(isString)) {
-    updatedEntry.frontmatter.intents = patch.intents;
+  if (typeof parsedPatch.rationale === "string") {
+    updatedEntry.rationale = parsedPatch.rationale;
   }
-  if (Array.isArray(patch.modes) && patch.modes.every(isString)) {
-    updatedEntry.frontmatter.modes = patch.modes;
+  if (parsedPatch.rejectedAlternatives) {
+    updatedEntry.rejectedAlternatives = parsedPatch.rejectedAlternatives;
+  }
+  if (typeof parsedPatch.tradeoff === "string") {
+    updatedEntry.tradeoff = parsedPatch.tradeoff;
+  }
+  if (parsedPatch.reuseWhen) {
+    updatedEntry.reuseWhen = parsedPatch.reuseWhen;
+  }
+  if (parsedPatch.avoidWhen) {
+    updatedEntry.avoidWhen = parsedPatch.avoidWhen;
+  }
+  if (typeof parsedPatch.type === "string") {
+    updatedEntry.frontmatter.type = parsedPatch.type;
+  }
+  if (typeof parsedPatch.status === "string") {
+    updatedEntry.frontmatter.status = parsedPatch.status;
+  }
+  if (typeof parsedPatch.scope === "string") {
+    updatedEntry.frontmatter.scope = parsedPatch.scope;
+  }
+  if (typeof parsedPatch.confidence === "number") {
+    updatedEntry.frontmatter.confidence = parsedPatch.confidence;
+  }
+  if (parsedPatch.domains) {
+    updatedEntry.frontmatter.domains = parsedPatch.domains;
+  }
+  if (parsedPatch.intents) {
+    updatedEntry.frontmatter.intents = parsedPatch.intents;
+  }
+  if (parsedPatch.modes) {
+    updatedEntry.frontmatter.modes = parsedPatch.modes;
+  }
+  if (parsedPatch.source) {
+    updatedEntry.frontmatter.source = parsedPatch.source;
+  }
+  if (parsedPatch.metadata) {
+    updatedEntry.frontmatter.metadata = {
+      ...updatedEntry.frontmatter.metadata,
+      ...parsedPatch.metadata
+    };
   }
 
   return updatedEntry;
@@ -293,6 +365,109 @@ function mergeSearchResults<TEntry extends { id: string }>(primary: TEntry[], se
   }
 
   return results;
+}
+
+function rankSearchResults<TEntry extends {
+  confidence: number;
+  status: string;
+  type: string;
+  metadata: Record<string, unknown>;
+  lexicalRank?: number;
+  vectorScore?: number;
+  searchScore?: number;
+  searchReasons?: string[];
+}>(entries: TEntry[], filters: {
+  domains?: string[];
+  intents?: string[];
+  modes?: string[];
+  types?: string[];
+}) {
+  return entries
+    .map((entry) => {
+      const ranking = calculateSearchRanking(entry, filters);
+      entry.searchScore = ranking.score;
+      entry.searchReasons = ranking.reasons;
+      return entry;
+    })
+    .sort((left, right) => (right.searchScore ?? 0) - (left.searchScore ?? 0));
+}
+
+function calculateSearchRanking(entry: {
+  confidence: number;
+  status: string;
+  type: string;
+  metadata: Record<string, unknown>;
+  lexicalRank?: number;
+  vectorScore?: number;
+}, filters: {
+  domains?: string[];
+  intents?: string[];
+  modes?: string[];
+  types?: string[];
+}) {
+  let score = 0;
+  const reasons: string[] = [];
+
+  if (typeof entry.vectorScore === "number") {
+    score += entry.vectorScore * 5;
+    reasons.push(`vector:${entry.vectorScore.toFixed(3)}`);
+  }
+
+  if (typeof entry.lexicalRank === "number") {
+    score += entry.lexicalRank;
+    reasons.push(`lexical:${entry.lexicalRank}`);
+  }
+
+  if (entry.status === "accepted") {
+    score += 1.5;
+    reasons.push("accepted");
+  } else if (entry.status === "candidate") {
+    score += 0.5;
+    reasons.push("candidate");
+  }
+
+  if (entry.confidence > 0) {
+    score += Math.min(entry.confidence, 1);
+    reasons.push(`confidence:${entry.confidence.toFixed(2)}`);
+  }
+
+  if (filters.types && filters.types.includes(entry.type)) {
+    score += 1;
+    reasons.push("type-match");
+  }
+
+  const domainMatches = countMetadataMatches(entry.metadata, "domains", filters.domains);
+  if (domainMatches > 0) {
+    score += domainMatches * 2;
+    reasons.push(`domain-match:${domainMatches}`);
+  }
+
+  const intentMatches = countMetadataMatches(entry.metadata, "intents", filters.intents);
+  if (intentMatches > 0) {
+    score += intentMatches * 1.5;
+    reasons.push(`intent-match:${intentMatches}`);
+  }
+
+  const modeMatches = countMetadataMatches(entry.metadata, "modes", filters.modes);
+  if (modeMatches > 0) {
+    score += modeMatches * 1.5;
+    reasons.push(`mode-match:${modeMatches}`);
+  }
+
+  return { score, reasons };
+}
+
+function countMetadataMatches(metadata: Record<string, unknown>, key: string, expectedValues: string[] | undefined) {
+  if (!expectedValues || expectedValues.length === 0) {
+    return 0;
+  }
+
+  const value = metadata[key];
+  if (!Array.isArray(value)) {
+    return 0;
+  }
+
+  return value.filter((item): item is string => typeof item === "string" && expectedValues.includes(item)).length;
 }
 
 function getStringArray(metadata: Record<string, unknown> | undefined, key: string) {

@@ -84,6 +84,10 @@ export type MemoryEntryRecord = {
   promotedTo?: string;
   deprecatedBy?: string;
   metadata: Record<string, unknown>;
+  lexicalRank?: number;
+  vectorScore?: number;
+  searchScore?: number;
+  searchReasons?: string[];
 };
 
 export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string): MemoryEntryRecord {
@@ -117,4 +121,3 @@ export function summarizeRationale(entry: RationaleEntry) {
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
-

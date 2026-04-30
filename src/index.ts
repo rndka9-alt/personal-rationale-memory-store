@@ -9,6 +9,7 @@ import { ContextComposer } from "./memory/contextComposer.js";
 import { OntologyService } from "./ontology/ontologyService.js";
 import { startStdioMcpServer } from "./mcp/server.js";
 import { startHttpMcpServer } from "./mcp/httpServer.js";
+import { StatusService } from "./diagnostics/statusService.js";
 import { logError, logInfo } from "./diagnostics/index.js";
 
 process.on("uncaughtException", (error) => {
@@ -35,6 +36,7 @@ const indexingService = new IndexingService(pool, fileStore, embeddingProvider, 
 const rationaleService = new RationaleService(pool, fileStore, indexingService, embeddingProvider, config);
 const ontologyService = new OntologyService(pool, config.dataDirectory);
 const contextComposer = new ContextComposer(config.dataDirectory, rationaleService);
+const statusService = new StatusService(pool, fileStore, indexingService, config);
 
 await runMigrations(pool);
 await ontologyService.loadRegistry();
@@ -43,7 +45,8 @@ const mcpServices = {
   dataDirectory: config.dataDirectory,
   rationaleService,
   ontologyService,
-  contextComposer
+  contextComposer,
+  statusService
 };
 
 if (config.mcp.transport === "stdio") {

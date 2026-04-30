@@ -4,11 +4,13 @@ import type { RationaleService } from "../memory/rationaleService.js";
 import type { OntologyService } from "../ontology/ontologyService.js";
 import { recordCandidateInputSchema, searchInputSchema } from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
+import type { StatusService } from "../diagnostics/statusService.js";
 
 export type ToolServices = {
   rationaleService: RationaleService;
   ontologyService: OntologyService;
   contextComposer: ContextComposer;
+  statusService: StatusService;
 };
 
 export type ToolDefinition = {
@@ -38,6 +40,12 @@ const sessionCandidateInputSchema = z.object({
 
 export function toolDefinitions(services: ToolServices): ToolDefinition[] {
   const definitions: ToolDefinition[] = [
+    {
+      name: "get_status",
+      description: "Return service, storage, database, and indexing status.",
+      schema: {},
+      handler: async () => jsonToolResult(await services.statusService.status())
+    },
     {
       name: "search_rationales",
       description: "Search rationale memories with lexical, vector, and metadata signals.",

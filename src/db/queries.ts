@@ -143,6 +143,30 @@ export async function listRecentMemoryEntries(pool: pg.Pool, limit: number) {
   return result.rows.map(mapMemoryEntryRow);
 }
 
+export async function getDatabaseStatus(pool: pg.Pool) {
+  logInfo("DB status query started.");
+  const result = await pool.query(
+    `SELECT
+      (SELECT COUNT(*)::int FROM memory_entries) AS memory_entry_count,
+      (SELECT COUNT(*)::int FROM memory_chunks) AS memory_chunk_count,
+      (SELECT COUNT(*)::int FROM ontology_terms) AS ontology_term_count,
+      (SELECT COUNT(*)::int FROM ontology_proposals) AS ontology_proposal_count`
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Database status query returned no rows.");
+  }
+
+  const status = {
+    memoryEntryCount: Number(row.memory_entry_count),
+    memoryChunkCount: Number(row.memory_chunk_count),
+    ontologyTermCount: Number(row.ontology_term_count),
+    ontologyProposalCount: Number(row.ontology_proposal_count)
+  };
+  logInfo("DB status query completed.", status);
+  return status;
+}
+
 export async function searchMemoryEntriesLexical(pool: pg.Pool, query: string, filters: MemorySearchFilters) {
   logInfo("DB lexical memory search started.", {
     query,
@@ -193,13 +217,17 @@ export async function searchMemoryEntriesVector(
   appendSearchFilters(conditions, values, filters);
 
   const result = await pool.query(
-    `SELECT DISTINCT ON (e.id)
-      e.*,
-      1 - (c.embedding <=> $1::vector) AS vector_score
-    FROM memory_entries e
-    JOIN memory_chunks c ON c.entry_id = e.id
-    WHERE ${conditions.join(" AND ")}
-    ORDER BY e.id, c.embedding <=> $1::vector
+    `SELECT *
+    FROM (
+      SELECT DISTINCT ON (e.id)
+        e.*,
+        1 - (c.embedding <=> $1::vector) AS vector_score
+      FROM memory_entries e
+      JOIN memory_chunks c ON c.entry_id = e.id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY e.id, c.embedding <=> $1::vector
+    ) ranked_entries
+    ORDER BY vector_score DESC
     LIMIT $2`,
     values
   );
@@ -242,7 +270,7 @@ function appendSearchFilters(conditions: string[], values: unknown[], filters: M
 }
 
 function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
-  return {
+  const entry: MemoryEntryRecord = {
     id: String(row.id),
     type: String(row.type),
     status: String(row.status),
@@ -257,9 +285,17 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
     deprecatedBy: typeof row.deprecated_by === "string" ? row.deprecated_by : undefined,
     metadata: isRecord(row.metadata) ? row.metadata : {}
   };
+
+  if (typeof row.lexical_rank === "number") {
+    entry.lexicalRank = row.lexical_rank;
+  }
+  if (typeof row.vector_score === "number") {
+    entry.vectorScore = row.vector_score;
+  }
+
+  return entry;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-

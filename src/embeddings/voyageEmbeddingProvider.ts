@@ -120,15 +120,6 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
       output_dtype: options.outputDtype
     });
 
-    if (!Array.isArray(response.data)) {
-      logWarn("Voyage contextualized embedding response did not include data.", {
-        model: this.options.model,
-        inputType: options.inputType,
-        documentCount: documents.length
-      });
-      throw new Error("Voyage contextualized embedding response did not include data.");
-    }
-
     const responseDocuments = getContextualizedResponseDocuments(response);
     const embeddedDocuments = documents.map((document, documentIndex) => {
       const embeddings = getContextualizedEmbeddings(responseDocuments, documentIndex, document.documentId);

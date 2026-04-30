@@ -1,10 +1,11 @@
 import type pg from "pg";
 import type { AppConfig } from "../config.js";
-import { replaceMemoryChunks, upsertMemoryEntry } from "../db/queries.js";
+import { findMemoryEntry, replaceMemoryChunks, upsertMemoryEntry } from "../db/queries.js";
 import { logInfo } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { toMemoryEntryRecord, type RationaleEntry } from "./schema.js";
 import { MemoryFileStore } from "./fileStore.js";
+import { fingerprintCanonicalFile, readIndexedFileHash, withIndexMetadata } from "./fileIndex.js";
 
 export class IndexingService {
   constructor(
@@ -21,7 +22,10 @@ export class IndexingService {
     });
     const chunks = splitRationaleIntoChunks(entry);
     const embeddings = await this.embedChunks(entry.frontmatter.id, chunks);
-    await upsertMemoryEntry(this.pool, toMemoryEntryRecord(entry, canonicalPath));
+    const fingerprint = await fingerprintCanonicalFile(canonicalPath);
+    const entryRecord = toMemoryEntryRecord(entry, canonicalPath);
+    entryRecord.metadata = withIndexMetadata(entryRecord.metadata, fingerprint);
+    await upsertMemoryEntry(this.pool, entryRecord);
     await replaceMemoryChunks(
       this.pool,
       entry.frontmatter.id,
@@ -59,6 +63,41 @@ export class IndexingService {
       entryCount: entries.length
     });
     return entries.length;
+  }
+
+  async reindexChanged() {
+    const changedEntries = await this.listChangedEntries();
+    logInfo("Reindexing changed memory entries started.", {
+      entryCount: changedEntries.length
+    });
+    for (const { canonicalPath, entry } of changedEntries) {
+      await this.indexEntry(entry, canonicalPath);
+    }
+    logInfo("Reindexing changed memory entries completed.", {
+      entryCount: changedEntries.length
+    });
+    return changedEntries.length;
+  }
+
+  async listChangedEntries() {
+    const entries = await this.fileStore.listEntries();
+    const changedEntries: Array<{ canonicalPath: string; entry: RationaleEntry }> = [];
+
+    for (const listedEntry of entries) {
+      const databaseEntry = await findMemoryEntry(this.pool, listedEntry.entry.frontmatter.id);
+      if (!databaseEntry) {
+        changedEntries.push(listedEntry);
+        continue;
+      }
+
+      const fingerprint = await fingerprintCanonicalFile(listedEntry.canonicalPath);
+      const indexedFileHash = readIndexedFileHash(databaseEntry.metadata);
+      if (indexedFileHash !== fingerprint.hash) {
+        changedEntries.push(listedEntry);
+      }
+    }
+
+    return changedEntries;
   }
 
   private async embedChunks(documentId: string, chunks: Array<{ kind: string; content: string }>) {

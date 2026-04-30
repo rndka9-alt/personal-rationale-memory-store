@@ -4,8 +4,11 @@ import type { ToolServices } from "./tools.js";
 import { toolDefinitions } from "./tools.js";
 import { registerResources, type ResourceServices } from "./resources.js";
 import { registerPrompts } from "./prompts.js";
+import type { StatusService } from "../diagnostics/statusService.js";
 
-export type McpServices = ToolServices & ResourceServices;
+export type McpServices = ToolServices & ResourceServices & {
+  statusService: StatusService;
+};
 
 export function configureMcpServer(server: McpServer, services: McpServices) {
   for (const definition of toolDefinitions(services)) {
