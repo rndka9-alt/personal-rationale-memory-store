@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rationale-memory": {
+      "type": "url",
+      "url": "https://memory-mcp.mtdl.kr/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_AUTH_TOKEN}"
+      }
+    }
+  }
+}
