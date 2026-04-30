@@ -4,24 +4,24 @@ import https from "node:https";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig } from "../config.js";
 import type { McpServices } from "./server.js";
 import { configureMcpServer } from "./server.js";
 
 export async function startHttpMcpServer(config: AppConfig, services: McpServices) {
-  const mcpServer = new McpServer({
-    name: "rationale-memory-store",
-    version: "0.1.0"
-  });
-  configureMcpServer(mcpServer, services);
-
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID()
-  });
-  await mcpServer.connect(transport);
+  const transports = new Map<string, StreamableHTTPServerTransport>();
 
   const requestHandler = async (request: IncomingMessage, response: ServerResponse) => {
     try {
+      if (isOauthDiscoveryPath(request)) {
+        writeJsonResponse(response, 404, {
+          error: "oauth_not_configured",
+          error_description: "This MCP server uses static headers or no auth, not OAuth discovery."
+        });
+        return;
+      }
+
       if (!isExpectedPath(request, config.mcp.path)) {
         writePlainResponse(response, 404, "Not found");
         return;
@@ -33,7 +33,17 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
         return;
       }
 
-      await transport.handleRequest(request, response);
+      if (request.method === "POST") {
+        await handlePostRequest(request, response, services, transports);
+        return;
+      }
+
+      if (request.method === "GET" || request.method === "DELETE") {
+        await handleSessionRequest(request, response, transports);
+        return;
+      }
+
+      writePlainResponse(response, 405, "Method not allowed");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown MCP HTTP error";
       writePlainResponse(response, 500, message);
@@ -55,6 +65,73 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
   return server;
 }
 
+async function handlePostRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  services: McpServices,
+  transports: Map<string, StreamableHTTPServerTransport>
+) {
+  const sessionId = readHeader(request, "mcp-session-id");
+  if (sessionId) {
+    const transport = transports.get(sessionId);
+    if (!transport) {
+      writeJsonRpcError(response, 404, -32000, "Session not found");
+      return;
+    }
+
+    await transport.handleRequest(request, response);
+    return;
+  }
+
+  const body = await readJsonBody(request);
+  if (!isInitializeRequest(body)) {
+    writeJsonRpcError(response, 400, -32000, "Bad Request: No valid session ID provided");
+    return;
+  }
+
+  let transport: StreamableHTTPServerTransport | undefined;
+  transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+    onsessioninitialized: (initializedSessionId) => {
+      if (!transport) {
+        throw new Error("Transport was not created before session initialization.");
+      }
+      transports.set(initializedSessionId, transport);
+    }
+  });
+
+  transport.onclose = () => {
+    const initializedSessionId = transport?.sessionId;
+    if (initializedSessionId) {
+      transports.delete(initializedSessionId);
+    }
+  };
+
+  const server = createConfiguredServer(services);
+  await server.connect(transport);
+  await transport.handleRequest(request, response, body);
+}
+
+async function handleSessionRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  transports: Map<string, StreamableHTTPServerTransport>
+) {
+  const sessionId = readHeader(request, "mcp-session-id");
+  if (!sessionId) {
+    writePlainResponse(response, 400, "Invalid or missing session ID");
+    return;
+  }
+
+  const transport = transports.get(sessionId);
+  if (!transport) {
+    writePlainResponse(response, 404, "Session not found");
+    return;
+  }
+
+  await transport.handleRequest(request, response);
+}
+
 async function loadTlsOptions(config: AppConfig) {
   if (!config.mcp.tlsCertPath || !config.mcp.tlsKeyPath) {
     throw new Error("MCP_TLS_CERT_PATH and MCP_TLS_KEY_PATH are required when MCP_TRANSPORT=https.");
@@ -66,6 +143,42 @@ async function loadTlsOptions(config: AppConfig) {
   ]);
 
   return { cert, key };
+}
+
+function createConfiguredServer(services: McpServices) {
+  const server = new McpServer({
+    name: "rationale-memory-store",
+    version: "0.1.0"
+  });
+  configureMcpServer(server, services);
+  return server;
+}
+
+async function readJsonBody(request: IncomingMessage) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    if (Buffer.isBuffer(chunk)) {
+      chunks.push(chunk);
+    } else {
+      chunks.push(Buffer.from(chunk));
+    }
+  }
+
+  const rawBody = Buffer.concat(chunks).toString("utf8");
+  if (rawBody.trim().length === 0) {
+    throw new Error("Request body is empty.");
+  }
+
+  return JSON.parse(rawBody);
+}
+
+function isOauthDiscoveryPath(request: IncomingMessage) {
+  if (!request.url) {
+    return false;
+  }
+
+  const url = new URL(request.url, "http://localhost");
+  return url.pathname.startsWith("/.well-known/oauth-");
 }
 
 function isExpectedPath(request: IncomingMessage, expectedPath: string) {
@@ -85,6 +198,36 @@ function isAuthorized(request: IncomingMessage, authToken: string | undefined) {
   return request.headers.authorization === `Bearer ${authToken}`;
 }
 
+function readHeader(request: IncomingMessage, name: string) {
+  const value = request.headers[name];
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return undefined;
+}
+
+function writeJsonRpcError(response: ServerResponse, statusCode: number, code: number, message: string) {
+  writeJsonResponse(response, statusCode, {
+    jsonrpc: "2.0",
+    error: { code, message },
+    id: null
+  });
+}
+
+function writeJsonResponse(response: ServerResponse, statusCode: number, body: unknown) {
+  if (response.headersSent) {
+    response.end();
+    return;
+  }
+
+  response.statusCode = statusCode;
+  response.setHeader("Content-Type", "application/json");
+  response.end(JSON.stringify(body));
+}
+
 function writePlainResponse(response: ServerResponse, statusCode: number, body: string) {
   if (response.headersSent) {
     response.end();
@@ -95,4 +238,3 @@ function writePlainResponse(response: ServerResponse, statusCode: number, body: 
   response.setHeader("Content-Type", "text/plain; charset=utf-8");
   response.end(body);
 }
-
