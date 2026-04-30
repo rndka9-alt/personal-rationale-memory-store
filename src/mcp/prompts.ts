@@ -25,16 +25,4 @@ export function registerPrompts(server: McpServer) {
       }
     }]
   }));
-
-  server.prompt("review_rationale_candidates", {
-    candidates: z.string().describe("Candidate rationales to review.")
-  }, ({ candidates }) => ({
-    messages: [{
-      role: "user",
-      content: {
-        type: "text",
-        text: `Review these rationale candidates for reuse quality:\n\n${candidates}`
-      }
-    }]
-  }));
 }
