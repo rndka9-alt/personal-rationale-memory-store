@@ -44,7 +44,14 @@ describe("VoyageEmbeddingProvider", () => {
     vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
       requests.push({ url, body: parseBody(init.body) });
       return new Response(JSON.stringify({
-        data: [{ embeddings: [[0.1], [0.2]] }]
+        data: [{
+          data: [
+            { embedding: [0.1], index: 0, object: "embedding" },
+            { embedding: [0.2], index: 1, object: "embedding" }
+          ],
+          index: 0,
+          object: "list"
+        }]
       }), { status: 200 });
     });
 
@@ -70,6 +77,43 @@ describe("VoyageEmbeddingProvider", () => {
         inputs: [["chunk 1", "chunk 2"]],
         model: "voyage-context-3",
         input_type: "document",
+        output_dimension: 1024,
+        output_dtype: "float"
+      }
+    }]);
+  });
+
+  it("uses one contextualized input group per query", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      requests.push({ url, body: parseBody(init.body) });
+      return new Response(JSON.stringify({
+        data: [
+          { data: [{ embedding: [0.1], index: 0 }] },
+          { data: [{ embedding: [0.2], index: 0 }] }
+        ]
+      }), { status: 200 });
+    });
+
+    const provider = new VoyageEmbeddingProvider({
+      apiKey: "test",
+      model: "voyage-context-3",
+      mode: "contextualized"
+    });
+
+    const result = await provider.embedTexts(["query 1", "query 2"], {
+      inputType: "query",
+      outputDimension: 1024,
+      outputDtype: "float"
+    });
+
+    expect(result).toEqual([[0.1], [0.2]]);
+    expect(requests).toEqual([{
+      url: "https://api.voyageai.com/v1/contextualizedembeddings",
+      body: {
+        inputs: [["query 1"], ["query 2"]],
+        model: "voyage-context-3",
+        input_type: "query",
         output_dimension: 1024,
         output_dtype: "float"
       }
