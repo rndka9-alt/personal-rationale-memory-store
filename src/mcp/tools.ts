@@ -66,11 +66,32 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         explicitMode: z.string().optional(),
         explicitDomains: z.array(z.string()).optional(),
         tokenBudget: z.number().int().positive().optional(),
-        includeFullTopK: z.number().int().min(0).optional()
+        includeFullTopK: z.number().int().min(0).optional(),
+        minScore: z.number().min(0).optional()
       },
       handler: async (input) => ({
         content: [{ type: "text", text: await services.contextComposer.compose(composeInputSchema.parse(input)) }]
       })
+    },
+    {
+      name: "list_rationale_candidates",
+      description: "List rationale candidates that are waiting for review.",
+      schema: { limit: z.number().int().positive().max(50).optional() },
+      handler: async (input) => {
+        const parsedInput = listCandidatesInputSchema.parse(input);
+        return jsonToolResult(await services.rationaleService.listCandidates(parsedInput.limit));
+      }
+    },
+    {
+      name: "review_rationale_candidates",
+      description: "Produce a Markdown review of rationale candidates with missing sections and recommendations.",
+      schema: { limit: z.number().int().positive().max(50).optional() },
+      handler: async (input) => {
+        const parsedInput = listCandidatesInputSchema.parse(input);
+        return {
+          content: [{ type: "text", text: await services.rationaleService.reviewCandidates(parsedInput.limit) }]
+        };
+      }
     },
     {
       name: "record_candidate",
@@ -178,7 +199,12 @@ const composeInputSchema = z.object({
   explicitMode: z.string().optional(),
   explicitDomains: z.array(z.string()).optional(),
   tokenBudget: z.number().int().positive().optional(),
-  includeFullTopK: z.number().int().min(0).optional()
+  includeFullTopK: z.number().int().min(0).optional(),
+  minScore: z.number().min(0).optional()
+});
+
+const listCandidatesInputSchema = z.object({
+  limit: z.number().int().positive().max(50).default(10)
 });
 
 const updateRationaleInputSchema = z.object({

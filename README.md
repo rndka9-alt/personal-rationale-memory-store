@@ -113,6 +113,8 @@ Build first, then run:
 npm run cli -- record-candidate "Prefer rationale" "Reasons transfer better than bare decisions."
 npm run cli -- search "why store rationale"
 npm run cli -- compose "Design a memory retrieval strategy"
+npm run cli -- candidates
+npm run cli -- review-candidates
 npm run cli -- reindex
 npm run cli -- reindex changed
 ```
@@ -198,6 +200,17 @@ Canonical rationale files use YAML frontmatter plus Markdown sections:
 Postgres stores queryable metadata and pgvector embeddings. Files remain the canonical source of truth, so `reindex_memory` can rebuild the DB index from `data/memory/rationales`.
 
 Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, status, and confidence. Returned entries include ranking reasons such as vector score, lexical score, and domain/mode matches so callers can inspect why a memory was selected.
+
+`compose_context` classifies the task into candidate intents, domains, modes, risk level, likely artifact, trivial/substantial signals, and file hints. It retrieves broadly, then includes search scores and ranking reasons in the context pack so downstream LLMs can treat retrieved memories as evidence rather than hidden magic.
+
+Candidate review is available through:
+
+```text
+list_rationale_candidates
+review_rationale_candidates
+```
+
+The review output is Markdown and highlights missing sections, strengths, cautions, and an accept/revise/deprecate recommendation. It does not mutate candidates by itself; acceptance or deprecation stays explicit.
 
 ## Safety
 

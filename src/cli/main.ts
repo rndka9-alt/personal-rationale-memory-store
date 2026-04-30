@@ -25,6 +25,10 @@ if (command === "search") {
 } else if (command === "compose") {
   const task = rest.join(" ");
   console.log(await contextComposer.compose({ task }));
+} else if (command === "candidates") {
+  console.log(JSON.stringify(await rationaleService.listCandidates(parseLimit(rest[0])), null, 2));
+} else if (command === "review-candidates") {
+  console.log(await rationaleService.reviewCandidates(parseLimit(rest[0])));
 } else if (command === "record-candidate") {
   const [title, ...rationaleParts] = rest;
   if (!title || rationaleParts.length === 0) {
@@ -38,7 +42,20 @@ if (command === "search") {
   const scope = rest[0] === "changed" ? "changed" : "all";
   console.log(JSON.stringify({ indexed: await rationaleService.reindexMemory(scope) }, null, 2));
 } else {
-  throw new Error("Usage: npm run cli -- <search|compose|record-candidate|reindex> ...");
+  throw new Error("Usage: npm run cli -- <search|compose|candidates|review-candidates|record-candidate|reindex> ...");
 }
 
 await pool.end();
+
+function parseLimit(value: string | undefined) {
+  if (!value) {
+    return 10;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Limit must be a positive integer.");
+  }
+
+  return parsed;
+}

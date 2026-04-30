@@ -10,6 +10,7 @@ export type ComposeContextInput = {
   explicitDomains?: string[];
   tokenBudget?: number;
   includeFullTopK?: number;
+  minScore?: number;
 };
 
 export class ContextComposer {
@@ -21,32 +22,40 @@ export class ContextComposer {
   async compose(input: ComposeContextInput) {
     const tokenBudget = input.tokenBudget ?? 1200;
     const includeFullTopK = input.includeFullTopK ?? 2;
+    const minScore = input.minScore ?? 0;
     logInfo("Composing rationale context started.", {
       task: input.task,
       explicitMode: input.explicitMode,
       explicitDomains: input.explicitDomains,
       tokenBudget,
-      includeFullTopK
+      includeFullTopK,
+      minScore
     });
     const classification = classifyTask(input.task, input.explicitMode, input.explicitDomains);
     logInfo("Rationale context task classified.", {
       intent: classification.intent,
+      intents: classification.intents,
       domain: classification.domain,
+      domains: classification.domains,
       mode: classification.mode,
+      modes: classification.modes,
       riskLevel: classification.riskLevel,
-      likelyArtifact: classification.likelyArtifact
+      likelyArtifact: classification.likelyArtifact,
+      trivial: classification.trivial,
+      fileHints: classification.fileHints
     });
     const kernel = await this.loadKernel(tokenBudget);
     const searchResults = await this.rationaleService.search({
       query: input.task,
-      domains: [classification.domain],
-      intents: [classification.intent],
-      modes: [classification.mode],
-      limit: 8,
+      domains: input.explicitDomains,
+      modes: input.explicitMode ? [input.explicitMode] : undefined,
+      limit: 12,
       includeDeprecated: false
     });
+    const relevantResults = searchResults.filter((result) => (result.searchScore ?? 0) >= minScore);
     logInfo("Rationale context retrieval completed.", {
-      resultCount: searchResults.length
+      resultCount: searchResults.length,
+      relevantResultCount: relevantResults.length
     });
 
     const lines = [
@@ -54,10 +63,17 @@ export class ContextComposer {
       "",
       "## Task classification",
       `- intent: ${classification.intent}`,
+      `- intents: ${classification.intents.join(", ")}`,
       `- domain: ${classification.domain}`,
+      `- domains: ${classification.domains.join(", ")}`,
       `- mode: ${classification.mode}`,
+      `- modes: ${classification.modes.join(", ")}`,
       `- risk level: ${classification.riskLevel}`,
       `- likely artifact: ${classification.likelyArtifact}`,
+      `- substantial: ${classification.substantial}`,
+      `- trivial: ${classification.trivial}`,
+      classification.fileHints.length > 0 ? `- file hints: ${classification.fileHints.join(", ")}` : "- file hints: none",
+      classification.reasons.length > 0 ? `- classification reasons: ${classification.reasons.join("; ")}` : "- classification reasons: default fallback",
       "",
       "## Stable kernel",
       kernel,
@@ -68,9 +84,9 @@ export class ContextComposer {
     let usedTokens = estimateTokens(lines.join("\n"));
     let index = 0;
 
-    for (const result of searchResults) {
+    for (const result of relevantResults) {
       const entry = await this.rationaleService.getRationale(result.id);
-      const fullText = index < includeFullTopK ? formatFullEntry(entry.rawMarkdown) : formatSummary(result);
+      const fullText = index < includeFullTopK ? formatFullEntry(entry.rawMarkdown, result) : formatSummary(result);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context stopped at token budget.", {
@@ -107,18 +123,43 @@ export class ContextComposer {
   }
 }
 
-function formatSummary(result: { id: string; title: string; summary?: string; type: string; status: string }) {
+function formatSummary(result: {
+  id: string;
+  title: string;
+  summary?: string;
+  type: string;
+  status: string;
+  searchScore?: number;
+  searchReasons?: string[];
+}) {
   return [
     `### ${result.title}`,
     `- id: ${result.id}`,
     `- type: ${result.type}`,
     `- status: ${result.status}`,
+    ...formatRankingLines(result),
     result.summary ? `- summary: ${result.summary}` : "- summary: none"
   ].join("\n");
 }
 
-function formatFullEntry(markdown: string) {
-  return markdown.trim();
+function formatFullEntry(markdown: string, result: { searchScore?: number; searchReasons?: string[] }) {
+  return [
+    "### Retrieved full rationale",
+    ...formatRankingLines(result),
+    "",
+    markdown.trim()
+  ].join("\n");
+}
+
+function formatRankingLines(result: { searchScore?: number; searchReasons?: string[] }) {
+  const lines: string[] = [];
+  if (typeof result.searchScore === "number") {
+    lines.push(`- search score: ${result.searchScore.toFixed(3)}`);
+  }
+  if (result.searchReasons && result.searchReasons.length > 0) {
+    lines.push(`- search reasons: ${result.searchReasons.join(", ")}`);
+  }
+  return lines;
 }
 
 function truncateToTokens(text: string, maxTokens: number) {

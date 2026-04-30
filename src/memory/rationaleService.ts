@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { z } from "zod";
-import { findMemoryEntry, listRecentMemoryEntries, searchMemoryEntriesLexical, searchMemoryEntriesVector, updateMemoryStatus } from "../db/queries.js";
+import { findMemoryEntry, listMemoryEntriesByStatus, listRecentMemoryEntries, searchMemoryEntriesLexical, searchMemoryEntriesVector, updateMemoryStatus } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
@@ -192,6 +192,30 @@ export class RationaleService {
     return entries;
   }
 
+  async listCandidates(limit: number) {
+    logInfo("Listing rationale candidates.", {
+      limit
+    });
+    const entries = await listMemoryEntriesByStatus(this.pool, "candidate", limit);
+    logInfo("Listed rationale candidates.", {
+      limit,
+      resultCount: entries.length
+    });
+    return entries;
+  }
+
+  async reviewCandidates(limit: number) {
+    const candidates = await this.listCandidates(limit);
+    const reviewedCandidates = [];
+
+    for (const candidate of candidates) {
+      const entry = await this.getRationale(candidate.id);
+      reviewedCandidates.push(reviewCandidateEntry(entry));
+    }
+
+    return formatCandidateReview(reviewedCandidates);
+  }
+
   async search(input: unknown) {
     const parsedInput = searchInputSchema.parse(input);
     logInfo("Searching rationales started.", {
@@ -350,6 +374,125 @@ function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknow
   }
 
   return updatedEntry;
+}
+
+type CandidateReview = {
+  id: string;
+  title: string;
+  score: number;
+  recommendation: "accept" | "revise" | "deprecate";
+  missingSections: string[];
+  strengths: string[];
+  cautions: string[];
+};
+
+function reviewCandidateEntry(entry: RationaleEntry): CandidateReview {
+  const missingSections = findMissingSections(entry);
+  const strengths = findStrengths(entry);
+  const cautions = findCautions(entry);
+  const score = Math.max(0, Math.min(100, 100 - missingSections.length * 12 - cautions.length * 6 + strengths.length * 4));
+  const recommendation = score >= 78
+    ? "accept"
+    : score >= 45
+      ? "revise"
+      : "deprecate";
+
+  return {
+    id: entry.frontmatter.id,
+    title: entry.title,
+    score,
+    recommendation,
+    missingSections,
+    strengths,
+    cautions
+  };
+}
+
+function findMissingSections(entry: RationaleEntry) {
+  const missingSections: string[] = [];
+  if (!entry.situation) {
+    missingSections.push("situation");
+  }
+  if (!entry.goal) {
+    missingSections.push("goal");
+  }
+  if (entry.constraints.length === 0) {
+    missingSections.push("constraints");
+  }
+  if (!entry.decision) {
+    missingSections.push("decision");
+  }
+  if (entry.rejectedAlternatives.length === 0) {
+    missingSections.push("rejectedAlternatives");
+  }
+  if (!entry.tradeoff) {
+    missingSections.push("tradeoff");
+  }
+  if (entry.reuseWhen.length === 0) {
+    missingSections.push("reuseWhen");
+  }
+  if (entry.avoidWhen.length === 0) {
+    missingSections.push("avoidWhen");
+  }
+  return missingSections;
+}
+
+function findStrengths(entry: RationaleEntry) {
+  const strengths: string[] = [];
+  if (entry.rationale.length > 120) {
+    strengths.push("substantive rationale");
+  }
+  if (entry.constraints.length > 0) {
+    strengths.push("captures constraints");
+  }
+  if (entry.rejectedAlternatives.length > 0) {
+    strengths.push("captures rejected alternatives");
+  }
+  if (entry.reuseWhen.length > 0 && entry.avoidWhen.length > 0) {
+    strengths.push("has reuse and avoid boundaries");
+  }
+  return strengths;
+}
+
+function findCautions(entry: RationaleEntry) {
+  const cautions: string[] = [];
+  if (entry.frontmatter.domains.length === 0) {
+    cautions.push("no domains tagged");
+  }
+  if (entry.frontmatter.intents.length === 0) {
+    cautions.push("no intents tagged");
+  }
+  if (entry.frontmatter.modes.length === 0) {
+    cautions.push("no modes tagged");
+  }
+  if (entry.rationale.length < 80) {
+    cautions.push("rationale is short");
+  }
+  return cautions;
+}
+
+function formatCandidateReview(reviews: CandidateReview[]) {
+  const lines = [
+    "# Rationale Candidate Review",
+    "",
+    `- candidate count: ${reviews.length}`,
+    ""
+  ];
+
+  for (const review of reviews) {
+    lines.push(
+      `## ${review.title}`,
+      `- id: ${review.id}`,
+      `- score: ${review.score}`,
+      `- recommendation: ${review.recommendation}`,
+      `- missing sections: ${review.missingSections.length > 0 ? review.missingSections.join(", ") : "none"}`,
+      `- strengths: ${review.strengths.length > 0 ? review.strengths.join(", ") : "none"}`,
+      `- cautions: ${review.cautions.length > 0 ? review.cautions.join(", ") : "none"}`,
+      ""
+    );
+  }
+
+  return lines.join("\n").trimEnd();
 }
 
 function mergeSearchResults<TEntry extends { id: string }>(primary: TEntry[], secondary: TEntry[]) {
