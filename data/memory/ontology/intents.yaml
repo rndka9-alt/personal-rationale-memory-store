@@ -1,0 +1,10 @@
+terms:
+  - id: intent-design
+    name: design
+    description: Choosing structure, boundaries, or approach.
+  - id: intent-debug
+    name: debug
+    description: Investigating and fixing failures.
+  - id: intent-review
+    name: review
+    description: Evaluating correctness, risks, and regressions.

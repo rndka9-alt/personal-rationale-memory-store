@@ -1,0 +1,29 @@
+policies:
+  - id: design-rationale-heavy
+    when:
+      intent_any: [design, compare, plan]
+      mode_any: [planning]
+    retrieve:
+      types: [principle, rationale]
+      max_items: 8
+    inject:
+      mode: full_top_2_summary_rest
+      token_budget: 1800
+  - id: execution-light
+    when:
+      mode_any: [execution, coding]
+    retrieve:
+      types: [principle, rationale]
+      max_items: 5
+    inject:
+      mode: summary
+      token_budget: 800
+  - id: troubleshooting-history
+    when:
+      intent_any: [debug, troubleshoot]
+    retrieve:
+      types: [known_failure, constraint, rationale]
+      max_items: 8
+    inject:
+      mode: summary_with_evidence
+      token_budget: 1400

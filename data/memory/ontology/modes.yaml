@@ -1,0 +1,10 @@
+terms:
+  - id: mode-planning
+    name: planning
+    description: Deciding what to build or change.
+  - id: mode-coding
+    name: coding
+    description: Implementing changes.
+  - id: mode-review
+    name: review
+    description: Inspecting completed work.

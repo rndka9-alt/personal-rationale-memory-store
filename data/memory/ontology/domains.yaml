@@ -1,0 +1,7 @@
+terms:
+  - id: domain-development
+    name: development
+    description: Software design and implementation.
+  - id: domain-memory-system
+    name: memory-system
+    description: Rationale storage, retrieval, and lifecycle.

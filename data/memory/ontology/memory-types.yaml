@@ -1,0 +1,10 @@
+terms:
+  - id: memory-type-rationale
+    name: rationale
+    description: A reusable explanation for why a decision made sense.
+  - id: memory-type-principle
+    name: principle
+    description: A stable high-level rule derived from accepted rationale.
+  - id: memory-type-known-failure
+    name: known_failure
+    description: A remembered failure mode and its cause.
