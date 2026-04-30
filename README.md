@@ -12,7 +12,81 @@ npm run build
 docker compose up
 ```
 
-The MCP server runs over stdio in the `app` container. Postgres is exposed locally on `54329`.
+The MCP server runs in the `app` container. Postgres is reachable only on the Docker Compose internal network by default and is not exposed on a host port.
+
+By default, Docker Compose starts the MCP server as internal HTTP on `0.0.0.0:3443` and publishes it only to host loopback:
+
+```text
+http://127.0.0.1:3443/mcp
+```
+
+Use Cloudflare Tunnel or another trusted reverse proxy to terminate HTTPS in front of that local HTTP endpoint.
+
+## Persistence
+
+Postgres data is stored in a Docker named volume, not a host bind mount:
+
+```yaml
+volumes:
+  postgres-data:
+    name: rationale-memory-postgres-data
+```
+
+The only Postgres-side bind mount is `./migrations:/docker-entrypoint-initdb.d:ro`, which is used to seed schema files when the database volume is first created. It is not the database storage location.
+
+Canonical Markdown/YAML memories remain under `./data:/app/data` as a host bind mount because those files are intentionally human-readable and editable outside the container.
+
+## MCP Transport
+
+For Docker Compose, use Streamable HTTP behind Cloudflare Tunnel:
+
+```env
+MCP_TRANSPORT=http
+MCP_HOST=0.0.0.0
+MCP_PORT=3443
+MCP_PATH=/mcp
+MCP_AUTH_TOKEN=choose-a-local-token
+```
+
+Point Cloudflare Tunnel at:
+
+```text
+http://127.0.0.1:3443
+```
+
+The public URL served by Cloudflare should route to:
+
+```text
+/mcp
+```
+
+When `MCP_AUTH_TOKEN` is set, MCP clients must send:
+
+```text
+Authorization: Bearer choose-a-local-token
+```
+
+Direct TLS from the Node app is still available for local experiments, but it is not the recommended deployment path when Cloudflare Tunnel is in front:
+
+```env
+MCP_TRANSPORT=https
+MCP_HOST=127.0.0.1
+MCP_PORT=3443
+MCP_PATH=/mcp
+MCP_AUTH_TOKEN=choose-a-local-token
+MCP_TLS_CERT_PATH=/absolute/path/to/cert.pem
+MCP_TLS_KEY_PATH=/absolute/path/to/key.pem
+```
+
+When the MCP server runs inside Docker Compose, keep the database URL pointed at the compose service name:
+
+```env
+DATABASE_URL=postgres://rationale:rationale@postgres:5432/rationale_memory
+```
+
+If you intentionally run the MCP server from the host instead of Docker, use another reachable database URL. The default compose setup keeps Postgres private.
+
+Do not expose mutation tools on a public network without Cloudflare Access or equivalent access control plus `MCP_AUTH_TOKEN`. This MVP is still designed for private operation first.
 
 ## Local CLI
 

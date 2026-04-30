@@ -7,20 +7,23 @@ import { registerPrompts } from "./prompts.js";
 
 export type McpServices = ToolServices & ResourceServices;
 
-export async function startMcpServer(services: McpServices) {
-  const server = new McpServer({
-    name: "rationale-memory-store",
-    version: "0.1.0"
-  });
-
+export function configureMcpServer(server: McpServer, services: McpServices) {
   for (const definition of toolDefinitions(services)) {
     server.tool(definition.name, definition.description, definition.schema, definition.handler);
   }
 
   registerResources(server, services);
   registerPrompts(server);
+}
+
+export async function startStdioMcpServer(services: McpServices) {
+  const server = new McpServer({
+    name: "rationale-memory-store",
+    version: "0.1.0"
+  });
+
+  configureMcpServer(server, services);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
-

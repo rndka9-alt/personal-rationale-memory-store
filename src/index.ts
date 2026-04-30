@@ -7,7 +7,8 @@ import { IndexingService } from "./memory/indexingService.js";
 import { RationaleService } from "./memory/rationaleService.js";
 import { ContextComposer } from "./memory/contextComposer.js";
 import { OntologyService } from "./ontology/ontologyService.js";
-import { startMcpServer } from "./mcp/server.js";
+import { startStdioMcpServer } from "./mcp/server.js";
+import { startHttpMcpServer } from "./mcp/httpServer.js";
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl);
@@ -20,10 +21,16 @@ const contextComposer = new ContextComposer(config.dataDirectory, rationaleServi
 
 await runMigrations(pool);
 await ontologyService.loadRegistry();
-await startMcpServer({
+
+const mcpServices = {
   dataDirectory: config.dataDirectory,
   rationaleService,
   ontologyService,
   contextComposer
-});
+};
 
+if (config.mcp.transport === "stdio") {
+  await startStdioMcpServer(mcpServices);
+} else {
+  await startHttpMcpServer(config, mcpServices);
+}

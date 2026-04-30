@@ -8,6 +8,14 @@ services:
         condition: service_healthy
     volumes:
       - ./data:/app/data
+    ports:
+      - "127.0.0.1:3443:3443"
+    environment:
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-http}
+      MCP_HOST: ${MCP_HOST:-0.0.0.0}
+      MCP_PORT: ${MCP_PORT:-3443}
+      MCP_PATH: ${MCP_PATH:-/mcp}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
     command: ["npm", "run", "start:mcp"]
     stdin_open: true
     tty: true
@@ -18,11 +26,14 @@ services:
       POSTGRES_USER: rationale
       POSTGRES_PASSWORD: rationale
       POSTGRES_DB: rationale_memory
-    ports:
-      - "54329:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
+      - type: volume
+        source: postgres-data
+        target: /var/lib/postgresql/data
+      - type: bind
+        source: ./migrations
+        target: /docker-entrypoint-initdb.d
+        read_only: true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rationale -d rationale_memory"]
       interval: 5s
@@ -31,3 +42,4 @@ services:
 
 volumes:
   postgres-data:
+    name: rationale-memory-postgres-data

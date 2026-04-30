@@ -3,10 +3,18 @@ import { z } from "zod";
 
 const embeddingModeSchema = z.enum(["standard", "contextualized", "mock"]);
 const embeddingDtypeSchema = z.enum(["float", "int8", "uint8", "binary", "ubinary"]);
+const mcpTransportSchema = z.enum(["stdio", "http", "https"]);
 
 const environmentSchema = z.object({
   DATABASE_URL: z.string().default("postgres://rationale:rationale@localhost:54329/rationale_memory"),
   DATA_DIR: z.string().default(path.resolve(process.cwd(), "data/memory")),
+  MCP_TRANSPORT: mcpTransportSchema.default("stdio"),
+  MCP_HOST: z.string().default("127.0.0.1"),
+  MCP_PORT: z.coerce.number().int().positive().default(3443),
+  MCP_PATH: z.string().default("/mcp"),
+  MCP_AUTH_TOKEN: z.string().optional(),
+  MCP_TLS_CERT_PATH: z.string().optional(),
+  MCP_TLS_KEY_PATH: z.string().optional(),
   VOYAGE_API_KEY: z.string().optional(),
   EMBEDDING_PROVIDER: z.string().default("mock"),
   EMBEDDING_MODEL: z.string().default("mock"),
@@ -26,6 +34,15 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   return {
     databaseUrl: parsedEnvironment.DATABASE_URL,
     dataDirectory: parsedEnvironment.DATA_DIR,
+    mcp: {
+      transport: parsedEnvironment.MCP_TRANSPORT,
+      host: parsedEnvironment.MCP_HOST,
+      port: parsedEnvironment.MCP_PORT,
+      path: normalizePath(parsedEnvironment.MCP_PATH),
+      authToken: parsedEnvironment.MCP_AUTH_TOKEN,
+      tlsCertPath: parsedEnvironment.MCP_TLS_CERT_PATH,
+      tlsKeyPath: parsedEnvironment.MCP_TLS_KEY_PATH
+    },
     embedding: {
       provider,
       model: parsedEnvironment.EMBEDDING_MODEL === "mock" && shouldUseVoyageDefaults
@@ -39,3 +56,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   };
 }
 
+function normalizePath(value: string) {
+  return value.startsWith("/") ? value : `/${value}`;
+}
