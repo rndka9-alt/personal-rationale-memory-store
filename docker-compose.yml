@@ -30,7 +30,7 @@ services:
     volumes:
       - ./data:/app/data
     ports:
-      - "127.0.0.1:3450:3450"
+      - "0.0.0.0:3450:3450"
     environment:
       WEB_HOST: ${WEB_HOST:-0.0.0.0}
       WEB_PORT: ${WEB_PORT:-3450}
