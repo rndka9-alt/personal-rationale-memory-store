@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { logInfo } from "../diagnostics/index.js";
-import type { MemoryEntryRecord, MemorySearchFilters } from "../memory/schema.js";
+import type { MemoryEntryRecord, MemorySearchFilters, ProjectContext } from "../memory/schema.js";
 
 export type MemoryChunkInsert = {
   entryId: string;
@@ -287,6 +287,7 @@ function appendSearchFilters(conditions: string[], values: unknown[], filters: M
 }
 
 function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
+  const metadata = isRecord(row.metadata) ? row.metadata : {};
   const entry: MemoryEntryRecord = {
     id: String(row.id),
     type: String(row.type),
@@ -300,7 +301,8 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
     confidence: Number(row.confidence),
     promotedTo: typeof row.promoted_to === "string" ? row.promoted_to : undefined,
     deprecatedBy: typeof row.deprecated_by === "string" ? row.deprecated_by : undefined,
-    metadata: isRecord(row.metadata) ? row.metadata : {}
+    project: readProjectContext(metadata.project),
+    metadata
   };
 
   if (typeof row.lexical_rank === "number") {
@@ -315,4 +317,23 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readProjectContext(value: unknown): ProjectContext | undefined {
+  if (typeof value === "string" && value.length > 0) {
+    return { name: value };
+  }
+
+  if (!isRecord(value) || typeof value.name !== "string" || value.name.length === 0) {
+    return undefined;
+  }
+
+  const project: ProjectContext = { name: value.name };
+  if (typeof value.repo === "string" && value.repo.length > 0) {
+    project.repo = value.repo;
+  }
+  if (typeof value.root === "string" && value.root.length > 0) {
+    project.root = value.root;
+  }
+  return project;
 }

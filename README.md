@@ -218,11 +218,14 @@ Canonical rationale files use YAML frontmatter plus Markdown sections:
 - tradeoff
 - reuse when
 - avoid when
+- project context
 - source metadata
 
 Postgres stores queryable metadata and pgvector embeddings. Files remain the canonical source of truth, so `reindex_memory` can rebuild the DB index from `data/memory/rationales`.
 
 Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, status, and confidence. Returned entries include ranking reasons such as vector score, lexical score, and domain/mode matches so callers can inspect why a memory was selected.
+
+Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs; it is not currently used as a search penalty for memories from other projects.
 
 `compose_context` classifies the task into candidate intents, domains, modes, risk level, likely artifact, trivial/substantial signals, and file hints. It retrieves broadly, then includes search scores and ranking reasons in the context pack so downstream LLMs can treat retrieved memories as evidence rather than hidden magic.
 

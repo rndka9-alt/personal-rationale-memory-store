@@ -6,7 +6,7 @@ import {
   submitReviewAction,
   type ReviewQueueFilters
 } from "./api/reviewQueue";
-import type { ReviewAction, ReviewQueueItem } from "./types/review";
+import type { ProjectContext, ReviewAction, ReviewQueueItem } from "./types/review";
 import { namedStatusColor } from "./theme/tokens";
 
 const reviewStates = [
@@ -175,6 +175,9 @@ function QueueList(props: {
                 <h3 className="line-clamp-2 text-sm font-medium text-ink-strong">{item.title}</h3>
                 <MetadataPill value={readMetadataString(item.metadata, "capture_kind") ?? "manual"} />
               </div>
+              {item.project ? (
+                <p className="mt-2 line-clamp-1 text-xs text-ink-muted">{formatProjectLabel(item.project)}</p>
+              ) : null}
               <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-muted">{item.summary ?? "No summary available."}</p>
               <p className="mt-3 text-xs text-ink-faint">{item.id}</p>
             </button>
@@ -237,9 +240,19 @@ function DetailPanel(props: {
         </article>
 
         <aside className="space-y-5 border-t border-line-base pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
+          <ProjectFacts
+            project={entry.frontmatter.project}
+            source={entry.frontmatter.source}
+            scope={entry.frontmatter.scope}
+            confidence={entry.frontmatter.confidence}
+            domains={entry.frontmatter.domains}
+            intents={entry.frontmatter.intents}
+            modes={entry.frontmatter.modes}
+          />
           <ReviewFacts title="Missing" items={review.missingSections} tone="warning" />
           <ReviewFacts title="Strengths" items={review.strengths} tone="success" />
           <ReviewFacts title="Cautions" items={review.cautions} tone="danger" />
+          <MetadataDetails metadata={entry.frontmatter.metadata} />
 
           <label className="block">
             <span className="mb-2 block text-sm font-medium text-ink-strong">Review notes</span>
@@ -330,6 +343,68 @@ function ReviewFacts(props: { title: string; items: string[]; tone: "warning" | 
   );
 }
 
+function ProjectFacts(props: {
+  project?: ProjectContext;
+  source?: { kind: string; ref: string };
+  scope: string;
+  confidence: number;
+  domains: string[];
+  intents: string[];
+  modes: string[];
+}) {
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Context</h3>
+      <div className="space-y-3 text-sm leading-6">
+        <MetadataLine label="Project" value={props.project ? formatProjectLabel(props.project) : "Not provided."} />
+        <MetadataLine label="Repository" value={props.project?.repo} />
+        <MetadataLine label="Root" value={props.project?.root} />
+        <MetadataLine label="Scope" value={props.scope} />
+        <MetadataLine label="Confidence" value={props.confidence.toFixed(2)} />
+        <MetadataLine label="Source" value={props.source ? `${props.source.kind}: ${props.source.ref}` : undefined} />
+        <MetadataList label="Domains" items={props.domains} />
+        <MetadataList label="Intents" items={props.intents} />
+        <MetadataList label="Modes" items={props.modes} />
+      </div>
+    </section>
+  );
+}
+
+function MetadataLine(props: { label: string; value?: string }) {
+  return (
+    <div>
+      <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{props.label}</p>
+      <p className="break-words text-ink-base">{props.value ?? "Not provided."}</p>
+    </div>
+  );
+}
+
+function MetadataList(props: { label: string; items: string[] }) {
+  return (
+    <div>
+      <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{props.label}</p>
+      {props.items.length === 0 ? (
+        <p className="text-ink-muted">Not provided.</p>
+      ) : (
+        <div className="mt-1 flex flex-wrap gap-2">
+          {props.items.map((item) => <MetadataPill key={item} value={item} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetadataDetails(props: { metadata: Record<string, unknown> }) {
+  return (
+    <details className="group">
+      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-ink-muted">Metadata</summary>
+      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-subtle p-3 text-xs leading-5 text-ink-base">
+        {JSON.stringify(props.metadata, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
 function StatusPill(props: { value: string }) {
   const className = props.value === "reviewed"
     ? namedStatusColor.reviewed
@@ -371,3 +446,6 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
+function formatProjectLabel(project: ProjectContext) {
+  return project.repo ? `${project.name} (${project.repo})` : project.name;
+}

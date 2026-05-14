@@ -19,6 +19,11 @@ describe("MemoryFileStore", () => {
         intents: ["design"],
         modes: ["planning"],
         confidence: 0.5,
+        project: {
+          name: "personal-rationale-memory-store",
+          repo: "maetdol/personal-rationale-memory-store",
+          root: "/workspace/personal-rationale-memory-store"
+        },
         metadata: {}
       },
       title: "Keep rationale canonical",
@@ -38,9 +43,9 @@ describe("MemoryFileStore", () => {
     const parsed = await store.readEntry(canonicalPath);
 
     expect(parsed.title).toBe(entry.title);
+    expect(parsed.frontmatter.project).toEqual(entry.frontmatter.project);
     expect(parsed.rejectedAlternatives).toEqual(entry.rejectedAlternatives);
 
     await rm(directory, { recursive: true, force: true });
   });
 });
-

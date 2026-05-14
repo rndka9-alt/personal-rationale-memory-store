@@ -13,6 +13,10 @@ describe("rationaleEntrySchema", () => {
         intents: ["design"],
         modes: ["planning"],
         confidence: 0.8,
+        project: {
+          name: "personal-rationale-memory-store",
+          repo: "maetdol/personal-rationale-memory-store"
+        },
         metadata: {}
       },
       title: "Prefer rationale over bare decisions",
@@ -20,6 +24,7 @@ describe("rationaleEntrySchema", () => {
     });
 
     expect(entry.frontmatter.id).toBe("R2026-04-30-001");
+    expect(entry.frontmatter.project?.name).toBe("personal-rationale-memory-store");
     expect(entry.constraints).toEqual([]);
   });
 });

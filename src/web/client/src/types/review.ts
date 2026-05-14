@@ -1,3 +1,9 @@
+export type ProjectContext = {
+  name: string;
+  repo?: string;
+  root?: string;
+};
+
 export type ReviewQueueItem = {
   id: string;
   type: string;
@@ -8,6 +14,7 @@ export type ReviewQueueItem = {
   scope: string;
   sourceKind?: string;
   sourceRef?: string;
+  project?: ProjectContext;
   confidence: number;
   metadata: Record<string, unknown>;
 };
@@ -22,6 +29,7 @@ export type RationaleEntry = {
     intents: string[];
     modes: string[];
     confidence: number;
+    project?: ProjectContext;
     metadata: Record<string, unknown>;
     source?: {
       kind: string;
@@ -60,4 +68,3 @@ export type ReviewQueueDetail = {
 };
 
 export type ReviewAction = "accept" | "keep_candidate" | "needs_revision" | "deprecate";
-

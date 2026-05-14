@@ -10,6 +10,12 @@ export const sourceMetadataSchema = z.object({
   ref: z.string().min(1)
 });
 
+export const projectContextSchema = z.object({
+  name: z.string().min(1),
+  repo: z.string().min(1).optional(),
+  root: z.string().min(1).optional()
+});
+
 export const rationaleFrontmatterSchema = z.object({
   id: z.string().min(1),
   type: z.string().min(1).default("rationale"),
@@ -20,6 +26,7 @@ export const rationaleFrontmatterSchema = z.object({
   modes: z.array(z.string()).default([]),
   confidence: z.number().min(0).max(1).default(0.5),
   source: sourceMetadataSchema.optional(),
+  project: projectContextSchema.optional(),
   promotedTo: z.string().optional(),
   deprecatedBy: z.string().optional(),
   metadata: z.record(z.unknown()).default({})
@@ -52,6 +59,7 @@ export const recordCandidateInputSchema = z.object({
   reuseWhen: z.array(z.string()).optional(),
   avoidWhen: z.array(z.string()).optional(),
   source: sourceMetadataSchema.optional(),
+  project: projectContextSchema.optional(),
   metadata: z.record(z.unknown()).optional()
 });
 
@@ -67,6 +75,7 @@ export const autoCaptureRationaleInputSchema = z.object({
   reuseWhen: z.array(z.string()).min(1),
   avoidWhen: z.array(z.string()).min(1),
   source: sourceMetadataSchema.optional(),
+  project: projectContextSchema.optional(),
   captureReason: z.string().min(1),
   sessionRef: z.string().optional(),
   metadata: recordCandidateInputSchema.shape.metadata
@@ -86,6 +95,7 @@ export const searchInputSchema = z.object({
 export type RationaleEntry = z.infer<typeof rationaleEntrySchema>;
 export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
 export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
+export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
 
 export type MemoryEntryRecord = {
@@ -98,6 +108,7 @@ export type MemoryEntryRecord = {
   scope: string;
   sourceKind?: string;
   sourceRef?: string;
+  project?: z.infer<typeof projectContextSchema>;
   confidence: number;
   promotedTo?: string;
   deprecatedBy?: string;
@@ -109,6 +120,17 @@ export type MemoryEntryRecord = {
 };
 
 export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string): MemoryEntryRecord {
+  const metadata: Record<string, unknown> = {
+    ...entry.frontmatter.metadata,
+    domains: entry.frontmatter.domains,
+    intents: entry.frontmatter.intents,
+    modes: entry.frontmatter.modes
+  };
+
+  if (entry.frontmatter.project) {
+    metadata.project = entry.frontmatter.project;
+  }
+
   return {
     id: entry.frontmatter.id,
     type: entry.frontmatter.type,
@@ -119,15 +141,11 @@ export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string
     scope: entry.frontmatter.scope,
     sourceKind: entry.frontmatter.source?.kind,
     sourceRef: entry.frontmatter.source?.ref,
+    project: entry.frontmatter.project,
     confidence: entry.frontmatter.confidence,
     promotedTo: entry.frontmatter.promotedTo,
     deprecatedBy: entry.frontmatter.deprecatedBy,
-    metadata: {
-      ...entry.frontmatter.metadata,
-      domains: entry.frontmatter.domains,
-      intents: entry.frontmatter.intents,
-      modes: entry.frontmatter.modes
-    }
+    metadata
   };
 }
 

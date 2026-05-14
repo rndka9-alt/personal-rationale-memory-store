@@ -33,6 +33,7 @@ const sessionCandidateInputSchema = z.object({
   tradeoff: recordCandidateInputSchema.shape.tradeoff,
   reuseWhen: recordCandidateInputSchema.shape.reuseWhen,
   avoidWhen: recordCandidateInputSchema.shape.avoidWhen,
+  project: recordCandidateInputSchema.shape.project,
   metadata: recordCandidateInputSchema.shape.metadata
 });
 

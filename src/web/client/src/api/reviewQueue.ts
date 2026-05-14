@@ -1,5 +1,5 @@
 import { requestJson } from "./http";
-import type { ReviewAction, ReviewQueueDetail, ReviewQueueItem } from "../types/review";
+import type { ProjectContext, ReviewAction, ReviewQueueDetail, ReviewQueueItem } from "../types/review";
 
 export type ReviewQueueFilters = {
   limit: number;
@@ -74,6 +74,7 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
     summary: readOptionalString(value, "summary"),
     sourceKind: readOptionalString(value, "sourceKind"),
     sourceRef: readOptionalString(value, "sourceRef"),
+    project: parseProject(value.project),
     metadata: readRecord(value, "metadata")
   };
 }
@@ -113,6 +114,7 @@ function parseRationaleEntry(value: Record<string, unknown>) {
       intents: readStringArray(frontmatterValue, "intents"),
       modes: readStringArray(frontmatterValue, "modes"),
       confidence: readNumber(frontmatterValue, "confidence"),
+      project: parseProject(frontmatterValue.project),
       metadata: readRecord(frontmatterValue, "metadata"),
       source: parseSource(frontmatterValue.source)
     },
@@ -152,6 +154,23 @@ function parseSource(value: unknown) {
     kind: readRequiredString(value, "kind"),
     ref: readRequiredString(value, "ref")
   };
+}
+
+function parseProject(value: unknown) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const project: ProjectContext = { name: readRequiredString(value, "name") };
+  const repo = readOptionalString(value, "repo");
+  const root = readOptionalString(value, "root");
+  if (repo) {
+    project.repo = repo;
+  }
+  if (root) {
+    project.root = root;
+  }
+  return project;
 }
 
 function parseRecommendation(value: string) {
@@ -199,4 +218,3 @@ function readRecord(value: Record<string, unknown>, key: string) {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-

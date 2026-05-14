@@ -8,10 +8,12 @@ import { MemoryFileStore } from "./fileStore.js";
 import { IndexingService } from "./indexingService.js";
 import {
   autoCaptureRationaleInputSchema,
+  projectContextSchema,
   recordCandidateInputSchema,
   searchInputSchema,
   type AutoCaptureRationaleInput,
   type MemoryEntryRecord,
+  type ProjectContext,
   type RecordCandidateInput,
   type RationaleEntry
 } from "./schema.js";
@@ -41,6 +43,7 @@ const rationalePatchSchema = z.object({
     kind: z.string().min(1),
     ref: z.string().min(1)
   }).optional(),
+  project: projectContextSchema.optional(),
   metadata: z.record(z.unknown()).optional()
 });
 
@@ -57,6 +60,7 @@ export class RationaleService {
     const validatedInput = recordCandidateInputSchema.parse(input);
     const id = createRationaleId();
     const metadata = normalizeCandidateMetadata(validatedInput.metadata, "manual");
+    const project = validatedInput.project ?? readProjectMetadata(validatedInput.metadata);
     logInfo("Recording rationale candidate started.", {
       entryId: id,
       title: validatedInput.title
@@ -72,6 +76,7 @@ export class RationaleService {
         modes: getStringArray(validatedInput.metadata, "modes"),
         confidence: 0.5,
         source: validatedInput.source,
+        project,
         metadata
       },
       title: validatedInput.title,
@@ -127,6 +132,7 @@ export class RationaleService {
         kind: "auto_capture",
         ref: validatedInput.sessionRef ?? "llm-autonomous"
       },
+      project: validatedInput.project,
       metadata
     });
 
@@ -502,6 +508,9 @@ function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknow
   if (parsedPatch.source) {
     updatedEntry.frontmatter.source = parsedPatch.source;
   }
+  if (parsedPatch.project) {
+    updatedEntry.frontmatter.project = parsedPatch.project;
+  }
   if (parsedPatch.metadata) {
     updatedEntry.frontmatter.metadata = {
       ...updatedEntry.frontmatter.metadata,
@@ -772,6 +781,34 @@ function getStringArray(metadata: Record<string, unknown> | undefined, key: stri
 function readStringMetadata(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function readProjectMetadata(metadata: Record<string, unknown> | undefined): ProjectContext | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const value = metadata.project;
+  if (typeof value === "string" && value.length > 0) {
+    return { name: value };
+  }
+
+  if (isRecord(value) && typeof value.name === "string" && value.name.length > 0) {
+    const project: ProjectContext = { name: value.name };
+    if (typeof value.repo === "string" && value.repo.length > 0) {
+      project.repo = value.repo;
+    }
+    if (typeof value.root === "string" && value.root.length > 0) {
+      project.root = value.root;
+    }
+    return project;
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeCandidateMetadata(metadata: Record<string, unknown> | undefined, defaultCaptureKind: string) {
