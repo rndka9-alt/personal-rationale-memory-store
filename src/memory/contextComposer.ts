@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
 import { classifyTask } from "../ontology/taskClassifier.js";
 import type { RationaleService } from "./rationaleService.js";
+import type { MemoryEntryRecord } from "./schema.js";
 
 export type ComposeContextInput = {
   task: string;
@@ -13,7 +15,15 @@ export type ComposeContextInput = {
   minScore?: number;
 };
 
+export type ContinueContextInput = {
+  cursor: string;
+  tokenBudget?: number;
+  includeFullTopK?: number;
+};
+
 export class ContextComposer {
+  private readonly continuationCache = new ContinuationCache(10);
+
   constructor(
     private readonly dataDirectory: string,
     private readonly rationaleService: RationaleService
@@ -49,7 +59,7 @@ export class ContextComposer {
       query: input.task,
       domains: input.explicitDomains,
       modes: input.explicitMode ? [input.explicitMode] : undefined,
-      limit: 12,
+      limit: 50,
       includeDeprecated: false
     });
     const relevantResults = searchResults.filter((result) => (result.searchScore ?? 0) >= minScore);
@@ -103,10 +113,103 @@ export class ContextComposer {
       index += 1;
     }
 
-    const context = lines.join("\n").trimEnd();
+    if (index < relevantResults.length) {
+      const cursor = this.continuationCache.put({
+        task: input.task,
+        candidates: relevantResults,
+        position: index
+      });
+      const manifest = formatContinuationManifest(cursor, relevantResults, index);
+      lines.push("", manifest);
+    }
+
+    const contextWithManifest = lines.join("\n").trimEnd();
     logInfo("Composing rationale context completed.", {
       usedTokens,
       includedCount: index,
+      omittedCount: Math.max(0, relevantResults.length - index),
+      outputCharacters: contextWithManifest.length
+    });
+    return contextWithManifest;
+  }
+
+  async continueContext(input: ContinueContextInput) {
+    const tokenBudget = input.tokenBudget ?? 1200;
+    const includeFullTopK = input.includeFullTopK ?? 0;
+    const snapshot = this.continuationCache.get(input.cursor);
+    if (!snapshot) {
+      throw new Error("Continuation cursor was evicted. Run compose_context again.");
+    }
+
+    logInfo("Continuing rationale context started.", {
+      cursor: input.cursor,
+      task: snapshot.task,
+      tokenBudget,
+      includeFullTopK,
+      position: snapshot.position,
+      candidateCount: snapshot.candidates.length
+    });
+
+    const lines = [
+      "# Rationale Context Continuation",
+      "",
+      `- cursor: ${input.cursor}`,
+      `- original task: ${snapshot.task}`,
+      `- candidate position: ${snapshot.position} of ${snapshot.candidates.length}`,
+      "",
+      "## Retrieved rationales"
+    ];
+
+    let usedTokens = estimateTokens(lines.join("\n"));
+    let includedCount = 0;
+    let position = snapshot.position;
+
+    while (position < snapshot.candidates.length) {
+      const result = snapshot.candidates[position];
+      if (!result) {
+        throw new Error(`Continuation snapshot position ${position} is invalid.`);
+      }
+
+      const entry = await this.rationaleService.getRationale(result.id);
+      const fullText = includedCount < includeFullTopK ? formatFullEntry(entry.rawMarkdown, result) : formatSummary(result);
+      const nextTokens = estimateTokens(fullText);
+      if (usedTokens + nextTokens > tokenBudget) {
+        logInfo("Rationale context continuation stopped at token budget.", {
+          cursor: input.cursor,
+          usedTokens,
+          nextTokens,
+          tokenBudget,
+          includedCount,
+          position
+        });
+        break;
+      }
+
+      lines.push(fullText);
+      usedTokens += nextTokens;
+      includedCount += 1;
+      position += 1;
+    }
+
+    if (includedCount === 0 && position < snapshot.candidates.length) {
+      throw new Error("Token budget is too small to include the next rationale candidate.");
+    }
+
+    snapshot.position = position;
+    if (position < snapshot.candidates.length) {
+      lines.push("", formatContinuationManifest(input.cursor, snapshot.candidates, position));
+    } else {
+      this.continuationCache.delete(input.cursor);
+      lines.push("", "## Retrieval continuation", "- has more: false");
+    }
+
+    const context = lines.join("\n").trimEnd();
+    logInfo("Continuing rationale context completed.", {
+      cursor: input.cursor,
+      usedTokens,
+      includedCount,
+      nextPosition: position,
+      hasMore: position < snapshot.candidates.length,
       outputCharacters: context.length
     });
     return context;
@@ -142,6 +245,27 @@ function formatSummary(result: {
   ].join("\n");
 }
 
+function formatContinuationManifest(cursor: string, candidates: MemoryEntryRecord[], position: number) {
+  const omitted = candidates.slice(position);
+  const preview = omitted.slice(0, 5);
+  return [
+    "## Retrieval continuation",
+    "- has more: true",
+    `- next cursor: ${cursor}`,
+    `- omitted count: ${omitted.length}`,
+    "- use continue_context with this cursor to inspect more retrieved rationale candidates",
+    "",
+    "### Omitted preview",
+    ...preview.map(formatManifestItem)
+  ].join("\n");
+}
+
+function formatManifestItem(result: MemoryEntryRecord) {
+  const score = typeof result.searchScore === "number" ? result.searchScore.toFixed(3) : "unknown";
+  const reasons = result.searchReasons && result.searchReasons.length > 0 ? result.searchReasons.join(", ") : "none";
+  return `- ${result.id}: ${result.title} (score: ${score}; reasons: ${reasons})`;
+}
+
 function formatFullEntry(markdown: string, result: { searchScore?: number; searchReasons?: string[] }) {
   return [
     "### Retrieved full rationale",
@@ -169,4 +293,41 @@ function truncateToTokens(text: string, maxTokens: number) {
 
 function estimateTokens(text: string) {
   return Math.ceil(text.length / 4);
+}
+
+type ContinuationSnapshot = {
+  task: string;
+  candidates: MemoryEntryRecord[];
+  position: number;
+};
+
+class ContinuationCache {
+  private readonly snapshots = new Map<string, ContinuationSnapshot>();
+  private readonly cursorQueue: string[] = [];
+
+  constructor(private readonly maxSize: number) {}
+
+  put(snapshot: ContinuationSnapshot) {
+    const cursor = randomUUID();
+    this.snapshots.set(cursor, snapshot);
+    this.cursorQueue.push(cursor);
+
+    while (this.cursorQueue.length > this.maxSize) {
+      const oldestCursor = this.cursorQueue.shift();
+      if (!oldestCursor) {
+        throw new Error("Continuation cursor queue underflowed during eviction.");
+      }
+      this.snapshots.delete(oldestCursor);
+    }
+
+    return cursor;
+  }
+
+  get(cursor: string) {
+    return this.snapshots.get(cursor);
+  }
+
+  delete(cursor: string) {
+    this.snapshots.delete(cursor);
+  }
 }

@@ -73,6 +73,18 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       })
     },
     {
+      name: "continue_context",
+      description: "Continue a previous compose_context retrieval from a stateful in-memory cursor.",
+      schema: {
+        cursor: z.string().min(1),
+        tokenBudget: z.number().int().positive().optional(),
+        includeFullTopK: z.number().int().min(0).optional()
+      },
+      handler: async (input) => ({
+        content: [{ type: "text", text: await services.contextComposer.continueContext(continueInputSchema.parse(input)) }]
+      })
+    },
+    {
       name: "auto_capture_rationale",
       description: "Let an LLM autonomously record a reusable rationale candidate into the review queue.",
       schema: autoCaptureRationaleInputSchema.shape,
@@ -127,6 +139,12 @@ const composeInputSchema = z.object({
   tokenBudget: z.number().int().positive().optional(),
   includeFullTopK: z.number().int().min(0).optional(),
   minScore: z.number().min(0).optional()
+});
+
+const continueInputSchema = z.object({
+  cursor: z.string().min(1),
+  tokenBudget: z.number().int().positive().optional(),
+  includeFullTopK: z.number().int().min(0).optional()
 });
 
 const reindexInputSchema = z.object({

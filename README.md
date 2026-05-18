@@ -190,6 +190,7 @@ Tools:
 - `search_rationales`
 - `get_rationale`
 - `compose_context`
+- `continue_context`
 - `auto_capture_rationale`
 - `ingest_session_candidates`
 - `reindex_memory`
@@ -227,7 +228,7 @@ Search uses a hybrid ranking pass over vector results, lexical results, metadata
 
 Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs; it is not currently used as a search penalty for memories from other projects.
 
-`compose_context` classifies the task into candidate intents, domains, modes, risk level, likely artifact, trivial/substantial signals, and file hints. It retrieves broadly, then includes search scores and ranking reasons in the context pack so downstream LLMs can treat retrieved memories as evidence rather than hidden magic.
+`compose_context` classifies the task into candidate intents, domains, modes, risk level, likely artifact, trivial/substantial signals, and file hints. It retrieves broadly, then includes search scores and ranking reasons in the context pack so downstream LLMs can treat retrieved memories as evidence rather than hidden magic. When more relevant candidates exist than fit the initial context, it appends a compact continuation manifest with an in-memory cursor and omitted preview. `continue_context` uses that cursor to return the next retrieved candidates without rerunning the search; cursors are process-local and kept in a small FIFO cache, so evicted cursors require rerunning `compose_context`.
 
 Candidate review and lifecycle mutation are intentionally not exposed as MCP tools. Keep agent-facing MCP context small by exposing only tools that an LLM needs during active work. Administrative operations such as reviewing, accepting, editing, deprecating, promoting, and ontology changes should be handled through internal services or a management dashboard.
 
