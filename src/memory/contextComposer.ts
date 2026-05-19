@@ -232,6 +232,9 @@ function formatSummary(result: {
   summary?: string;
   type: string;
   status: string;
+  acceptanceState: string;
+  reviewState: string;
+  decisionState: string;
   searchScore?: number;
   searchReasons?: string[];
 }) {
@@ -239,7 +242,10 @@ function formatSummary(result: {
     `### ${result.title}`,
     `- id: ${result.id}`,
     `- type: ${result.type}`,
-    `- status: ${result.status}`,
+    `- acceptance state: ${result.acceptanceState}`,
+    `- review state: ${result.reviewState}`,
+    `- decision state: ${result.decisionState}`,
+    `- legacy status: ${result.status}`,
     ...formatRankingLines(result),
     result.summary ? `- summary: ${result.summary}` : "- summary: none"
   ].join("\n");

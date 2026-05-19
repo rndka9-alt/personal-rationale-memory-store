@@ -56,6 +56,9 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
   const id = readRequiredString(value, "id");
   const title = readRequiredString(value, "title");
   const type = readRequiredString(value, "type");
+  const acceptanceState = readRequiredString(value, "acceptanceState");
+  const reviewState = readRequiredString(value, "reviewState");
+  const decisionState = readRequiredString(value, "decisionState");
   const status = readRequiredString(value, "status");
   const canonicalPath = readRequiredString(value, "canonicalPath");
   const scope = readRequiredString(value, "scope");
@@ -65,6 +68,9 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
     id,
     title,
     type,
+    acceptanceState,
+    reviewState,
+    decisionState,
     status,
     canonicalPath,
     scope,
@@ -106,6 +112,9 @@ function parseRationaleEntry(value: Record<string, unknown>) {
     frontmatter: {
       id: readRequiredString(frontmatterValue, "id"),
       type: readRequiredString(frontmatterValue, "type"),
+      acceptanceState: readRequiredString(frontmatterValue, "acceptanceState"),
+      reviewState: readRequiredString(frontmatterValue, "reviewState"),
+      decisionState: readRequiredString(frontmatterValue, "decisionState"),
       status: readRequiredString(frontmatterValue, "status"),
       scope: readRequiredString(frontmatterValue, "scope"),
       domains: readStringArray(frontmatterValue, "domains"),

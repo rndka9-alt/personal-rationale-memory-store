@@ -224,7 +224,15 @@ Canonical rationale files use YAML frontmatter plus Markdown sections:
 
 Postgres stores queryable metadata and pgvector embeddings. Files remain the canonical source of truth, so `reindex_memory` can rebuild the DB index from `data/memory/rationales`.
 
-Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, status, and confidence. Returned entries include ranking reasons such as vector score, lexical score, and domain/mode matches so callers can inspect why a memory was selected.
+Lifecycle is represented by explicit frontmatter fields:
+
+- `acceptanceState`: `candidate`, `accepted`, or `deprecated`
+- `reviewState`: `unreviewed`, `reviewed`, or `needs_revision`
+- `decisionState`: `proposed`, `decided`, `superseded`, or `unknown`
+
+The legacy `status` field is deprecated and retained only for compatibility during migration. New code should use the explicit lifecycle fields as the primary source of meaning.
+
+Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, lifecycle state, and confidence. Deprecated entries are excluded by `acceptanceState` unless explicitly requested. Returned entries include ranking reasons such as vector score, lexical score, acceptance state, and domain/mode matches so callers can inspect why a memory was selected.
 
 Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs; it is not currently used as a search penalty for memories from other projects.
 
@@ -232,9 +240,12 @@ Project context is stored as explicit frontmatter (`project.name`, optional `pro
 
 Candidate review and lifecycle mutation are intentionally not exposed as MCP tools. Keep agent-facing MCP context small by exposing only tools that an LLM needs during active work. Administrative operations such as reviewing, accepting, editing, deprecating, promoting, and ontology changes should be handled through internal services or a management dashboard.
 
-LLMs may autonomously call `auto_capture_rationale` when they encounter a reusable decision rationale. Auto-captured memories are stored as `status: candidate` with metadata such as:
+LLMs may autonomously call `auto_capture_rationale` when they encounter a reusable decision rationale. Auto-captured memories are stored with lifecycle fields such as:
 
 ```yaml
+acceptanceState: candidate
+reviewState: unreviewed
+decisionState: unknown
 capture_kind: auto
 review_state: unreviewed
 capture_reason: ...

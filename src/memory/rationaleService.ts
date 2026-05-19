@@ -1,15 +1,25 @@
 import type pg from "pg";
 import { z } from "zod";
-import { findMemoryEntry, listAllMemoryEntriesByStatus, listMemoryEntriesByStatus, listRecentMemoryEntries, searchMemoryEntriesLexical, searchMemoryEntriesVector, updateMemoryStatus } from "../db/queries.js";
+import {
+  findMemoryEntry,
+  listAllMemoryEntriesByAcceptanceState,
+  listMemoryEntriesByAcceptanceState,
+  listRecentMemoryEntries,
+  searchMemoryEntriesLexical,
+  searchMemoryEntriesVector,
+  updateMemoryStatus
+} from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { IndexingService } from "./indexingService.js";
 import {
+  acceptanceStateSchema,
   autoCaptureRationaleInputSchema,
   projectContextSchema,
   recordCandidateInputSchema,
+  reviewStateSchema,
   searchInputSchema,
   type AutoCaptureRationaleInput,
   type MemoryEntryRecord,
@@ -33,6 +43,10 @@ const rationalePatchSchema = z.object({
   reuseWhen: z.array(z.string()).optional(),
   avoidWhen: z.array(z.string()).optional(),
   type: z.string().optional(),
+  acceptanceState: z.enum(["candidate", "accepted", "deprecated"]).optional(),
+  reviewState: z.enum(["unreviewed", "reviewed", "needs_revision"]).optional(),
+  decisionState: z.enum(["proposed", "decided", "superseded", "unknown"]).optional(),
+  // Deprecated compatibility field. Use acceptanceState.
   status: z.string().optional(),
   scope: z.string().optional(),
   domains: z.array(z.string()).optional(),
@@ -61,6 +75,7 @@ export class RationaleService {
     const id = createRationaleId();
     const metadata = normalizeCandidateMetadata(validatedInput.metadata, "manual");
     const project = validatedInput.project ?? readProjectMetadata(validatedInput.metadata);
+    const reviewState = readReviewStateMetadata(metadata, "unreviewed");
     logInfo("Recording rationale candidate started.", {
       entryId: id,
       title: validatedInput.title
@@ -70,6 +85,9 @@ export class RationaleService {
         id,
         type: "rationale",
         status: "candidate",
+        acceptanceState: "candidate",
+        reviewState,
+        decisionState: "unknown",
         scope: "general",
         domains: getStringArray(validatedInput.metadata, "domains"),
         intents: getStringArray(validatedInput.metadata, "intents"),
@@ -162,7 +180,13 @@ export class RationaleService {
       entryId: id
     });
     const entry = await this.getRationale(id);
+    entry.frontmatter.acceptanceState = "accepted";
+    entry.frontmatter.reviewState = "reviewed";
     entry.frontmatter.status = "accepted";
+    entry.frontmatter.metadata = {
+      ...entry.frontmatter.metadata,
+      review_state: "reviewed"
+    };
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
     logInfo("Accepting rationale candidate completed.", {
@@ -194,6 +218,7 @@ export class RationaleService {
       replacementId
     });
     const entry = await this.getRationale(id);
+    entry.frontmatter.acceptanceState = "deprecated";
     entry.frontmatter.status = "deprecated";
     entry.frontmatter.deprecatedBy = replacementId ?? reason;
     entry.frontmatter.metadata = {
@@ -218,10 +243,13 @@ export class RationaleService {
     });
     const entry = await this.getRationale(id);
     entry.frontmatter.type = "principle";
+    entry.frontmatter.acceptanceState = "accepted";
+    entry.frontmatter.reviewState = "reviewed";
     entry.frontmatter.status = "accepted";
     entry.title = title ?? entry.title;
     entry.frontmatter.metadata = {
       ...entry.frontmatter.metadata,
+      review_state: "reviewed",
       promoted_reason: reason,
       promoted_from: id
     };
@@ -251,7 +279,7 @@ export class RationaleService {
     logInfo("Listing rationale candidates.", {
       limit
     });
-    const entries = await listMemoryEntriesByStatus(this.pool, "candidate", limit);
+    const entries = await listMemoryEntriesByAcceptanceState(this.pool, "candidate", limit);
     logInfo("Listed rationale candidates.", {
       limit,
       resultCount: entries.length
@@ -264,12 +292,11 @@ export class RationaleService {
       captureKind,
       reviewState
     });
-    const entries = await listAllMemoryEntriesByStatus(this.pool, "candidate");
+    const entries = await listAllMemoryEntriesByAcceptanceState(this.pool, "candidate");
     const filteredEntries = entries.filter((entry) => {
       const metadataCaptureKind = readStringMetadata(entry.metadata, "capture_kind");
-      const metadataReviewState = readStringMetadata(entry.metadata, "review_state") ?? "unreviewed";
       const captureKindMatches = !captureKind || metadataCaptureKind === captureKind;
-      const reviewStateMatches = !reviewState || metadataReviewState === reviewState;
+      const reviewStateMatches = !reviewState || entry.reviewState === reviewState;
       return captureKindMatches && reviewStateMatches;
     });
     logInfo("Listed rationale review queue.", {
@@ -331,6 +358,7 @@ export class RationaleService {
 
     const reviewState = action === "needs_revision" ? "needs_revision" : "reviewed";
     const entry = await this.getRationale(id);
+    entry.frontmatter.reviewState = reviewState;
     entry.frontmatter.metadata = {
       ...entry.frontmatter.metadata,
       review_state: reviewState,
@@ -369,6 +397,9 @@ export class RationaleService {
       domains: parsedInput.domains,
       intents: parsedInput.intents,
       modes: parsedInput.modes,
+      acceptanceStates: parsedInput.acceptanceStates,
+      reviewStates: parsedInput.reviewStates,
+      decisionStates: parsedInput.decisionStates,
       types: parsedInput.types,
       status: parsedInput.status,
       limit: parsedInput.limit,
@@ -487,6 +518,24 @@ function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknow
   }
   if (typeof parsedPatch.status === "string") {
     updatedEntry.frontmatter.status = parsedPatch.status;
+    const acceptanceState = readAcceptanceStateValue(parsedPatch.status);
+    if (acceptanceState) {
+      updatedEntry.frontmatter.acceptanceState = acceptanceState;
+    }
+  }
+  if (parsedPatch.acceptanceState) {
+    updatedEntry.frontmatter.acceptanceState = parsedPatch.acceptanceState;
+    updatedEntry.frontmatter.status = parsedPatch.acceptanceState;
+  }
+  if (parsedPatch.reviewState) {
+    updatedEntry.frontmatter.reviewState = parsedPatch.reviewState;
+    updatedEntry.frontmatter.metadata = {
+      ...updatedEntry.frontmatter.metadata,
+      review_state: parsedPatch.reviewState
+    };
+  }
+  if (parsedPatch.decisionState) {
+    updatedEntry.frontmatter.decisionState = parsedPatch.decisionState;
   }
   if (typeof parsedPatch.scope === "string") {
     updatedEntry.frontmatter.scope = parsedPatch.scope;
@@ -514,6 +563,10 @@ function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknow
       ...updatedEntry.frontmatter.metadata,
       ...parsedPatch.metadata
     };
+    updatedEntry.frontmatter.reviewState = readReviewStateMetadata(
+      updatedEntry.frontmatter.metadata,
+      updatedEntry.frontmatter.reviewState
+    );
   }
 
   return updatedEntry;
@@ -655,7 +708,8 @@ function mergeSearchResults<TEntry extends { id: string }>(primary: TEntry[], se
 
 function rankSearchResults<TEntry extends {
   confidence: number;
-  status: string;
+  acceptanceState: MemoryEntryRecord["acceptanceState"];
+  reviewState: MemoryEntryRecord["reviewState"];
   type: string;
   metadata: Record<string, unknown>;
   lexicalRank?: number;
@@ -680,7 +734,8 @@ function rankSearchResults<TEntry extends {
 
 function calculateSearchRanking(entry: {
   confidence: number;
-  status: string;
+  acceptanceState: MemoryEntryRecord["acceptanceState"];
+  reviewState: MemoryEntryRecord["reviewState"];
   type: string;
   metadata: Record<string, unknown>;
   lexicalRank?: number;
@@ -704,10 +759,10 @@ function calculateSearchRanking(entry: {
     reasons.push(`lexical:${entry.lexicalRank}`);
   }
 
-  if (entry.status === "accepted") {
+  if (entry.acceptanceState === "accepted") {
     score += 1.5;
     reasons.push("accepted");
-  } else if (entry.status === "candidate") {
+  } else if (entry.acceptanceState === "candidate") {
     score += 0.5;
     reasons.push("candidate");
   }
@@ -748,10 +803,10 @@ function calculateSearchRanking(entry: {
   return { score, reasons };
 }
 
-function isAutoCapturedUnreviewedCandidate(entry: Pick<MemoryEntryRecord, "status" | "metadata">) {
-  return entry.status === "candidate"
+function isAutoCapturedUnreviewedCandidate(entry: Pick<MemoryEntryRecord, "acceptanceState" | "reviewState" | "metadata">) {
+  return entry.acceptanceState === "candidate"
     && readStringMetadata(entry.metadata, "capture_kind") === "auto"
-    && (readStringMetadata(entry.metadata, "review_state") ?? "unreviewed") === "unreviewed";
+    && entry.reviewState === "unreviewed";
 }
 
 function countMetadataMatches(metadata: Record<string, unknown>, key: string, expectedValues: string[] | undefined) {
@@ -779,6 +834,19 @@ function getStringArray(metadata: Record<string, unknown> | undefined, key: stri
 function readStringMetadata(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function readAcceptanceStateValue(value: unknown): MemoryEntryRecord["acceptanceState"] | undefined {
+  const result = acceptanceStateSchema.safeParse(value);
+  return result.success ? result.data : undefined;
+}
+
+function readReviewStateMetadata(
+  metadata: Record<string, unknown>,
+  defaultValue: MemoryEntryRecord["reviewState"]
+) {
+  const result = reviewStateSchema.safeParse(metadata.review_state);
+  return result.success ? result.data : defaultValue;
 }
 
 function readProjectMetadata(metadata: Record<string, unknown> | undefined): ProjectContext | undefined {

@@ -122,7 +122,7 @@ export function parseRationaleMarkdown(markdown: string) {
   const parsed = parseFrontmatter(markdown);
   const title = parseTitle(parsed.body);
   const sections = parseSections(parsed.body);
-  const frontmatterResult = rationaleEntrySchema.shape.frontmatter.parse(parsed.frontmatter);
+  const frontmatterResult = rationaleEntrySchema.shape.frontmatter.parse(normalizeLifecycleFrontmatter(parsed.frontmatter));
 
   const entry = rationaleEntrySchema.parse({
     frontmatter: frontmatterResult,
@@ -144,6 +144,47 @@ export function parseRationaleMarkdown(markdown: string) {
   return entry;
 }
 
+function normalizeLifecycleFrontmatter(value: unknown) {
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const metadata = isRecord(value.metadata) ? value.metadata : {};
+  const normalized = { ...value };
+
+  if (typeof normalized.acceptanceState !== "string") {
+    normalized.acceptanceState = readLegacyAcceptanceState(normalized.status);
+  }
+
+  if (typeof normalized.reviewState !== "string") {
+    normalized.reviewState = readLegacyReviewState(metadata.review_state);
+  }
+
+  if (typeof normalized.decisionState !== "string") {
+    normalized.decisionState = "unknown";
+  }
+
+  if (typeof normalized.status !== "string") {
+    normalized.status = normalized.acceptanceState;
+  }
+
+  return normalized;
+}
+
+function readLegacyAcceptanceState(value: unknown) {
+  if (value === "accepted" || value === "deprecated") {
+    return value;
+  }
+  return "candidate";
+}
+
+function readLegacyReviewState(value: unknown) {
+  if (value === "reviewed" || value === "needs_revision") {
+    return value;
+  }
+  return "unreviewed";
+}
+
 function parseFrontmatter(markdown: string): ParsedFrontmatter {
   if (!markdown.startsWith("---\n")) {
     throw new Error("Rationale file must start with YAML frontmatter.");
@@ -157,6 +198,10 @@ function parseFrontmatter(markdown: string): ParsedFrontmatter {
   const yamlText = markdown.slice(4, closingIndex);
   const body = markdown.slice(closingIndex + 4).trimStart();
   return { frontmatter: YAML.parse(yamlText), body };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseTitle(body: string) {

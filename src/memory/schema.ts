@@ -16,10 +16,18 @@ export const projectContextSchema = z.object({
   root: z.string().min(1).optional()
 });
 
+export const acceptanceStateSchema = z.enum(["candidate", "accepted", "deprecated"]);
+export const reviewStateSchema = z.enum(["unreviewed", "reviewed", "needs_revision"]);
+export const decisionStateSchema = z.enum(["proposed", "decided", "superseded", "unknown"]);
+
 export const rationaleFrontmatterSchema = z.object({
   id: z.string().min(1),
   type: z.string().min(1).default("rationale"),
+  // Deprecated compatibility field. Use acceptanceState, reviewState, and decisionState for lifecycle logic.
   status: z.string().min(1).default("candidate"),
+  acceptanceState: acceptanceStateSchema.default("candidate"),
+  reviewState: reviewStateSchema.default("unreviewed"),
+  decisionState: decisionStateSchema.default("unknown"),
   scope: z.string().min(1).default("general"),
   domains: z.array(z.string()).default([]),
   intents: z.array(z.string()).default([]),
@@ -87,6 +95,10 @@ export const searchInputSchema = z.object({
   intents: z.array(z.string()).optional(),
   modes: z.array(z.string()).optional(),
   types: z.array(z.string()).optional(),
+  acceptanceStates: z.array(acceptanceStateSchema).optional(),
+  reviewStates: z.array(reviewStateSchema).optional(),
+  decisionStates: z.array(decisionStateSchema).optional(),
+  // Deprecated compatibility filter. Prefer acceptanceStates.
   status: z.array(z.string()).optional(),
   limit: z.number().int().positive().max(50).default(10),
   includeDeprecated: z.boolean().default(false)
@@ -101,7 +113,14 @@ export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query
 export type MemoryEntryRecord = {
   id: string;
   type: string;
+  /**
+   * Deprecated compatibility field. Use acceptanceState/reviewState/decisionState
+   * for lifecycle behavior.
+   */
   status: string;
+  acceptanceState: z.infer<typeof acceptanceStateSchema>;
+  reviewState: z.infer<typeof reviewStateSchema>;
+  decisionState: z.infer<typeof decisionStateSchema>;
   title: string;
   summary?: string;
   canonicalPath: string;
@@ -135,6 +154,9 @@ export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string
     id: entry.frontmatter.id,
     type: entry.frontmatter.type,
     status: entry.frontmatter.status,
+    acceptanceState: entry.frontmatter.acceptanceState,
+    reviewState: entry.frontmatter.reviewState,
+    decisionState: entry.frontmatter.decisionState,
     title: entry.title,
     summary: summarizeRationale(entry),
     canonicalPath,

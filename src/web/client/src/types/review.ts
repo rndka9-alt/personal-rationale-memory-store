@@ -7,6 +7,10 @@ export type ProjectContext = {
 export type ReviewQueueItem = {
   id: string;
   type: string;
+  acceptanceState: string;
+  reviewState: string;
+  decisionState: string;
+  /** Deprecated compatibility field. Use acceptanceState/reviewState/decisionState. */
   status: string;
   title: string;
   summary?: string;
@@ -23,6 +27,10 @@ export type RationaleEntry = {
   frontmatter: {
     id: string;
     type: string;
+    acceptanceState: string;
+    reviewState: string;
+    decisionState: string;
+    /** Deprecated compatibility field. Use acceptanceState/reviewState/decisionState. */
     status: string;
     scope: string;
     domains: string[];

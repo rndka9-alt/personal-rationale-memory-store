@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { MemoryFileStore } from "../src/memory/fileStore.js";
+import { MemoryFileStore, parseRationaleMarkdown } from "../src/memory/fileStore.js";
 import type { RationaleEntry } from "../src/memory/schema.js";
 
 describe("MemoryFileStore", () => {
@@ -14,6 +14,9 @@ describe("MemoryFileStore", () => {
         id: "R-test-001",
         type: "rationale",
         status: "candidate",
+        acceptanceState: "candidate",
+        reviewState: "unreviewed",
+        decisionState: "unknown",
         scope: "general",
         domains: ["development"],
         intents: ["design"],
@@ -47,5 +50,30 @@ describe("MemoryFileStore", () => {
     expect(parsed.rejectedAlternatives).toEqual(entry.rejectedAlternatives);
 
     await rm(directory, { recursive: true, force: true });
+  });
+
+  it("derives lifecycle fields from legacy frontmatter", () => {
+    const entry = parseRationaleMarkdown(`---
+id: R-legacy-001
+type: rationale
+status: accepted
+scope: general
+domains: []
+intents: []
+modes: []
+confidence: 0.5
+metadata:
+  review_state: reviewed
+---
+
+# Legacy accepted rationale
+
+## Rationale
+Compatibility keeps older canonical memory files readable.
+`);
+
+    expect(entry.frontmatter.acceptanceState).toBe("accepted");
+    expect(entry.frontmatter.reviewState).toBe("reviewed");
+    expect(entry.frontmatter.decisionState).toBe("unknown");
   });
 });

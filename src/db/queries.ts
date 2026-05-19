@@ -1,6 +1,13 @@
 import type pg from "pg";
 import { logInfo } from "../diagnostics/index.js";
-import type { MemoryEntryRecord, MemorySearchFilters, ProjectContext } from "../memory/schema.js";
+import {
+  acceptanceStateSchema,
+  decisionStateSchema,
+  reviewStateSchema,
+  type MemoryEntryRecord,
+  type MemorySearchFilters,
+  type ProjectContext
+} from "../memory/schema.js";
 
 export type MemoryChunkInsert = {
   entryId: string;
@@ -20,12 +27,15 @@ export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord)
   });
   await pool.query(
     `INSERT INTO memory_entries (
-      id, type, status, title, summary, canonical_path, scope, source_kind, source_ref,
+      id, type, status, acceptance_state, review_state, decision_state, title, summary, canonical_path, scope, source_kind, source_ref,
       confidence, promoted_to, deprecated_by, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     ON CONFLICT (id) DO UPDATE SET
       type = EXCLUDED.type,
       status = EXCLUDED.status,
+      acceptance_state = EXCLUDED.acceptance_state,
+      review_state = EXCLUDED.review_state,
+      decision_state = EXCLUDED.decision_state,
       title = EXCLUDED.title,
       summary = EXCLUDED.summary,
       canonical_path = EXCLUDED.canonical_path,
@@ -41,6 +51,9 @@ export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord)
       entry.id,
       entry.type,
       entry.status,
+      entry.acceptanceState,
+      entry.reviewState,
+      entry.decisionState,
       entry.title,
       entry.summary,
       entry.canonicalPath,
@@ -104,27 +117,28 @@ export async function findMemoryEntry(pool: pg.Pool, id: string) {
 export async function updateMemoryStatus(
   pool: pg.Pool,
   id: string,
-  status: string,
+  acceptanceState: string,
   updates: { deprecatedBy?: string; promotedTo?: string } = {}
 ) {
   logInfo("DB update memory status started.", {
     entryId: id,
-    status,
+    acceptanceState,
     deprecatedBy: updates.deprecatedBy,
     promotedTo: updates.promotedTo
   });
   await pool.query(
     `UPDATE memory_entries
       SET status = $2,
+          acceptance_state = $2,
           deprecated_by = COALESCE($3, deprecated_by),
           promoted_to = COALESCE($4, promoted_to),
           updated_at = now()
       WHERE id = $1`,
-    [id, status, updates.deprecatedBy, updates.promotedTo]
+    [id, acceptanceState, updates.deprecatedBy, updates.promotedTo]
   );
   logInfo("DB update memory status completed.", {
     entryId: id,
-    status
+    acceptanceState
   });
 }
 
@@ -170,6 +184,38 @@ export async function listAllMemoryEntriesByStatus(pool: pg.Pool, status: string
   );
   logInfo("DB list all memory entries by status completed.", {
     status,
+    resultCount: result.rows.length
+  });
+  return result.rows.map(mapMemoryEntryRow);
+}
+
+export async function listMemoryEntriesByAcceptanceState(pool: pg.Pool, acceptanceState: string, limit: number) {
+  logInfo("DB list memory entries by acceptance state started.", {
+    acceptanceState,
+    limit
+  });
+  const result = await pool.query(
+    "SELECT * FROM memory_entries WHERE acceptance_state = $1 ORDER BY updated_at DESC LIMIT $2",
+    [acceptanceState, limit]
+  );
+  logInfo("DB list memory entries by acceptance state completed.", {
+    acceptanceState,
+    limit,
+    resultCount: result.rows.length
+  });
+  return result.rows.map(mapMemoryEntryRow);
+}
+
+export async function listAllMemoryEntriesByAcceptanceState(pool: pg.Pool, acceptanceState: string) {
+  logInfo("DB list all memory entries by acceptance state started.", {
+    acceptanceState
+  });
+  const result = await pool.query(
+    "SELECT * FROM memory_entries WHERE acceptance_state = $1 ORDER BY updated_at DESC",
+    [acceptanceState]
+  );
+  logInfo("DB list all memory entries by acceptance state completed.", {
+    acceptanceState,
     resultCount: result.rows.length
   });
   return result.rows.map(mapMemoryEntryRow);
@@ -272,12 +318,23 @@ export async function searchMemoryEntriesVector(
 
 function appendSearchFilters(conditions: string[], values: unknown[], filters: MemorySearchFilters) {
   if (!filters.includeDeprecated) {
-    conditions.push("e.status <> 'deprecated'");
+    conditions.push("e.acceptance_state <> 'deprecated'");
   }
 
-  if (filters.status && filters.status.length > 0) {
-    values.push(filters.status);
-    conditions.push(`e.status = ANY($${values.length})`);
+  const acceptanceStates = filters.acceptanceStates ?? filters.status;
+  if (acceptanceStates && acceptanceStates.length > 0) {
+    values.push(acceptanceStates);
+    conditions.push(`e.acceptance_state = ANY($${values.length})`);
+  }
+
+  if (filters.reviewStates && filters.reviewStates.length > 0) {
+    values.push(filters.reviewStates);
+    conditions.push(`e.review_state = ANY($${values.length})`);
+  }
+
+  if (filters.decisionStates && filters.decisionStates.length > 0) {
+    values.push(filters.decisionStates);
+    conditions.push(`e.decision_state = ANY($${values.length})`);
   }
 
   if (filters.types && filters.types.length > 0) {
@@ -303,10 +360,16 @@ function appendSearchFilters(conditions: string[], values: unknown[], filters: M
 
 function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
   const metadata = isRecord(row.metadata) ? row.metadata : {};
+  const acceptanceState = readAcceptanceState(row.acceptance_state, row.status);
+  const reviewState = readReviewState(row.review_state, metadata.review_state);
+  const decisionState = readDecisionState(row.decision_state);
   const entry: MemoryEntryRecord = {
     id: String(row.id),
     type: String(row.type),
     status: String(row.status),
+    acceptanceState,
+    reviewState,
+    decisionState,
     title: String(row.title),
     summary: typeof row.summary === "string" ? row.summary : undefined,
     canonicalPath: String(row.canonical_path),
@@ -328,6 +391,31 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
   }
 
   return entry;
+}
+
+function readAcceptanceState(primaryValue: unknown, fallbackValue: unknown): MemoryEntryRecord["acceptanceState"] {
+  const primaryResult = acceptanceStateSchema.safeParse(primaryValue);
+  if (primaryResult.success) {
+    return primaryResult.data;
+  }
+
+  const fallbackResult = acceptanceStateSchema.safeParse(fallbackValue);
+  return fallbackResult.success ? fallbackResult.data : "candidate";
+}
+
+function readReviewState(primaryValue: unknown, fallbackValue: unknown): MemoryEntryRecord["reviewState"] {
+  const primaryResult = reviewStateSchema.safeParse(primaryValue);
+  if (primaryResult.success) {
+    return primaryResult.data;
+  }
+
+  const fallbackResult = reviewStateSchema.safeParse(fallbackValue);
+  return fallbackResult.success ? fallbackResult.data : "unreviewed";
+}
+
+function readDecisionState(value: unknown): MemoryEntryRecord["decisionState"] {
+  const result = decisionStateSchema.safeParse(value);
+  return result.success ? result.data : "unknown";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

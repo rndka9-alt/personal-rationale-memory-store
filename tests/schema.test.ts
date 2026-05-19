@@ -8,6 +8,9 @@ describe("rationaleEntrySchema", () => {
         id: "R2026-04-30-001",
         type: "rationale",
         status: "candidate",
+        acceptanceState: "candidate",
+        reviewState: "unreviewed",
+        decisionState: "unknown",
         scope: "general",
         domains: ["development"],
         intents: ["design"],
@@ -25,6 +28,9 @@ describe("rationaleEntrySchema", () => {
 
     expect(entry.frontmatter.id).toBe("R2026-04-30-001");
     expect(entry.frontmatter.project?.name).toBe("personal-rationale-memory-store");
+    expect(entry.frontmatter.acceptanceState).toBe("candidate");
+    expect(entry.frontmatter.reviewState).toBe("unreviewed");
+    expect(entry.frontmatter.decisionState).toBe("unknown");
     expect(entry.constraints).toEqual([]);
   });
 });

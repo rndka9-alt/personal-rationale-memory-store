@@ -209,7 +209,7 @@ function DetailPanel(props: {
   }
 
   const { entry, review } = props.item;
-  const reviewState = readMetadataString(entry.frontmatter.metadata, "review_state") ?? "unreviewed";
+  const reviewState = entry.frontmatter.reviewState;
 
   return (
     <section className="min-w-0">
@@ -217,6 +217,8 @@ function DetailPanel(props: {
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill value={reviewState} />
+            <MetadataPill value={entry.frontmatter.acceptanceState} />
+            <MetadataPill value={entry.frontmatter.decisionState} />
             <MetadataPill value={readMetadataString(entry.frontmatter.metadata, "capture_kind") ?? "manual"} />
             <MetadataPill value={`score ${review.score}`} />
           </div>
@@ -244,6 +246,9 @@ function DetailPanel(props: {
             source={entry.frontmatter.source}
             scope={entry.frontmatter.scope}
             confidence={entry.frontmatter.confidence}
+            acceptanceState={entry.frontmatter.acceptanceState}
+            reviewState={entry.frontmatter.reviewState}
+            decisionState={entry.frontmatter.decisionState}
             domains={entry.frontmatter.domains}
             intents={entry.frontmatter.intents}
             modes={entry.frontmatter.modes}
@@ -347,6 +352,9 @@ function ProjectFacts(props: {
   source?: { kind: string; ref: string };
   scope: string;
   confidence: number;
+  acceptanceState: string;
+  reviewState: string;
+  decisionState: string;
   domains: string[];
   intents: string[];
   modes: string[];
@@ -360,6 +368,9 @@ function ProjectFacts(props: {
         <MetadataLine label="Root" value={props.project?.root} />
         <MetadataLine label="Scope" value={props.scope} />
         <MetadataLine label="Confidence" value={props.confidence.toFixed(2)} />
+        <MetadataLine label="Acceptance" value={props.acceptanceState} />
+        <MetadataLine label="Review" value={props.reviewState} />
+        <MetadataLine label="Decision" value={props.decisionState} />
         <MetadataLine label="Source" value={props.source ? `${props.source.kind}: ${props.source.ref}` : undefined} />
         <MetadataList label="Domains" items={props.domains} />
         <MetadataList label="Intents" items={props.intents} />
