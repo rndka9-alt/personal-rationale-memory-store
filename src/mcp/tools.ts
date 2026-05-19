@@ -5,6 +5,7 @@ import {
   autoCaptureRationaleInputSchema,
   recordCandidateInputSchema,
   recordRefinementOpinionInputSchema,
+  recordUsageFeedbackInputSchema,
   searchInputSchema
 } from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
@@ -102,6 +103,13 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: recordRefinementOpinionInputSchema.shape,
       handler: async (input: unknown) =>
         jsonToolResult(await services.rationaleService.recordRefinementOpinion(recordRefinementOpinionInputSchema.parse(input)))
+    },
+    {
+      name: "record_usage_feedback",
+      description: "Record explicit feedback after a rationale memory was applied, helpful, unhelpful, or dismissed.",
+      schema: recordUsageFeedbackInputSchema.shape,
+      handler: async (input: unknown) =>
+        jsonToolResult(await services.rationaleService.recordUsageFeedback(recordUsageFeedbackInputSchema.parse(input)))
     },
     {
       name: "reindex_memory",

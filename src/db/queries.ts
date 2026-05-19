@@ -136,6 +136,52 @@ export async function recordMemoryRefinementOpinion(
   return mapMemoryRefinementOpinionRow(row);
 }
 
+export async function findMemoryRefinementOpinion(pool: pg.Pool, id: string) {
+  logInfo("DB find memory refinement opinion started.", {
+    opinionId: id
+  });
+  const result = await pool.query(
+    "SELECT * FROM memory_refinement_opinions WHERE id = $1",
+    [id]
+  );
+  const row = result.rows[0];
+  logInfo("DB find memory refinement opinion completed.", {
+    opinionId: id,
+    found: Boolean(row)
+  });
+  return row ? mapMemoryRefinementOpinionRow(row) : undefined;
+}
+
+export async function updateMemoryRefinementOpinionStatus(
+  pool: pg.Pool,
+  id: string,
+  status: MemoryRefinementOpinionRecord["status"],
+  metadataPatch: Record<string, unknown>
+) {
+  logInfo("DB update memory refinement opinion status started.", {
+    opinionId: id,
+    status
+  });
+  const result = await pool.query(
+    `UPDATE memory_refinement_opinions
+      SET status = $2,
+          metadata = metadata || $3::jsonb,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *`,
+    [id, status, metadataPatch]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Memory refinement opinion not found: ${id}`);
+  }
+  logInfo("DB update memory refinement opinion status completed.", {
+    opinionId: id,
+    status
+  });
+  return mapMemoryRefinementOpinionRow(row);
+}
+
 export async function listOpenMemoryRefinementOpinions(
   pool: pg.Pool,
   entryIds: string[],

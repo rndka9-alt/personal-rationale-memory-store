@@ -3,6 +3,7 @@ import {
   autoCaptureRationaleInputSchema,
   memoryUsageEventTypeSchema,
   recordRefinementOpinionInputSchema,
+  recordUsageFeedbackInputSchema,
   rationaleEntrySchema
 } from "../src/memory/schema.js";
 
@@ -81,6 +82,22 @@ describe("recordRefinementOpinionInputSchema", () => {
     expect(() => recordRefinementOpinionInputSchema.parse({
       entryId: "R2026-05-19-001",
       body: "x".repeat(2001)
+    })).toThrow();
+  });
+});
+
+describe("recordUsageFeedbackInputSchema", () => {
+  it("accepts explicit feedback events and rejects passive retrieval events", () => {
+    const feedback = recordUsageFeedbackInputSchema.parse({
+      entryId: "R2026-05-19-001",
+      eventType: "user_helpful",
+      task: "Use memory in implementation"
+    });
+
+    expect(feedback.eventType).toBe("user_helpful");
+    expect(() => recordUsageFeedbackInputSchema.parse({
+      entryId: "R2026-05-19-001",
+      eventType: "composed"
     })).toThrow();
   });
 });

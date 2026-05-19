@@ -1,6 +1,7 @@
 import { requestJson } from "./http";
 import type {
   ProjectContext,
+  RefinementOpinionAction,
   RefinementOpinion,
   ReviewAction,
   ReviewQueueDetail,
@@ -42,6 +43,20 @@ export async function submitReviewAction(input: {
       action: input.action,
       notes: input.notes,
       reason: input.reason
+    }
+  });
+}
+
+export async function submitRefinementOpinionAction(input: {
+  id: string;
+  action: RefinementOpinionAction;
+  note?: string;
+}) {
+  await requestJson(`/api/refinement-opinions/${encodeURIComponent(input.id)}/action`, {
+    method: "POST",
+    body: {
+      action: input.action,
+      note: input.note
     }
   });
 }

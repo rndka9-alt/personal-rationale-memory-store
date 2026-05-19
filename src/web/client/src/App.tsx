@@ -3,10 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchReviewQueue,
   fetchReviewQueueDetail,
+  submitRefinementOpinionAction,
   submitReviewAction,
   type ReviewQueueFilters
 } from "./api/reviewQueue";
-import type { ProjectContext, RefinementOpinion, ReviewAction, ReviewQueueItem } from "./types/review";
+import type {
+  ProjectContext,
+  RefinementOpinion,
+  RefinementOpinionAction,
+  ReviewAction,
+  ReviewQueueItem
+} from "./types/review";
 import { namedStatusColor } from "./theme/tokens";
 
 const reviewStates = [
@@ -80,6 +87,18 @@ export function App() {
     }
   });
 
+  const refinementOpinionMutation = useMutation({
+    mutationFn: (input: { id: string; action: RefinementOpinionAction }) => submitRefinementOpinionAction({
+      id: input.id,
+      action: input.action,
+      note: notes || undefined
+    }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review-queue"] });
+      await queryClient.invalidateQueries({ queryKey: ["review-queue-detail"] });
+    }
+  });
+
   return (
     <main className="min-h-screen bg-surface-page text-ink-base">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 py-5 lg:px-8">
@@ -132,6 +151,8 @@ export function App() {
             onNotesChange={setNotes}
             onAction={(action) => reviewMutation.mutate(action)}
             isMutating={reviewMutation.isPending}
+            onRefinementOpinionAction={(input) => refinementOpinionMutation.mutate(input)}
+            isRefinementOpinionMutating={refinementOpinionMutation.isPending}
           />
         </section>
       </div>
@@ -200,6 +221,8 @@ function DetailPanel(props: {
   onNotesChange: (value: string) => void;
   onAction: (action: ReviewAction) => void;
   isMutating: boolean;
+  onRefinementOpinionAction: (input: { id: string; action: RefinementOpinionAction }) => void;
+  isRefinementOpinionMutating: boolean;
 }) {
   if (props.isLoading) {
     return <section className="text-sm text-ink-muted">Loading detail...</section>;
@@ -262,7 +285,11 @@ function DetailPanel(props: {
             useCount={usage.useCount}
             lastUsedAt={usage.lastUsedAt}
           />
-          <RefinementOpinionList opinions={refinementOpinions} />
+          <RefinementOpinionList
+            opinions={refinementOpinions}
+            isMutating={props.isRefinementOpinionMutating}
+            onAction={props.onRefinementOpinionAction}
+          />
           <ReviewFacts title="Missing" items={review.missingSections} tone="warning" />
           <ReviewFacts title="Strengths" items={review.strengths} tone="success" />
           <ReviewFacts title="Cautions" items={review.cautions} tone="danger" />
@@ -403,7 +430,11 @@ function ProjectFacts(props: {
   );
 }
 
-function RefinementOpinionList(props: { opinions: RefinementOpinion[] }) {
+function RefinementOpinionList(props: {
+  opinions: RefinementOpinion[];
+  isMutating: boolean;
+  onAction: (input: { id: string; action: RefinementOpinionAction }) => void;
+}) {
   return (
     <section>
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Open refinement opinions</h3>
@@ -424,6 +455,31 @@ function RefinementOpinionList(props: { opinions: RefinementOpinion[] }) {
                   {JSON.stringify(opinion.suggestedPatch, null, 2)}
                 </pre>
               ) : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <ActionButton
+                  disabled={props.isMutating}
+                  onClick={() => props.onAction({ id: opinion.id, action: "resolve" })}
+                >
+                  Resolve
+                </ActionButton>
+                <ActionButton
+                  danger
+                  disabled={props.isMutating}
+                  onClick={() => props.onAction({ id: opinion.id, action: "reject" })}
+                >
+                  Reject
+                </ActionButton>
+                {opinion.suggestedPatch ? (
+                  <div className="col-span-2">
+                    <ActionButton
+                      disabled={props.isMutating}
+                      onClick={() => props.onAction({ id: opinion.id, action: "apply_patch" })}
+                    >
+                      Apply patch
+                    </ActionButton>
+                  </div>
+                ) : null}
+              </div>
               <p className="mt-3 break-words text-xs text-ink-muted">
                 {opinion.sourceRef ? `${opinion.sourceKind}: ${opinion.sourceRef}` : opinion.sourceKind}
               </p>
@@ -497,7 +553,7 @@ function ActionButton(props: {
   return (
     <button
       type="button"
-      className={`h-9 rounded-md border bg-surface-panel text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${color}`}
+      className={`h-9 w-full rounded-md border bg-surface-panel text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${color}`}
       disabled={props.disabled}
       onClick={props.onClick}
     >

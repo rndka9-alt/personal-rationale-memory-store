@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   countOpenMemoryRefinementOpinions,
   findMemoryEntry,
+  findMemoryRefinementOpinion,
   listAllMemoryEntriesByAcceptanceState,
   listMemoryEntriesByAcceptanceState,
   listOpenMemoryRefinementOpinions,
@@ -11,6 +12,7 @@ import {
   recordMemoryUsageEvents,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
+  updateMemoryRefinementOpinionStatus,
   updateMemoryStatus
 } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
@@ -26,6 +28,7 @@ import {
   projectContextSchema,
   recordCandidateInputSchema,
   recordRefinementOpinionInputSchema,
+  recordUsageFeedbackInputSchema,
   reviewStateSchema,
   searchInputSchema,
   type AutoCaptureRationaleInput,
@@ -35,6 +38,7 @@ import {
   type ProjectContext,
   type RecordCandidateInput,
   type RecordRefinementOpinionInput,
+  type RecordUsageFeedbackInput,
   type RationaleEntry
 } from "./schema.js";
 
@@ -97,6 +101,8 @@ export type RationaleSearchWarning = {
 };
 
 const refinementOpinionLimitSchema = z.number().int().positive().max(5);
+const refinementOpinionActionSchema = z.enum(["resolve", "reject", "apply_patch"]);
+type RefinementOpinionAction = z.infer<typeof refinementOpinionActionSchema>;
 
 export class RationaleService {
   constructor(
@@ -555,6 +561,46 @@ export class RationaleService {
     return recordedCount;
   }
 
+  async recordUsageFeedback(input: RecordUsageFeedbackInput) {
+    const parsedInput = recordUsageFeedbackInputSchema.parse(input);
+    logInfo("Recording rationale usage feedback started.", {
+      entryId: parsedInput.entryId,
+      eventType: parsedInput.eventType
+    });
+
+    const databaseEntry = await findMemoryEntry(this.pool, parsedInput.entryId);
+    if (!databaseEntry) {
+      throw new Error(`Cannot record usage feedback for unknown memory entry: ${parsedInput.entryId}`);
+    }
+
+    await this.recordUsageEvents([{
+      entryId: parsedInput.entryId,
+      eventType: parsedInput.eventType,
+      sourceKind: parsedInput.source?.kind ?? "llm_feedback",
+      sourceRef: parsedInput.source?.ref,
+      task: parsedInput.task,
+      metadata: parsedInput.metadata
+    }]);
+
+    const updatedEntry = await findMemoryEntry(this.pool, parsedInput.entryId);
+    if (!updatedEntry) {
+      throw new Error(`Memory entry disappeared after usage feedback: ${parsedInput.entryId}`);
+    }
+
+    logInfo("Recording rationale usage feedback completed.", {
+      entryId: parsedInput.entryId,
+      eventType: parsedInput.eventType,
+      useCount: updatedEntry.useCount
+    });
+
+    return {
+      entryId: updatedEntry.id,
+      eventType: parsedInput.eventType,
+      useCount: updatedEntry.useCount,
+      lastUsedAt: updatedEntry.lastUsedAt
+    };
+  }
+
   async recordRefinementOpinion(input: RecordRefinementOpinionInput) {
     const parsedInput = recordRefinementOpinionInputSchema.parse(input);
     logInfo("Recording rationale refinement opinion started.", {
@@ -594,6 +640,55 @@ export class RationaleService {
   async countOpenRefinementOpinions(entryIds: string[]) {
     const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
     return countOpenMemoryRefinementOpinions(this.pool, parsedEntryIds);
+  }
+
+  async markRefinementOpinion(id: string, action: RefinementOpinionAction, note?: string) {
+    const parsedId = z.string().min(1).parse(id);
+    const parsedAction = refinementOpinionActionSchema.parse(action);
+    logInfo("Marking rationale refinement opinion started.", {
+      opinionId: parsedId,
+      action: parsedAction
+    });
+
+    const opinion = await findMemoryRefinementOpinion(this.pool, parsedId);
+    if (!opinion) {
+      throw new Error(`Memory refinement opinion not found: ${parsedId}`);
+    }
+    if (opinion.status !== "open") {
+      throw new Error(`Memory refinement opinion is already ${opinion.status}: ${parsedId}`);
+    }
+
+    if (parsedAction === "apply_patch") {
+      if (!opinion.suggestedPatch) {
+        throw new Error(`Memory refinement opinion has no suggested patch: ${parsedId}`);
+      }
+
+      await this.updateRationale(opinion.entryId, opinion.suggestedPatch);
+      const updatedOpinion = await updateMemoryRefinementOpinionStatus(this.pool, parsedId, "resolved", {
+        resolved_by_action: parsedAction,
+        resolved_at: new Date().toISOString(),
+        resolution_note: note
+      });
+      logInfo("Marking rationale refinement opinion completed.", {
+        opinionId: parsedId,
+        action: parsedAction,
+        status: updatedOpinion.status
+      });
+      return updatedOpinion;
+    }
+
+    const status = parsedAction === "resolve" ? "resolved" : "rejected";
+    const updatedOpinion = await updateMemoryRefinementOpinionStatus(this.pool, parsedId, status, {
+      resolved_by_action: parsedAction,
+      resolved_at: new Date().toISOString(),
+      resolution_note: note
+    });
+    logInfo("Marking rationale refinement opinion completed.", {
+      opinionId: parsedId,
+      action: parsedAction,
+      status: updatedOpinion.status
+    });
+    return updatedOpinion;
   }
 
   async reindexMemory(scope: "all" | "changed" | "untagged" = "all", ids?: string[]) {

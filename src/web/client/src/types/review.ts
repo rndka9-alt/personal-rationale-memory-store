@@ -98,3 +98,5 @@ export type ReviewQueueDetail = {
 };
 
 export type ReviewAction = "accept" | "keep_candidate" | "needs_revision" | "deprecate";
+
+export type RefinementOpinionAction = "resolve" | "reject" | "apply_patch";

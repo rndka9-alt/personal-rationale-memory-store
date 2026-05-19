@@ -121,6 +121,19 @@ async function routeApiRequest(
     return;
   }
 
+  const refinementOpinionMatch = matchRefinementOpinionActionPath(url.pathname);
+  if (refinementOpinionMatch && method === "POST") {
+    const body = await readJsonBody(request);
+    const parsedBody = parseRefinementOpinionActionBody(body);
+    const opinion = await rationaleService.markRefinementOpinion(
+      refinementOpinionMatch.id,
+      parsedBody.action,
+      parsedBody.note
+    );
+    writeJson(response, 200, { opinion });
+    return;
+  }
+
   writeJson(response, 404, { error: "Not found" });
 }
 
@@ -155,6 +168,12 @@ function matchReviewQueueDetailPath(pathname: string) {
 
 function matchReviewQueueReviewPath(pathname: string) {
   const match = /^\/api\/review-queue\/([^/]+)\/review$/.exec(pathname);
+  const id = match?.[1];
+  return id ? { id: decodeURIComponent(id) } : undefined;
+}
+
+function matchRefinementOpinionActionPath(pathname: string) {
+  const match = /^\/api\/refinement-opinions\/([^/]+)\/action$/.exec(pathname);
   const id = match?.[1];
   return id ? { id: decodeURIComponent(id) } : undefined;
 }
@@ -204,6 +223,25 @@ function parseReviewActionBody(value: unknown): {
     notes: typeof value.notes === "string" ? value.notes : undefined,
     reason: typeof value.reason === "string" ? value.reason : undefined,
     patch: isRecord(value.patch) ? value.patch : undefined
+  };
+}
+
+function parseRefinementOpinionActionBody(value: unknown): {
+  action: "resolve" | "reject" | "apply_patch";
+  note?: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Refinement opinion action body must be an object.");
+  }
+
+  const action = value.action;
+  if (action !== "resolve" && action !== "reject" && action !== "apply_patch") {
+    throw new Error("Invalid refinement opinion action.");
+  }
+
+  return {
+    action,
+    note: typeof value.note === "string" ? value.note : undefined
   };
 }
 
