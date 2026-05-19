@@ -113,6 +113,37 @@ const refinementOpinionLimitSchema = z.number().int().positive().max(5);
 const refinementOpinionActionSchema = z.enum(["resolve", "reject", "apply_patch"]);
 type RefinementOpinionAction = z.infer<typeof refinementOpinionActionSchema>;
 
+const searchRankingWeights = {
+  vector: 5,
+  lexical: 1,
+  accepted: 2,
+  reviewed: 0.5,
+  candidate: 0.25,
+  needsRevision: -1,
+  autoUnreviewedCandidate: -0.75,
+  confidenceMax: 1,
+  usageMultiplier: 0.25,
+  usageMax: 1.5,
+  recentUsageMultiplier: 1,
+  feedbackPositive: 0.35,
+  feedbackNegative: 0.75,
+  typeMatch: 1,
+  domainMatch: 2,
+  intentMatch: 1.5,
+  modeMatch: 1.5
+};
+
+const reviewPriorityWeights = {
+  openOpinion: 4,
+  openOpinionMax: 12,
+  needsRevision: 4,
+  usageMultiplier: 1.5,
+  usageMax: 6,
+  recentUsageMultiplier: 4,
+  feedbackPositive: 0.75,
+  feedbackNegative: 1
+};
+
 export class RationaleService {
   constructor(
     private readonly pool: pg.Pool,
@@ -1153,6 +1184,20 @@ function calculateExplicitFeedbackScore(
   return Number((positiveScore - negativeScore).toFixed(2));
 }
 
+function addScoreContribution(reasons: string[], label: string, score: number, detail?: string) {
+  if (score === 0) {
+    return 0;
+  }
+
+  reasons.push(formatScoreReason(label, score, detail));
+  return score;
+}
+
+function formatScoreReason(label: string, score: number, detail?: string) {
+  const signedScore = score > 0 ? `+${score.toFixed(2)}` : score.toFixed(2);
+  return detail ? `${label}:${detail}:${signedScore}` : `${label}:${signedScore}`;
+}
+
 export function calculateReviewPriority(entry: {
   reviewState: MemoryEntryRecord["reviewState"];
   useCount: number;
@@ -1162,32 +1207,41 @@ export function calculateReviewPriority(entry: {
   const reasons: string[] = [];
 
   if (openRefinementOpinionCount > 0) {
-    score += Math.min(openRefinementOpinionCount * 4, 12);
-    reasons.push(`open-opinions:${openRefinementOpinionCount}`);
+    score += addScoreContribution(
+      reasons,
+      "open-opinions",
+      Math.min(openRefinementOpinionCount * reviewPriorityWeights.openOpinion, reviewPriorityWeights.openOpinionMax),
+      String(openRefinementOpinionCount)
+    );
   }
 
   if (entry.reviewState === "needs_revision") {
-    score += 4;
-    reasons.push("needs-revision");
+    score += addScoreContribution(reasons, "needs-revision", reviewPriorityWeights.needsRevision);
   }
 
   if (entry.useCount > 0) {
-    const usageScore = Math.min(Math.log1p(entry.useCount) * 1.5, 6);
-    score += usageScore;
-    reasons.push(`usage:${entry.useCount}`);
+    score += addScoreContribution(
+      reasons,
+      "usage",
+      Math.min(Math.log1p(entry.useCount) * reviewPriorityWeights.usageMultiplier, reviewPriorityWeights.usageMax),
+      String(entry.useCount)
+    );
   }
 
-  const recentUsageScore = calculateRecentUsageScore(entry.lastUsedAt) * 4;
+  const recentUsageScore = calculateRecentUsageScore(entry.lastUsedAt) * reviewPriorityWeights.recentUsageMultiplier;
   if (recentUsageScore > 0) {
-    score += recentUsageScore;
-    reasons.push(`recent-usage:${recentUsageScore.toFixed(2)}`);
+    score += addScoreContribution(reasons, "recent-usage", recentUsageScore);
   }
 
-  const feedbackScore = calculateExplicitFeedbackScore(usageFeedback, 0.75, 1);
-  if (feedbackScore !== 0) {
-    score += feedbackScore;
-    reasons.push(`feedback:${feedbackScore.toFixed(2)}`);
-  }
+  score += addScoreContribution(
+    reasons,
+    "feedback",
+    calculateExplicitFeedbackScore(
+      usageFeedback,
+      reviewPriorityWeights.feedbackPositive,
+      reviewPriorityWeights.feedbackNegative
+    )
+  );
 
   if (reasons.length === 0) {
     reasons.push("standard-candidate");
@@ -1196,7 +1250,7 @@ export function calculateReviewPriority(entry: {
   return { score: Number(score.toFixed(2)), reasons };
 }
 
-function calculateSearchRanking(entry: {
+export function calculateSearchRanking(entry: {
   confidence: number;
   acceptanceState: MemoryEntryRecord["acceptanceState"];
   reviewState: MemoryEntryRecord["reviewState"];
@@ -1216,72 +1270,103 @@ function calculateSearchRanking(entry: {
   const reasons: string[] = [];
 
   if (typeof entry.vectorScore === "number") {
-    score += entry.vectorScore * 5;
-    reasons.push(`vector:${entry.vectorScore.toFixed(3)}`);
+    score += addScoreContribution(
+      reasons,
+      "vector",
+      entry.vectorScore * searchRankingWeights.vector,
+      entry.vectorScore.toFixed(3)
+    );
   }
 
   if (typeof entry.lexicalRank === "number") {
-    score += entry.lexicalRank;
-    reasons.push(`lexical:${entry.lexicalRank}`);
+    score += addScoreContribution(
+      reasons,
+      "lexical",
+      entry.lexicalRank * searchRankingWeights.lexical,
+      entry.lexicalRank.toFixed(2)
+    );
   }
 
   if (entry.acceptanceState === "accepted") {
-    score += 1.5;
-    reasons.push("accepted");
+    score += addScoreContribution(reasons, "accepted", searchRankingWeights.accepted);
   } else if (entry.acceptanceState === "candidate") {
-    score += 0.5;
-    reasons.push("candidate");
+    score += addScoreContribution(reasons, "candidate", searchRankingWeights.candidate);
+  }
+
+  if (entry.reviewState === "reviewed") {
+    score += addScoreContribution(reasons, "reviewed", searchRankingWeights.reviewed);
+  } else if (entry.reviewState === "needs_revision") {
+    score += addScoreContribution(reasons, "needs-revision", searchRankingWeights.needsRevision);
   }
 
   if (isAutoCapturedUnreviewedCandidate(entry)) {
-    score -= 0.75;
-    reasons.push("auto-unreviewed-penalty");
+    score += addScoreContribution(reasons, "auto-unreviewed", searchRankingWeights.autoUnreviewedCandidate);
   }
 
   if (entry.confidence > 0) {
-    score += Math.min(entry.confidence, 1);
-    reasons.push(`confidence:${entry.confidence.toFixed(2)}`);
+    score += addScoreContribution(
+      reasons,
+      "confidence",
+      Math.min(entry.confidence, searchRankingWeights.confidenceMax)
+    );
   }
 
   if (entry.useCount > 0) {
-    const usageScore = Math.min(Math.log1p(entry.useCount) * 0.25, 1.5);
-    score += usageScore;
-    reasons.push(`usage:${entry.useCount}`);
+    score += addScoreContribution(
+      reasons,
+      "usage",
+      Math.min(Math.log1p(entry.useCount) * searchRankingWeights.usageMultiplier, searchRankingWeights.usageMax),
+      String(entry.useCount)
+    );
   }
 
-  const recentUsageScore = calculateRecentUsageScore(entry.lastUsedAt);
+  const recentUsageScore = calculateRecentUsageScore(entry.lastUsedAt) * searchRankingWeights.recentUsageMultiplier;
   if (recentUsageScore > 0) {
-    score += recentUsageScore;
-    reasons.push(`recent-usage:${recentUsageScore.toFixed(2)}`);
+    score += addScoreContribution(reasons, "recent-usage", recentUsageScore);
   }
 
-  const feedbackScore = calculateExplicitFeedbackScore(usageFeedback, 0.3, 0.6);
-  if (feedbackScore !== 0) {
-    score += feedbackScore;
-    reasons.push(`feedback:${feedbackScore.toFixed(2)}`);
-  }
+  score += addScoreContribution(
+    reasons,
+    "feedback",
+    calculateExplicitFeedbackScore(
+      usageFeedback,
+      searchRankingWeights.feedbackPositive,
+      searchRankingWeights.feedbackNegative
+    )
+  );
 
   if (filters.types && filters.types.includes(entry.type)) {
-    score += 1;
-    reasons.push("type-match");
+    score += addScoreContribution(reasons, "type-match", searchRankingWeights.typeMatch);
   }
 
   const domainMatches = countMetadataMatches(entry.metadata, "domains", filters.domains);
   if (domainMatches > 0) {
-    score += domainMatches * 2;
-    reasons.push(`domain-match:${domainMatches}`);
+    score += addScoreContribution(
+      reasons,
+      "domain-match",
+      domainMatches * searchRankingWeights.domainMatch,
+      String(domainMatches)
+    );
   }
 
   const intentMatches = countMetadataMatches(entry.metadata, "intents", filters.intents);
   if (intentMatches > 0) {
-    score += intentMatches * 1.5;
-    reasons.push(`intent-match:${intentMatches}`);
+    score += addScoreContribution(
+      reasons,
+      "intent-match",
+      intentMatches * searchRankingWeights.intentMatch,
+      String(intentMatches)
+    );
   }
 
   const modeMatches = countMetadataMatches(entry.metadata, "modes", filters.modes);
   if (modeMatches > 0) {
-    score += modeMatches * 1.5;
-    reasons.push(`mode-match:${modeMatches}`);
+    score += addScoreContribution(
+      reasons,
+      "mode-match",
+      modeMatches * searchRankingWeights.modeMatch,
+      String(modeMatches)
+    );
   }
 
   return { score, reasons };
