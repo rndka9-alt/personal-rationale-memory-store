@@ -193,6 +193,7 @@ Tools:
 - `compose_context`
 - `continue_context`
 - `auto_capture_rationale`
+- `record_refinement_opinion`
 - `ingest_session_candidates`
 - `reindex_memory`
 
@@ -240,6 +241,8 @@ New candidate memories infer missing `domains`, `intents`, and `modes` from thei
 Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs; it is not currently used as a search penalty for memories from other projects.
 
 `compose_context` classifies the task into candidate intents, domains, modes, risk level, likely artifact, trivial/substantial signals, and file hints. It retrieves broadly, then includes search scores and ranking reasons in the context pack so downstream LLMs can treat retrieved memories as evidence rather than hidden magic. When a memory is actually included in a composed context pack, the server records a `composed` usage event, increments `memory_entries.use_count`, and updates `memory_entries.last_used_at`. Plain retrieval candidates that do not fit the context budget are not counted as used.
+
+Refinement opinions are stored separately from canonical Markdown in `memory_refinement_opinions`. Use `record_refinement_opinion` to attach an unresolved `opinion`, `patch_request`, `correction`, or `question` to a memory without mutating the memory body immediately. `compose_context` and `continue_context` include up to three open refinement opinions per retrieved memory so pending critique can travel with the rationale while keeping context bounded.
 
 When more relevant candidates exist than fit the initial context, it appends a compact continuation manifest with an in-memory cursor and omitted preview. `continue_context` uses that cursor to return the next retrieved candidates without rerunning the search; cursors are process-local and kept in a small FIFO cache, so evicted cursors require rerunning `compose_context`.
 

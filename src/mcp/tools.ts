@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { ContextComposer } from "../memory/contextComposer.js";
 import type { RationaleService } from "../memory/rationaleService.js";
-import { autoCaptureRationaleInputSchema, recordCandidateInputSchema, searchInputSchema } from "../memory/schema.js";
+import {
+  autoCaptureRationaleInputSchema,
+  recordCandidateInputSchema,
+  recordRefinementOpinionInputSchema,
+  searchInputSchema
+} from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
 import type { StatusService } from "../diagnostics/statusService.js";
 
@@ -90,6 +95,13 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: autoCaptureRationaleInputSchema.shape,
       handler: async (input: unknown) =>
         jsonToolResult(await services.rationaleService.autoCaptureRationale(autoCaptureRationaleInputSchema.parse(input)))
+    },
+    {
+      name: "record_refinement_opinion",
+      description: "Attach a bounded unresolved refinement opinion or patch request to a rationale memory.",
+      schema: recordRefinementOpinionInputSchema.shape,
+      handler: async (input: unknown) =>
+        jsonToolResult(await services.rationaleService.recordRefinementOpinion(recordRefinementOpinionInputSchema.parse(input)))
     },
     {
       name: "reindex_memory",

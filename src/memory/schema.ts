@@ -27,6 +27,8 @@ export const memoryUsageEventTypeSchema = z.enum([
   "user_helpful",
   "user_unhelpful"
 ]);
+export const refinementOpinionTypeSchema = z.enum(["opinion", "patch_request", "correction", "question"]);
+export const refinementOpinionStatusSchema = z.enum(["open", "resolved", "rejected"]);
 
 export const rationaleFrontmatterSchema = z.object({
   id: z.string().min(1),
@@ -97,6 +99,15 @@ export const autoCaptureRationaleInputSchema = z.object({
   metadata: recordCandidateInputSchema.shape.metadata
 });
 
+export const recordRefinementOpinionInputSchema = z.object({
+  entryId: z.string().min(1),
+  opinionType: refinementOpinionTypeSchema.default("opinion"),
+  body: z.string().min(1).max(2000),
+  suggestedPatch: z.record(z.unknown()).optional(),
+  source: sourceMetadataSchema.optional(),
+  metadata: z.record(z.unknown()).optional()
+});
+
 export const searchInputSchema = z.object({
   query: z.string().min(1),
   domains: z.array(z.string()).optional(),
@@ -118,6 +129,23 @@ export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInput
 export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
 export type MemoryUsageEventType = z.infer<typeof memoryUsageEventTypeSchema>;
+export type RefinementOpinionType = z.infer<typeof refinementOpinionTypeSchema>;
+export type RefinementOpinionStatus = z.infer<typeof refinementOpinionStatusSchema>;
+export type RecordRefinementOpinionInput = z.infer<typeof recordRefinementOpinionInputSchema>;
+
+export type MemoryRefinementOpinionRecord = {
+  id: string;
+  entryId: string;
+  opinionType: RefinementOpinionType;
+  status: RefinementOpinionStatus;
+  body: string;
+  suggestedPatch?: Record<string, unknown>;
+  sourceKind: string;
+  sourceRef?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type MemoryEntryRecord = {
   id: string;

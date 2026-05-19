@@ -4,7 +4,9 @@ import {
   findMemoryEntry,
   listAllMemoryEntriesByAcceptanceState,
   listMemoryEntriesByAcceptanceState,
+  listOpenMemoryRefinementOpinions,
   listRecentMemoryEntries,
+  recordMemoryRefinementOpinion,
   recordMemoryUsageEvents,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
@@ -22,13 +24,16 @@ import {
   memoryUsageEventTypeSchema,
   projectContextSchema,
   recordCandidateInputSchema,
+  recordRefinementOpinionInputSchema,
   reviewStateSchema,
   searchInputSchema,
   type AutoCaptureRationaleInput,
   type MemoryEntryRecord,
+  type MemoryRefinementOpinionRecord,
   type MemoryUsageEventType,
   type ProjectContext,
   type RecordCandidateInput,
+  type RecordRefinementOpinionInput,
   type RationaleEntry
 } from "./schema.js";
 
@@ -82,6 +87,8 @@ type RecordUsageEventInput = {
   task?: string;
   metadata?: Record<string, unknown>;
 };
+
+const refinementOpinionLimitSchema = z.number().int().positive().max(5);
 
 export class RationaleService {
   constructor(
@@ -503,6 +510,42 @@ export class RationaleService {
     return recordedCount;
   }
 
+  async recordRefinementOpinion(input: RecordRefinementOpinionInput) {
+    const parsedInput = recordRefinementOpinionInputSchema.parse(input);
+    logInfo("Recording rationale refinement opinion started.", {
+      entryId: parsedInput.entryId,
+      opinionType: parsedInput.opinionType
+    });
+
+    const databaseEntry = await findMemoryEntry(this.pool, parsedInput.entryId);
+    if (!databaseEntry) {
+      throw new Error(`Cannot attach refinement opinion to unknown memory entry: ${parsedInput.entryId}`);
+    }
+
+    const opinion = await recordMemoryRefinementOpinion(this.pool, {
+      entryId: parsedInput.entryId,
+      opinionType: parsedInput.opinionType,
+      body: parsedInput.body,
+      suggestedPatch: parsedInput.suggestedPatch,
+      sourceKind: parsedInput.source?.kind ?? "llm_opinion",
+      sourceRef: parsedInput.source?.ref,
+      metadata: parsedInput.metadata ?? {}
+    });
+
+    logInfo("Recording rationale refinement opinion completed.", {
+      entryId: parsedInput.entryId,
+      opinionId: opinion.id
+    });
+    return opinion;
+  }
+
+  async listOpenRefinementOpinions(entryIds: string[], limitPerEntry = 3) {
+    const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
+    const parsedLimit = refinementOpinionLimitSchema.parse(limitPerEntry);
+    const opinions = await listOpenMemoryRefinementOpinions(this.pool, parsedEntryIds, parsedLimit);
+    return groupRefinementOpinionsByEntryId(opinions);
+  }
+
   async reindexMemory(scope: "all" | "changed" | "untagged" = "all", ids?: string[]) {
     logInfo("Rationale reindex requested.", {
       scope,
@@ -559,6 +602,19 @@ export class RationaleService {
     });
     return repairedCount;
   }
+}
+
+function groupRefinementOpinionsByEntryId(opinions: MemoryRefinementOpinionRecord[]) {
+  const groupedOpinions = new Map<string, MemoryRefinementOpinionRecord[]>();
+  for (const opinion of opinions) {
+    const existingOpinions = groupedOpinions.get(opinion.entryId);
+    if (existingOpinions) {
+      existingOpinions.push(opinion);
+    } else {
+      groupedOpinions.set(opinion.entryId, [opinion]);
+    }
+  }
+  return groupedOpinions;
 }
 
 function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknown>) {
