@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { autoCaptureRationaleInputSchema, rationaleEntrySchema } from "../src/memory/schema.js";
+import {
+  autoCaptureRationaleInputSchema,
+  memoryUsageEventTypeSchema,
+  rationaleEntrySchema
+} from "../src/memory/schema.js";
 
 describe("rationaleEntrySchema", () => {
   it("requires rationale-centered content", () => {
@@ -55,5 +59,12 @@ describe("autoCaptureRationaleInputSchema", () => {
 
     expect(input.reuseWhen).toHaveLength(1);
     expect(input.avoidWhen).toHaveLength(1);
+  });
+});
+
+describe("memoryUsageEventTypeSchema", () => {
+  it("accepts composed usage and rejects unknown event types", () => {
+    expect(memoryUsageEventTypeSchema.parse("composed")).toBe("composed");
+    expect(() => memoryUsageEventTypeSchema.parse("previewed")).toThrow();
   });
 });

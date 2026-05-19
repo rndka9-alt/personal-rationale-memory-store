@@ -6,6 +6,8 @@ import { classifyTask } from "../ontology/taskClassifier.js";
 import type { RationaleService } from "./rationaleService.js";
 import type { MemoryEntryRecord } from "./schema.js";
 
+type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
+
 export type ComposeContextInput = {
   task: string;
   explicitMode?: string;
@@ -93,10 +95,12 @@ export class ContextComposer {
 
     let usedTokens = estimateTokens(lines.join("\n"));
     let index = 0;
+    const usageEvents: UsageEventInput[] = [];
 
     for (const result of relevantResults) {
       const entry = await this.rationaleService.getRationale(result.id);
-      const fullText = index < includeFullTopK ? formatFullEntry(entry.rawMarkdown, result) : formatSummary(result);
+      const includeKind = index < includeFullTopK ? "full" : "summary";
+      const fullText = includeKind === "full" ? formatFullEntry(entry.rawMarkdown, result) : formatSummary(result);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context stopped at token budget.", {
@@ -110,6 +114,13 @@ export class ContextComposer {
 
       lines.push(fullText);
       usedTokens += nextTokens;
+      usageEvents.push(createComposedUsageEvent(result, {
+        sourceKind: "compose_context",
+        task: input.task,
+        includeKind,
+        retrievalRank: index + 1,
+        tokenEstimate: nextTokens
+      }));
       index += 1;
     }
 
@@ -124,6 +135,7 @@ export class ContextComposer {
     }
 
     const contextWithManifest = lines.join("\n").trimEnd();
+    await this.rationaleService.recordUsageEvents(usageEvents);
     logInfo("Composing rationale context completed.", {
       usedTokens,
       includedCount: index,
@@ -163,6 +175,7 @@ export class ContextComposer {
     let usedTokens = estimateTokens(lines.join("\n"));
     let includedCount = 0;
     let position = snapshot.position;
+    const usageEvents: UsageEventInput[] = [];
 
     while (position < snapshot.candidates.length) {
       const result = snapshot.candidates[position];
@@ -171,7 +184,8 @@ export class ContextComposer {
       }
 
       const entry = await this.rationaleService.getRationale(result.id);
-      const fullText = includedCount < includeFullTopK ? formatFullEntry(entry.rawMarkdown, result) : formatSummary(result);
+      const includeKind = includedCount < includeFullTopK ? "full" : "summary";
+      const fullText = includeKind === "full" ? formatFullEntry(entry.rawMarkdown, result) : formatSummary(result);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context continuation stopped at token budget.", {
@@ -187,6 +201,15 @@ export class ContextComposer {
 
       lines.push(fullText);
       usedTokens += nextTokens;
+      usageEvents.push(createComposedUsageEvent(result, {
+        sourceKind: "continue_context",
+        sourceRef: input.cursor,
+        task: snapshot.task,
+        includeKind,
+        retrievalRank: position + 1,
+        tokenEstimate: nextTokens,
+        continuationPosition: position
+      }));
       includedCount += 1;
       position += 1;
     }
@@ -204,6 +227,7 @@ export class ContextComposer {
     }
 
     const context = lines.join("\n").trimEnd();
+    await this.rationaleService.recordUsageEvents(usageEvents);
     logInfo("Continuing rationale context completed.", {
       cursor: input.cursor,
       usedTokens,
@@ -290,6 +314,35 @@ function formatRankingLines(result: { searchScore?: number; searchReasons?: stri
     lines.push(`- search reasons: ${result.searchReasons.join(", ")}`);
   }
   return lines;
+}
+
+function createComposedUsageEvent(
+  result: MemoryEntryRecord,
+  options: {
+    sourceKind: string;
+    sourceRef?: string;
+    task: string;
+    includeKind: "full" | "summary";
+    retrievalRank: number;
+    tokenEstimate: number;
+    continuationPosition?: number;
+  }
+): UsageEventInput {
+  return {
+    entryId: result.id,
+    eventType: "composed",
+    sourceKind: options.sourceKind,
+    sourceRef: options.sourceRef,
+    task: options.task,
+    metadata: {
+      include_kind: options.includeKind,
+      retrieval_rank: options.retrievalRank,
+      token_estimate: options.tokenEstimate,
+      continuation_position: options.continuationPosition,
+      search_score: result.searchScore,
+      search_reasons: result.searchReasons ?? []
+    }
+  };
 }
 
 function truncateToTokens(text: string, maxTokens: number) {

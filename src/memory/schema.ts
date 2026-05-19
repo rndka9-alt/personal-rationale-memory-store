@@ -19,6 +19,14 @@ export const projectContextSchema = z.object({
 export const acceptanceStateSchema = z.enum(["candidate", "accepted", "deprecated"]);
 export const reviewStateSchema = z.enum(["unreviewed", "reviewed", "needs_revision"]);
 export const decisionStateSchema = z.enum(["proposed", "decided", "superseded", "unknown"]);
+export const memoryUsageEventTypeSchema = z.enum([
+  "retrieved",
+  "composed",
+  "applied",
+  "dismissed",
+  "user_helpful",
+  "user_unhelpful"
+]);
 
 export const rationaleFrontmatterSchema = z.object({
   id: z.string().min(1),
@@ -109,6 +117,7 @@ export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
 export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
 export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
+export type MemoryUsageEventType = z.infer<typeof memoryUsageEventTypeSchema>;
 
 export type MemoryEntryRecord = {
   id: string;
@@ -131,6 +140,8 @@ export type MemoryEntryRecord = {
   confidence: number;
   promotedTo?: string;
   deprecatedBy?: string;
+  useCount: number;
+  lastUsedAt?: string;
   metadata: Record<string, unknown>;
   lexicalRank?: number;
   vectorScore?: number;
@@ -167,6 +178,7 @@ export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string
     confidence: entry.frontmatter.confidence,
     promotedTo: entry.frontmatter.promotedTo,
     deprecatedBy: entry.frontmatter.deprecatedBy,
+    useCount: 0,
     metadata
   };
 }

@@ -5,6 +5,7 @@ import {
   listAllMemoryEntriesByAcceptanceState,
   listMemoryEntriesByAcceptanceState,
   listRecentMemoryEntries,
+  recordMemoryUsageEvents,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
   updateMemoryStatus
@@ -18,12 +19,14 @@ import { IndexingService } from "./indexingService.js";
 import {
   acceptanceStateSchema,
   autoCaptureRationaleInputSchema,
+  memoryUsageEventTypeSchema,
   projectContextSchema,
   recordCandidateInputSchema,
   reviewStateSchema,
   searchInputSchema,
   type AutoCaptureRationaleInput,
   type MemoryEntryRecord,
+  type MemoryUsageEventType,
   type ProjectContext,
   type RecordCandidateInput,
   type RationaleEntry
@@ -61,6 +64,24 @@ const rationalePatchSchema = z.object({
   project: projectContextSchema.optional(),
   metadata: z.record(z.unknown()).optional()
 });
+
+const recordUsageEventInputSchema = z.object({
+  entryId: z.string().min(1),
+  eventType: memoryUsageEventTypeSchema,
+  sourceKind: z.string().min(1),
+  sourceRef: z.string().min(1).optional(),
+  task: z.string().min(1).optional(),
+  metadata: z.record(z.unknown()).default({})
+});
+
+type RecordUsageEventInput = {
+  entryId: string;
+  eventType: MemoryUsageEventType;
+  sourceKind: string;
+  sourceRef?: string;
+  task?: string;
+  metadata?: Record<string, unknown>;
+};
 
 export class RationaleService {
   constructor(
@@ -466,6 +487,22 @@ export class RationaleService {
     return results;
   }
 
+  async recordUsageEvents(events: RecordUsageEventInput[]) {
+    const parsedEvents = z.array(recordUsageEventInputSchema).parse(events);
+    if (parsedEvents.length === 0) {
+      return 0;
+    }
+
+    logInfo("Recording rationale usage events started.", {
+      eventCount: parsedEvents.length
+    });
+    const recordedCount = await recordMemoryUsageEvents(this.pool, parsedEvents);
+    logInfo("Recording rationale usage events completed.", {
+      recordedCount
+    });
+    return recordedCount;
+  }
+
   async reindexMemory(scope: "all" | "changed" | "untagged" = "all", ids?: string[]) {
     logInfo("Rationale reindex requested.", {
       scope,
@@ -819,6 +856,8 @@ function rankSearchResults<TEntry extends {
   reviewState: MemoryEntryRecord["reviewState"];
   type: string;
   metadata: Record<string, unknown>;
+  useCount: number;
+  lastUsedAt?: string;
   lexicalRank?: number;
   vectorScore?: number;
   searchScore?: number;
@@ -845,6 +884,8 @@ function calculateSearchRanking(entry: {
   reviewState: MemoryEntryRecord["reviewState"];
   type: string;
   metadata: Record<string, unknown>;
+  useCount: number;
+  lastUsedAt?: string;
   lexicalRank?: number;
   vectorScore?: number;
 }, filters: {
@@ -884,6 +925,18 @@ function calculateSearchRanking(entry: {
     reasons.push(`confidence:${entry.confidence.toFixed(2)}`);
   }
 
+  if (entry.useCount > 0) {
+    const usageScore = Math.min(Math.log1p(entry.useCount) * 0.25, 1.5);
+    score += usageScore;
+    reasons.push(`usage:${entry.useCount}`);
+  }
+
+  const recentUsageScore = calculateRecentUsageScore(entry.lastUsedAt);
+  if (recentUsageScore > 0) {
+    score += recentUsageScore;
+    reasons.push(`recent-usage:${recentUsageScore.toFixed(2)}`);
+  }
+
   if (filters.types && filters.types.includes(entry.type)) {
     score += 1;
     reasons.push("type-match");
@@ -908,6 +961,24 @@ function calculateSearchRanking(entry: {
   }
 
   return { score, reasons };
+}
+
+function calculateRecentUsageScore(lastUsedAt: string | undefined) {
+  if (!lastUsedAt) {
+    return 0;
+  }
+
+  const lastUsedTime = Date.parse(lastUsedAt);
+  if (!Number.isFinite(lastUsedTime)) {
+    return 0;
+  }
+
+  const ageDays = (Date.now() - lastUsedTime) / (1000 * 60 * 60 * 24);
+  if (ageDays < 0 || ageDays > 30) {
+    return 0;
+  }
+
+  return Math.max(0, 0.5 * (1 - ageDays / 30));
 }
 
 function isAutoCapturedUnreviewedCandidate(entry: Pick<MemoryEntryRecord, "acceptanceState" | "reviewState" | "metadata">) {

@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { logInfo } from "../diagnostics/index.js";
 import {
   acceptanceStateSchema,
   decisionStateSchema,
+  memoryUsageEventTypeSchema,
   reviewStateSchema,
   type MemoryEntryRecord,
   type MemorySearchFilters,
+  type MemoryUsageEventType,
   type ProjectContext
 } from "../memory/schema.js";
 
@@ -16,6 +19,15 @@ export type MemoryChunkInsert = {
   content: string;
   embedding?: number[];
   tokenEstimate: number;
+  metadata: Record<string, unknown>;
+};
+
+export type MemoryUsageEventInsert = {
+  entryId: string;
+  eventType: MemoryUsageEventType;
+  sourceKind: string;
+  sourceRef?: string;
+  task?: string;
   metadata: Record<string, unknown>;
 };
 
@@ -69,6 +81,59 @@ export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord)
   logInfo("DB upsert memory entry completed.", {
     entryId: entry.id
   });
+}
+
+export async function recordMemoryUsageEvents(pool: pg.Pool, events: MemoryUsageEventInsert[]) {
+  if (events.length === 0) {
+    return 0;
+  }
+
+  logInfo("DB record memory usage events started.", {
+    eventCount: events.length
+  });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const event of events) {
+      await client.query(
+        `INSERT INTO memory_usage_events (
+          id, entry_id, event_type, source_kind, source_ref, task, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          randomUUID(),
+          event.entryId,
+          event.eventType,
+          event.sourceKind,
+          event.sourceRef,
+          event.task,
+          event.metadata
+        ]
+      );
+
+      if (shouldIncrementUseCount(event.eventType)) {
+        await client.query(
+          `UPDATE memory_entries
+            SET use_count = use_count + 1,
+                last_used_at = now(),
+                updated_at = now()
+            WHERE id = $1`,
+          [event.entryId]
+        );
+      }
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  logInfo("DB record memory usage events completed.", {
+    eventCount: events.length
+  });
+  return events.length;
 }
 
 export async function replaceMemoryChunks(pool: pg.Pool, entryId: string, chunks: MemoryChunkInsert[]) {
@@ -228,7 +293,8 @@ export async function getDatabaseStatus(pool: pg.Pool) {
       (SELECT COUNT(*)::int FROM memory_entries) AS memory_entry_count,
       (SELECT COUNT(*)::int FROM memory_chunks) AS memory_chunk_count,
       (SELECT COUNT(*)::int FROM ontology_terms) AS ontology_term_count,
-      (SELECT COUNT(*)::int FROM ontology_proposals) AS ontology_proposal_count`
+      (SELECT COUNT(*)::int FROM ontology_proposals) AS ontology_proposal_count,
+      (SELECT COUNT(*)::int FROM memory_usage_events) AS memory_usage_event_count`
   );
   const row = result.rows[0];
   if (!row) {
@@ -239,10 +305,16 @@ export async function getDatabaseStatus(pool: pg.Pool) {
     memoryEntryCount: Number(row.memory_entry_count),
     memoryChunkCount: Number(row.memory_chunk_count),
     ontologyTermCount: Number(row.ontology_term_count),
-    ontologyProposalCount: Number(row.ontology_proposal_count)
+    ontologyProposalCount: Number(row.ontology_proposal_count),
+    memoryUsageEventCount: Number(row.memory_usage_event_count)
   };
   logInfo("DB status query completed.", status);
   return status;
+}
+
+function shouldIncrementUseCount(eventType: MemoryUsageEventType) {
+  const parsedEventType = memoryUsageEventTypeSchema.parse(eventType);
+  return parsedEventType === "composed" || parsedEventType === "applied" || parsedEventType === "user_helpful";
 }
 
 export async function searchMemoryEntriesLexical(pool: pg.Pool, query: string, filters: MemorySearchFilters) {
@@ -379,6 +451,8 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
     confidence: Number(row.confidence),
     promotedTo: typeof row.promoted_to === "string" ? row.promoted_to : undefined,
     deprecatedBy: typeof row.deprecated_by === "string" ? row.deprecated_by : undefined,
+    useCount: Number(row.use_count),
+    lastUsedAt: row.last_used_at instanceof Date ? row.last_used_at.toISOString() : undefined,
     project: readProjectContext(metadata.project),
     metadata
   };
