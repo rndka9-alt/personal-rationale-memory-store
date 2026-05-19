@@ -542,7 +542,7 @@ function mapMemoryRefinementOpinionRow(row: pg.QueryResultRow): MemoryRefinement
 
 function shouldIncrementUseCount(eventType: MemoryUsageEventType) {
   const parsedEventType = memoryUsageEventTypeSchema.parse(eventType);
-  return parsedEventType === "composed" || parsedEventType === "applied" || parsedEventType === "user_helpful";
+  return parsedEventType === "applied" || parsedEventType === "user_helpful";
 }
 
 function createEmptyMemoryUsageFeedbackCounts(): MemoryUsageFeedbackCounts {

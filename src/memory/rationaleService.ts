@@ -122,9 +122,6 @@ const searchRankingWeights = {
   needsRevision: -1,
   autoUnreviewedCandidate: -0.75,
   confidenceMax: 1,
-  usageMultiplier: 0.25,
-  usageMax: 1.5,
-  recentUsageMultiplier: 1,
   feedbackPositive: 0.35,
   feedbackNegative: 0.75,
   typeMatch: 1,
@@ -1176,16 +1173,6 @@ function createEmptyUsageFeedbackCounts(): MemoryUsageFeedbackCounts {
   };
 }
 
-function calculateExplicitFeedbackScore(
-  feedback: MemoryUsageFeedbackCounts,
-  positiveWeight: number,
-  negativeWeight: number
-) {
-  const positiveScore = Math.min(feedback.positiveCount * positiveWeight, positiveWeight * 4);
-  const negativeScore = Math.min(feedback.negativeCount * negativeWeight, negativeWeight * 4);
-  return Number((positiveScore - negativeScore).toFixed(2));
-}
-
 function calculateBoundedSignalScore(count: number, weight: number, maxScore: number) {
   return Number(Math.min(count * weight, maxScore).toFixed(2));
 }
@@ -1328,28 +1315,25 @@ export function calculateSearchRanking(entry: {
     );
   }
 
-  if (entry.useCount > 0) {
-    score += addScoreContribution(
-      reasons,
-      "usage",
-      Math.min(Math.log1p(entry.useCount) * searchRankingWeights.usageMultiplier, searchRankingWeights.usageMax),
-      String(entry.useCount)
-    );
-  }
-
-  const recentUsageScore = calculateRecentUsageScore(entry.lastUsedAt) * searchRankingWeights.recentUsageMultiplier;
-  if (recentUsageScore > 0) {
-    score += addScoreContribution(reasons, "recent-usage", recentUsageScore);
-  }
-
   score += addScoreContribution(
     reasons,
-    "feedback",
-    calculateExplicitFeedbackScore(
-      usageFeedback,
+    "positive-feedback",
+    calculateBoundedSignalScore(
+      usageFeedback.positiveCount,
       searchRankingWeights.feedbackPositive,
-      searchRankingWeights.feedbackNegative
-    )
+      searchRankingWeights.feedbackPositive * 4
+    ),
+    String(usageFeedback.positiveCount)
+  );
+  score += addScoreContribution(
+    reasons,
+    "negative-feedback",
+    -calculateBoundedSignalScore(
+      usageFeedback.negativeCount,
+      searchRankingWeights.feedbackNegative,
+      searchRankingWeights.feedbackNegative * 4
+    ),
+    String(usageFeedback.negativeCount)
   );
 
   if (filters.types && filters.types.includes(entry.type)) {

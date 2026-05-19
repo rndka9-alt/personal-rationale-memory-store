@@ -89,7 +89,7 @@ describe("calculateSearchRanking", () => {
     expect(ranking.reasons).toContain("lexical:1.00:+1.00");
     expect(ranking.reasons).toContain("accepted:+2.00");
     expect(ranking.reasons).toContain("reviewed:+0.50");
-    expect(ranking.reasons).toContain("feedback:+0.70");
+    expect(ranking.reasons).toContain("positive-feedback:2:+0.70");
     expect(ranking.reasons).toContain("domain-match:1:+2.00");
   });
 
@@ -112,6 +112,46 @@ describe("calculateSearchRanking", () => {
     });
 
     expect(ranking.reasons).toContain("needs-revision:-1.00");
-    expect(ranking.reasons).toContain("feedback:-1.50");
+    expect(ranking.reasons).toContain("negative-feedback:2:-1.50");
+  });
+
+  it("does not boost search ranking from passive use counts", () => {
+    const baseRanking = calculateSearchRanking({
+      confidence: 0.5,
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      type: "rationale",
+      metadata: {},
+      useCount: 0,
+      vectorScore: 0.7
+    }, {}, {
+      appliedCount: 0,
+      helpfulCount: 0,
+      unhelpfulCount: 0,
+      dismissedCount: 0,
+      positiveCount: 0,
+      negativeCount: 0
+    });
+    const passiveUseRanking = calculateSearchRanking({
+      confidence: 0.5,
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      type: "rationale",
+      metadata: {},
+      useCount: 100,
+      lastUsedAt: "2099-01-01T00:00:00.000Z",
+      vectorScore: 0.7
+    }, {}, {
+      appliedCount: 0,
+      helpfulCount: 0,
+      unhelpfulCount: 0,
+      dismissedCount: 0,
+      positiveCount: 0,
+      negativeCount: 0
+    });
+
+    expect(passiveUseRanking.score).toBe(baseRanking.score);
+    expect(passiveUseRanking.reasons.some((reason) => reason.startsWith("usage:"))).toBe(false);
+    expect(passiveUseRanking.reasons.some((reason) => reason.startsWith("recent-usage:"))).toBe(false);
   });
 });

@@ -46,7 +46,7 @@ const queueSortModes = [
   { value: "opinions", label: "Opinions" },
   { value: "positive_feedback", label: "Positive feedback" },
   { value: "negative_feedback", label: "Negative feedback" },
-  { value: "uses", label: "Uses" }
+  { value: "uses", label: "Use count" }
 ];
 
 const queueSignalFilters = [
@@ -465,7 +465,7 @@ function QueueList(props: {
                 ) : null}
                 <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-ink-muted">
                   <QueueMetric label="Priority" value={item.reviewPriorityScore.toFixed(1)} />
-                  <QueueMetric label="Uses" value={String(item.useCount)} />
+                  <QueueMetric label="Use count" value={String(item.useCount)} />
                   <QueueMetric label="Last used" value={formatRelativeDate(item.lastUsedAt)} />
                   <QueueMetric label="Opinions" value={String(item.openRefinementOpinionCount)} />
                 </div>
@@ -550,7 +550,7 @@ function DetailPanel(props: {
             <MetadataPill value={entry.frontmatter.decisionState} />
             <MetadataPill value={readMetadataString(entry.frontmatter.metadata, "capture_kind") ?? "manual"} />
             <MetadataPill value={`score ${review.score}`} />
-            <MetadataPill value={`uses ${usage.useCount}`} />
+            <MetadataPill value={`use count ${usage.useCount}`} />
             <MetadataPill value={`opinions ${refinementOpinions.length}`} />
           </div>
           <h2 className="mt-3 text-xl font-semibold text-ink-strong">{entry.title}</h2>
