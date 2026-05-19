@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  createRefinementOpinion,
   fetchReviewQueue,
   fetchReviewQueueDetail,
   submitRefinementOpinionAction,
@@ -11,8 +12,10 @@ import type {
   ProjectContext,
   RefinementOpinion,
   RefinementOpinionAction,
+  RefinementOpinionType,
   ReviewAction,
-  ReviewQueueItem
+  ReviewQueueItem,
+  UsageFeedbackCounts
 } from "./types/review";
 import { namedStatusColor } from "./theme/tokens";
 
@@ -27,6 +30,13 @@ const captureKinds = [
   { value: "auto", label: "Auto" },
   { value: "manual", label: "Manual" },
   { value: "session", label: "Session" }
+];
+
+const refinementOpinionTypes: Array<{ value: RefinementOpinionType; label: string }> = [
+  { value: "opinion", label: "Opinion" },
+  { value: "patch_request", label: "Patch request" },
+  { value: "correction", label: "Correction" },
+  { value: "question", label: "Question" }
 ];
 
 export function App() {
@@ -99,6 +109,19 @@ export function App() {
     }
   });
 
+  const createRefinementOpinionMutation = useMutation({
+    mutationFn: (input: {
+      entryId: string;
+      opinionType: RefinementOpinionType;
+      body: string;
+      suggestedPatch?: Record<string, unknown>;
+    }) => createRefinementOpinion(input),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review-queue"] });
+      await queryClient.invalidateQueries({ queryKey: ["review-queue-detail"] });
+    }
+  });
+
   return (
     <main className="min-h-screen bg-surface-page text-ink-base">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 py-5 lg:px-8">
@@ -153,6 +176,9 @@ export function App() {
             isMutating={reviewMutation.isPending}
             onRefinementOpinionAction={(input) => refinementOpinionMutation.mutate(input)}
             isRefinementOpinionMutating={refinementOpinionMutation.isPending}
+            onCreateRefinementOpinion={(input) => createRefinementOpinionMutation.mutateAsync(input)}
+            isCreatingRefinementOpinion={createRefinementOpinionMutation.isPending}
+            createRefinementOpinionError={createRefinementOpinionMutation.error}
           />
         </section>
       </div>
@@ -205,6 +231,7 @@ function QueueList(props: {
                 <QueueMetric label="Opinions" value={String(item.openRefinementOpinionCount)} />
               </div>
               <p className="mt-2 line-clamp-1 text-xs text-ink-faint">{formatPriorityReasons(item.reviewPriorityReasons)}</p>
+              <p className="mt-1 line-clamp-1 text-xs text-ink-faint">{formatFeedbackSummary(item.usageFeedback)}</p>
               <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-muted">{item.summary ?? "No summary available."}</p>
               <p className="mt-3 text-xs text-ink-faint">{item.id}</p>
             </button>
@@ -225,6 +252,14 @@ function DetailPanel(props: {
   isMutating: boolean;
   onRefinementOpinionAction: (input: { id: string; action: RefinementOpinionAction }) => void;
   isRefinementOpinionMutating: boolean;
+  onCreateRefinementOpinion: (input: {
+    entryId: string;
+    opinionType: RefinementOpinionType;
+    body: string;
+    suggestedPatch?: Record<string, unknown>;
+  }) => Promise<void>;
+  isCreatingRefinementOpinion: boolean;
+  createRefinementOpinionError: Error | null;
 }) {
   if (props.isLoading) {
     return <section className="text-sm text-ink-muted">Loading detail...</section>;
@@ -286,11 +321,18 @@ function DetailPanel(props: {
             modes={entry.frontmatter.modes}
             useCount={usage.useCount}
             lastUsedAt={usage.lastUsedAt}
+            usageFeedback={usage.feedback}
           />
           <RefinementOpinionList
             opinions={refinementOpinions}
             isMutating={props.isRefinementOpinionMutating}
             onAction={props.onRefinementOpinionAction}
+          />
+          <CreateRefinementOpinionForm
+            entryId={entry.frontmatter.id}
+            isMutating={props.isCreatingRefinementOpinion}
+            mutationError={props.createRefinementOpinionError}
+            onCreate={props.onCreateRefinementOpinion}
           />
           <ReviewFacts title="Missing" items={review.missingSections} tone="warning" />
           <ReviewFacts title="Strengths" items={review.strengths} tone="success" />
@@ -408,6 +450,7 @@ function ProjectFacts(props: {
   modes: string[];
   useCount: number;
   lastUsedAt?: string;
+  usageFeedback: UsageFeedbackCounts;
 }) {
   return (
     <section>
@@ -420,6 +463,10 @@ function ProjectFacts(props: {
         <MetadataLine label="Confidence" value={props.confidence.toFixed(2)} />
         <MetadataLine label="Use count" value={String(props.useCount)} />
         <MetadataLine label="Last used" value={formatDateTime(props.lastUsedAt)} />
+        <MetadataLine label="Applied" value={String(props.usageFeedback.appliedCount)} />
+        <MetadataLine label="Helpful" value={String(props.usageFeedback.helpfulCount)} />
+        <MetadataLine label="Unhelpful" value={String(props.usageFeedback.unhelpfulCount)} />
+        <MetadataLine label="Dismissed" value={String(props.usageFeedback.dismissedCount)} />
         <MetadataLine label="Acceptance" value={props.acceptanceState} />
         <MetadataLine label="Review" value={props.reviewState} />
         <MetadataLine label="Decision" value={props.decisionState} />
@@ -490,6 +537,97 @@ function RefinementOpinionList(props: {
         </div>
       )}
     </section>
+  );
+}
+
+function CreateRefinementOpinionForm(props: {
+  entryId: string;
+  isMutating: boolean;
+  mutationError: Error | null;
+  onCreate: (input: {
+    entryId: string;
+    opinionType: RefinementOpinionType;
+    body: string;
+    suggestedPatch?: Record<string, unknown>;
+  }) => Promise<void>;
+}) {
+  const [opinionType, setOpinionType] = useState<RefinementOpinionType>("opinion");
+  const [body, setBody] = useState("");
+  const [suggestedPatchText, setSuggestedPatchText] = useState("");
+  const [formError, setFormError] = useState<string | undefined>();
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedBody = body.trim();
+    if (trimmedBody.length === 0) {
+      setFormError("Body is required.");
+      return;
+    }
+
+    const suggestedPatchResult = parseSuggestedPatchInput(suggestedPatchText);
+    if (!suggestedPatchResult.ok) {
+      setFormError(suggestedPatchResult.message);
+      return;
+    }
+
+    setFormError(undefined);
+    try {
+      await props.onCreate({
+        entryId: props.entryId,
+        opinionType,
+        body: trimmedBody,
+        suggestedPatch: suggestedPatchResult.value
+      });
+      setBody("");
+      setSuggestedPatchText("");
+    } catch (error) {
+      setFormError(formatErrorMessage(error));
+    }
+  }
+
+  return (
+    <form className="space-y-3" onSubmit={handleSubmit}>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Add refinement opinion</h3>
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium text-ink-muted">Type</span>
+        <select
+          className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+          value={opinionType}
+          onChange={(event) => setOpinionType(readRefinementOpinionType(event.target.value))}
+        >
+          {refinementOpinionTypes.map((type) => (
+            <option key={type.value} value={type.value}>{type.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium text-ink-muted">Body</span>
+        <textarea
+          className="min-h-24 w-full rounded-md border-line-base bg-surface-panel text-sm shadow-none focus:border-action-base focus:ring-action-base"
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          placeholder="What should be clarified, corrected, or patched?"
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium text-ink-muted">Suggested patch JSON</span>
+        <textarea
+          className="min-h-24 w-full rounded-md border-line-base bg-surface-panel font-mono text-xs shadow-none focus:border-action-base focus:ring-action-base"
+          value={suggestedPatchText}
+          onChange={(event) => setSuggestedPatchText(event.target.value)}
+          placeholder='{"rationale":"Updated rationale..."}'
+        />
+      </label>
+      {formError ? <p className="text-sm text-danger-base">{formError}</p> : null}
+      {props.mutationError ? <p className="text-sm text-danger-base">{props.mutationError.message}</p> : null}
+      <button
+        type="submit"
+        className="h-9 w-full rounded-md border border-line-strong bg-surface-panel text-sm font-medium text-ink-base transition-colors hover:border-action-base hover:bg-action-faint hover:text-action-base disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={props.isMutating}
+      >
+        Add opinion
+      </button>
+    </form>
   );
 }
 
@@ -569,6 +707,42 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
+function readRefinementOpinionType(value: string): RefinementOpinionType {
+  if (value === "opinion" || value === "patch_request" || value === "correction" || value === "question") {
+    return value;
+  }
+
+  throw new Error(`Invalid refinement opinion type: ${value}`);
+}
+
+function parseSuggestedPatchInput(value: string):
+  | { ok: true; value?: Record<string, unknown> }
+  | { ok: false; message: string } {
+  const trimmedValue = value.trim();
+  if (trimmedValue.length === 0) {
+    return { ok: true };
+  }
+
+  try {
+    const parsedValue: unknown = JSON.parse(trimmedValue);
+    if (!isRecord(parsedValue)) {
+      return { ok: false, message: "Suggested patch must be a JSON object." };
+    }
+
+    return { ok: true, value: parsedValue };
+  } catch (error) {
+    return { ok: false, message: formatErrorMessage(error) };
+  }
+}
+
+function formatErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error.";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function formatProjectLabel(project: ProjectContext) {
   return project.repo ? `${project.name} (${project.repo})` : project.name;
 }
@@ -620,4 +794,8 @@ function formatDateTime(value: string | undefined) {
 
 function formatPriorityReasons(reasons: string[]) {
   return reasons.length > 0 ? reasons.join(" / ") : "standard-candidate";
+}
+
+function formatFeedbackSummary(feedback: UsageFeedbackCounts) {
+  return `feedback +${feedback.positiveCount} / -${feedback.negativeCount}`;
 }

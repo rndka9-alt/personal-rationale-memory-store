@@ -2,10 +2,12 @@ import { requestJson } from "./http";
 import type {
   ProjectContext,
   RefinementOpinionAction,
+  RefinementOpinionType,
   RefinementOpinion,
   ReviewAction,
   ReviewQueueDetail,
-  ReviewQueueItem
+  ReviewQueueItem,
+  UsageFeedbackCounts
 } from "../types/review";
 
 export type ReviewQueueFilters = {
@@ -61,6 +63,22 @@ export async function submitRefinementOpinionAction(input: {
   });
 }
 
+export async function createRefinementOpinion(input: {
+  entryId: string;
+  opinionType: RefinementOpinionType;
+  body: string;
+  suggestedPatch?: Record<string, unknown>;
+}) {
+  await requestJson(`/api/review-queue/${encodeURIComponent(input.entryId)}/refinement-opinions`, {
+    method: "POST",
+    body: {
+      opinionType: input.opinionType,
+      body: input.body,
+      suggestedPatch: input.suggestedPatch
+    }
+  });
+}
+
 function parseReviewQueueResponse(value: unknown) {
   if (!isRecord(value) || !Array.isArray(value.items)) {
     throw new Error("Invalid review queue response.");
@@ -102,6 +120,7 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
     project: parseProject(value.project),
     useCount: readNumber(value, "useCount"),
     lastUsedAt: readOptionalString(value, "lastUsedAt"),
+    usageFeedback: parseUsageFeedback(value.usageFeedback),
     openRefinementOpinionCount: readNumber(value, "openRefinementOpinionCount"),
     reviewPriorityScore: readNumber(value, "reviewPriorityScore"),
     reviewPriorityReasons: readStringArray(value, "reviewPriorityReasons"),
@@ -137,7 +156,23 @@ function parseUsage(value: unknown) {
 
   return {
     useCount: readNumber(value, "useCount"),
-    lastUsedAt: readOptionalString(value, "lastUsedAt")
+    lastUsedAt: readOptionalString(value, "lastUsedAt"),
+    feedback: parseUsageFeedback(value.feedback)
+  };
+}
+
+function parseUsageFeedback(value: unknown): UsageFeedbackCounts {
+  if (!isRecord(value)) {
+    throw new Error("Invalid usage feedback counts.");
+  }
+
+  return {
+    appliedCount: readNumber(value, "appliedCount"),
+    helpfulCount: readNumber(value, "helpfulCount"),
+    unhelpfulCount: readNumber(value, "unhelpfulCount"),
+    dismissedCount: readNumber(value, "dismissedCount"),
+    positiveCount: readNumber(value, "positiveCount"),
+    negativeCount: readNumber(value, "negativeCount")
   };
 }
 

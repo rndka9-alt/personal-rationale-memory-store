@@ -34,6 +34,15 @@ export type MemoryUsageEventInsert = {
   metadata: Record<string, unknown>;
 };
 
+export type MemoryUsageFeedbackCounts = {
+  appliedCount: number;
+  helpfulCount: number;
+  unhelpfulCount: number;
+  dismissedCount: number;
+  positiveCount: number;
+  negativeCount: number;
+};
+
 export type MemoryRefinementOpinionInsert = {
   entryId: string;
   opinionType: MemoryRefinementOpinionRecord["opinionType"];
@@ -272,6 +281,39 @@ export async function recordMemoryUsageEvents(pool: pg.Pool, events: MemoryUsage
   return events.length;
 }
 
+export async function countMemoryUsageFeedback(pool: pg.Pool, entryIds: string[]) {
+  if (entryIds.length === 0) {
+    return new Map<string, MemoryUsageFeedbackCounts>();
+  }
+
+  logInfo("DB count memory usage feedback started.", {
+    entryCount: entryIds.length
+  });
+
+  const result = await pool.query(
+    `SELECT entry_id, event_type, COUNT(*)::int AS event_count
+    FROM memory_usage_events
+    WHERE entry_id = ANY($1)
+      AND event_type = ANY($2)
+    GROUP BY entry_id, event_type`,
+    [entryIds, ["applied", "user_helpful", "user_unhelpful", "dismissed"]]
+  );
+
+  const counts = new Map<string, MemoryUsageFeedbackCounts>();
+  for (const row of result.rows) {
+    const entryId = String(row.entry_id);
+    const feedbackCounts = counts.get(entryId) ?? createEmptyMemoryUsageFeedbackCounts();
+    applyUsageFeedbackCount(feedbackCounts, String(row.event_type), Number(row.event_count));
+    counts.set(entryId, feedbackCounts);
+  }
+
+  logInfo("DB count memory usage feedback completed.", {
+    entryCount: entryIds.length,
+    resultCount: result.rows.length
+  });
+  return counts;
+}
+
 export async function replaceMemoryChunks(pool: pg.Pool, entryId: string, chunks: MemoryChunkInsert[]) {
   logInfo("DB replace memory chunks started.", {
     entryId,
@@ -501,6 +543,49 @@ function mapMemoryRefinementOpinionRow(row: pg.QueryResultRow): MemoryRefinement
 function shouldIncrementUseCount(eventType: MemoryUsageEventType) {
   const parsedEventType = memoryUsageEventTypeSchema.parse(eventType);
   return parsedEventType === "composed" || parsedEventType === "applied" || parsedEventType === "user_helpful";
+}
+
+function createEmptyMemoryUsageFeedbackCounts(): MemoryUsageFeedbackCounts {
+  return {
+    appliedCount: 0,
+    helpfulCount: 0,
+    unhelpfulCount: 0,
+    dismissedCount: 0,
+    positiveCount: 0,
+    negativeCount: 0
+  };
+}
+
+function applyUsageFeedbackCount(
+  counts: MemoryUsageFeedbackCounts,
+  eventType: string,
+  eventCount: number
+) {
+  if (eventType === "applied") {
+    counts.appliedCount += eventCount;
+    counts.positiveCount += eventCount;
+    return;
+  }
+
+  if (eventType === "user_helpful") {
+    counts.helpfulCount += eventCount;
+    counts.positiveCount += eventCount;
+    return;
+  }
+
+  if (eventType === "user_unhelpful") {
+    counts.unhelpfulCount += eventCount;
+    counts.negativeCount += eventCount;
+    return;
+  }
+
+  if (eventType === "dismissed") {
+    counts.dismissedCount += eventCount;
+    counts.negativeCount += eventCount;
+    return;
+  }
+
+  throw new Error(`Unexpected memory usage feedback event type: ${eventType}`);
 }
 
 export async function searchMemoryEntriesLexical(pool: pg.Pool, query: string, filters: MemorySearchFilters) {

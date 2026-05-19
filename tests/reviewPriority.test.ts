@@ -25,4 +25,32 @@ describe("calculateReviewPriority", () => {
     expect(priority.score).toBe(0);
     expect(priority.reasons).toEqual(["standard-candidate"]);
   });
+
+  it("subtracts explicit negative feedback from review priority", () => {
+    const helpful = calculateReviewPriority({
+      reviewState: "unreviewed",
+      useCount: 0
+    }, 0, {
+      appliedCount: 0,
+      helpfulCount: 2,
+      unhelpfulCount: 0,
+      dismissedCount: 0,
+      positiveCount: 2,
+      negativeCount: 0
+    });
+    const unhelpful = calculateReviewPriority({
+      reviewState: "unreviewed",
+      useCount: 0
+    }, 0, {
+      appliedCount: 0,
+      helpfulCount: 0,
+      unhelpfulCount: 2,
+      dismissedCount: 0,
+      positiveCount: 0,
+      negativeCount: 2
+    });
+
+    expect(helpful.score).toBeGreaterThan(unhelpful.score);
+    expect(unhelpful.reasons).toContain("feedback:-2.00");
+  });
 });

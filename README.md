@@ -140,6 +140,7 @@ The web UI is a light, minimal review surface for queued rationale candidates. I
 
 - list queued memories
 - inspect and review a selected memory
+- add refinement opinions or patch requests to a selected memory
 - resolve, reject, or apply open refinement opinions attached to a selected memory
 
 Review actions available in the first UI pass:
@@ -238,7 +239,7 @@ Lifecycle is represented by explicit frontmatter fields:
 
 The legacy `status` field is deprecated and retained only for compatibility during migration. New code should use the explicit lifecycle fields as the primary source of meaning.
 
-Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, lifecycle state, confidence, and lightweight usage signals. Deprecated entries are excluded by `acceptanceState` unless explicitly requested. Returned entries include ranking reasons such as vector score, lexical score, acceptance state, domain/mode matches, and usage hints so callers can inspect why a memory was selected. If vector retrieval falls back to lexical retrieval, `search_rationales` returns warnings and `compose_context` includes a retrieval warnings section so the degraded path is visible without reading server logs.
+Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, lifecycle state, confidence, lightweight usage signals, and explicit positive or negative usage feedback. Deprecated entries are excluded by `acceptanceState` unless explicitly requested. Returned entries include ranking reasons such as vector score, lexical score, acceptance state, domain/mode matches, usage hints, and feedback hints so callers can inspect why a memory was selected. If vector retrieval falls back to lexical retrieval, `search_rationales` returns warnings and `compose_context` includes a retrieval warnings section so the degraded path is visible without reading server logs.
 
 New candidate memories infer missing `domains`, `intents`, and `modes` from their rationale content while preserving any explicit metadata tags supplied by the caller. Use `reindex_memory({ "scope": "untagged" })` or `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
 
@@ -247,6 +248,8 @@ Project context is stored as explicit frontmatter (`project.name`, optional `pro
 `compose_context` classifies the task into candidate intents, domains, modes, risk level, likely artifact, trivial/substantial signals, and file hints. It retrieves broadly, then includes search scores and ranking reasons in the context pack so downstream LLMs can treat retrieved memories as evidence rather than hidden magic. When a memory is actually included in a composed context pack, the server records a `composed` usage event, increments `memory_entries.use_count`, and updates `memory_entries.last_used_at`. Plain retrieval candidates that do not fit the context budget are not counted as used.
 
 Use `record_usage_feedback` after a memory is actually applied, judged helpful, judged unhelpful, or dismissed. `applied` and `user_helpful` events increment `use_count` and update `last_used_at`, while `user_unhelpful` and `dismissed` preserve negative feedback without inflating usage. This separates explicit usefulness signals from ordinary retrieval.
+
+The Review UI surfaces aggregated feedback counts for `applied`, `user_helpful`, `user_unhelpful`, and `dismissed` events. These aggregates are displayed for review context and are intended as the basis for later ranking weight tuning.
 
 Refinement opinions are stored separately from canonical Markdown in `memory_refinement_opinions`. Use `record_refinement_opinion` to attach an unresolved `opinion`, `patch_request`, `correction`, or `question` to a memory without mutating the memory body immediately. `compose_context` and `continue_context` include up to three open refinement opinions per retrieved memory so pending critique can travel with the rationale while keeping context bounded. The Review UI can close open opinions as resolved or rejected; `apply_patch` first updates the canonical rationale with the suggested patch, then marks the opinion resolved.
 

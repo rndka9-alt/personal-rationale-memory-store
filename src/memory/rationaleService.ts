@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import {
+  countMemoryUsageFeedback,
   countOpenMemoryRefinementOpinions,
   findMemoryEntry,
   findMemoryRefinementOpinion,
@@ -15,6 +16,7 @@ import {
   updateMemoryRefinementOpinionStatus,
   updateMemoryStatus
 } from "../db/queries.js";
+import type { MemoryUsageFeedbackCounts } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
@@ -102,6 +104,7 @@ export type RationaleSearchWarning = {
 
 export type ReviewQueueEntry = MemoryEntryRecord & {
   openRefinementOpinionCount: number;
+  usageFeedback: MemoryUsageFeedbackCounts;
   reviewPriorityScore: number;
   reviewPriorityReasons: string[];
 };
@@ -367,7 +370,8 @@ export class RationaleService {
       return captureKindMatches && reviewStateMatches;
     });
     const openOpinionCounts = await countOpenMemoryRefinementOpinions(this.pool, filteredEntries.map((entry) => entry.id));
-    const prioritizedEntries = prioritizeReviewQueueEntries(filteredEntries, openOpinionCounts);
+    const usageFeedbackCounts = await this.countUsageFeedback(filteredEntries.map((entry) => entry.id));
+    const prioritizedEntries = prioritizeReviewQueueEntries(filteredEntries, openOpinionCounts, usageFeedbackCounts);
     logInfo("Listed rationale review queue.", {
       resultCount: prioritizedEntries.length
     });
@@ -541,9 +545,12 @@ export class RationaleService {
       });
     }
 
+    const mergedResults = mergeSearchResults(vectorResults, lexicalResults);
+    const usageFeedbackCounts = await this.countUsageFeedback(mergedResults.map((entry) => entry.id));
     const results = rankSearchResults(
-      mergeSearchResults(vectorResults, lexicalResults),
-      filters
+      mergedResults,
+      filters,
+      usageFeedbackCounts
     ).slice(0, parsedInput.limit);
     logInfo("Searching rationales completed.", {
       query: parsedInput.query,
@@ -648,6 +655,17 @@ export class RationaleService {
   async countOpenRefinementOpinions(entryIds: string[]) {
     const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
     return countOpenMemoryRefinementOpinions(this.pool, parsedEntryIds);
+  }
+
+  async countUsageFeedback(entryIds: string[]) {
+    const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
+    const counts = await countMemoryUsageFeedback(this.pool, parsedEntryIds);
+    for (const entryId of parsedEntryIds) {
+      if (!counts.has(entryId)) {
+        counts.set(entryId, createEmptyUsageFeedbackCounts());
+      }
+    }
+    return counts;
   }
 
   async markRefinementOpinion(id: string, action: RefinementOpinionAction, note?: string) {
@@ -1060,6 +1078,7 @@ function mergeSearchResults<TEntry extends { id: string }>(primary: TEntry[], se
 }
 
 function rankSearchResults<TEntry extends {
+  id: string;
   confidence: number;
   acceptanceState: MemoryEntryRecord["acceptanceState"];
   reviewState: MemoryEntryRecord["reviewState"];
@@ -1076,10 +1095,10 @@ function rankSearchResults<TEntry extends {
   intents?: string[];
   modes?: string[];
   types?: string[];
-}) {
+}, usageFeedbackCounts: Map<string, MemoryUsageFeedbackCounts>) {
   return entries
     .map((entry) => {
-      const ranking = calculateSearchRanking(entry, filters);
+      const ranking = calculateSearchRanking(entry, filters, usageFeedbackCounts.get(entry.id));
       entry.searchScore = ranking.score;
       entry.searchReasons = ranking.reasons;
       return entry;
@@ -1089,15 +1108,18 @@ function rankSearchResults<TEntry extends {
 
 function prioritizeReviewQueueEntries(
   entries: MemoryEntryRecord[],
-  openOpinionCounts: Map<string, number>
+  openOpinionCounts: Map<string, number>,
+  usageFeedbackCounts: Map<string, MemoryUsageFeedbackCounts>
 ): ReviewQueueEntry[] {
   return entries
     .map((entry, originalIndex) => {
       const openRefinementOpinionCount = openOpinionCounts.get(entry.id) ?? 0;
-      const priority = calculateReviewPriority(entry, openRefinementOpinionCount);
+      const usageFeedback = usageFeedbackCounts.get(entry.id) ?? createEmptyUsageFeedbackCounts();
+      const priority = calculateReviewPriority(entry, openRefinementOpinionCount, usageFeedback);
       return {
         ...entry,
         openRefinementOpinionCount,
+        usageFeedback,
         reviewPriorityScore: priority.score,
         reviewPriorityReasons: priority.reasons,
         originalIndex
@@ -1110,11 +1132,32 @@ function prioritizeReviewQueueEntries(
     .map(({ originalIndex, ...entry }) => entry);
 }
 
+function createEmptyUsageFeedbackCounts(): MemoryUsageFeedbackCounts {
+  return {
+    appliedCount: 0,
+    helpfulCount: 0,
+    unhelpfulCount: 0,
+    dismissedCount: 0,
+    positiveCount: 0,
+    negativeCount: 0
+  };
+}
+
+function calculateExplicitFeedbackScore(
+  feedback: MemoryUsageFeedbackCounts,
+  positiveWeight: number,
+  negativeWeight: number
+) {
+  const positiveScore = Math.min(feedback.positiveCount * positiveWeight, positiveWeight * 4);
+  const negativeScore = Math.min(feedback.negativeCount * negativeWeight, negativeWeight * 4);
+  return Number((positiveScore - negativeScore).toFixed(2));
+}
+
 export function calculateReviewPriority(entry: {
   reviewState: MemoryEntryRecord["reviewState"];
   useCount: number;
   lastUsedAt?: string;
-}, openRefinementOpinionCount: number) {
+}, openRefinementOpinionCount: number, usageFeedback = createEmptyUsageFeedbackCounts()) {
   let score = 0;
   const reasons: string[] = [];
 
@@ -1140,6 +1183,12 @@ export function calculateReviewPriority(entry: {
     reasons.push(`recent-usage:${recentUsageScore.toFixed(2)}`);
   }
 
+  const feedbackScore = calculateExplicitFeedbackScore(usageFeedback, 0.75, 1);
+  if (feedbackScore !== 0) {
+    score += feedbackScore;
+    reasons.push(`feedback:${feedbackScore.toFixed(2)}`);
+  }
+
   if (reasons.length === 0) {
     reasons.push("standard-candidate");
   }
@@ -1162,7 +1211,7 @@ function calculateSearchRanking(entry: {
   intents?: string[];
   modes?: string[];
   types?: string[];
-}) {
+}, usageFeedback = createEmptyUsageFeedbackCounts()) {
   let score = 0;
   const reasons: string[] = [];
 
@@ -1204,6 +1253,12 @@ function calculateSearchRanking(entry: {
   if (recentUsageScore > 0) {
     score += recentUsageScore;
     reasons.push(`recent-usage:${recentUsageScore.toFixed(2)}`);
+  }
+
+  const feedbackScore = calculateExplicitFeedbackScore(usageFeedback, 0.3, 0.6);
+  if (feedbackScore !== 0) {
+    score += feedbackScore;
+    reasons.push(`feedback:${feedbackScore.toFixed(2)}`);
   }
 
   if (filters.types && filters.types.includes(entry.type)) {

@@ -4,6 +4,15 @@ export type ProjectContext = {
   root?: string;
 };
 
+export type UsageFeedbackCounts = {
+  appliedCount: number;
+  helpfulCount: number;
+  unhelpfulCount: number;
+  dismissedCount: number;
+  positiveCount: number;
+  negativeCount: number;
+};
+
 export type ReviewQueueItem = {
   id: string;
   type: string;
@@ -22,6 +31,7 @@ export type ReviewQueueItem = {
   confidence: number;
   useCount: number;
   lastUsedAt?: string;
+  usageFeedback: UsageFeedbackCounts;
   openRefinementOpinionCount: number;
   reviewPriorityScore: number;
   reviewPriorityReasons: string[];
@@ -95,10 +105,13 @@ export type ReviewQueueDetail = {
   usage: {
     useCount: number;
     lastUsedAt?: string;
+    feedback: UsageFeedbackCounts;
   };
   refinementOpinions: RefinementOpinion[];
 };
 
 export type ReviewAction = "accept" | "keep_candidate" | "needs_revision" | "deprecate";
+
+export type RefinementOpinionType = "opinion" | "patch_request" | "correction" | "question";
 
 export type RefinementOpinionAction = "resolve" | "reject" | "apply_patch";
