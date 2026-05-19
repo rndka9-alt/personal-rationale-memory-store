@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { z } from "zod";
-import { findMemoryEntry, listMemoryEntriesByStatus, listRecentMemoryEntries, searchMemoryEntriesLexical, searchMemoryEntriesVector, updateMemoryStatus } from "../db/queries.js";
+import { findMemoryEntry, listAllMemoryEntriesByStatus, listMemoryEntriesByStatus, listRecentMemoryEntries, searchMemoryEntriesLexical, searchMemoryEntriesVector, updateMemoryStatus } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
@@ -259,22 +259,20 @@ export class RationaleService {
     return entries;
   }
 
-  async listReviewQueue(limit: number, captureKind?: string, reviewState?: string) {
+  async listReviewQueue(captureKind?: string, reviewState?: string) {
     logInfo("Listing rationale review queue.", {
-      limit,
       captureKind,
       reviewState
     });
-    const entries = await listMemoryEntriesByStatus(this.pool, "candidate", Math.max(limit, 50));
+    const entries = await listAllMemoryEntriesByStatus(this.pool, "candidate");
     const filteredEntries = entries.filter((entry) => {
       const metadataCaptureKind = readStringMetadata(entry.metadata, "capture_kind");
       const metadataReviewState = readStringMetadata(entry.metadata, "review_state") ?? "unreviewed";
       const captureKindMatches = !captureKind || metadataCaptureKind === captureKind;
       const reviewStateMatches = !reviewState || metadataReviewState === reviewState;
       return captureKindMatches && reviewStateMatches;
-    }).slice(0, limit);
+    });
     logInfo("Listed rationale review queue.", {
-      limit,
       resultCount: filteredEntries.length
     });
     return filteredEntries;
@@ -293,7 +291,7 @@ export class RationaleService {
   }
 
   async reviewQueue(limit: number, captureKind?: string, reviewState?: string) {
-    const queueEntries = await this.listReviewQueue(limit, captureKind, reviewState);
+    const queueEntries = (await this.listReviewQueue(captureKind, reviewState)).slice(0, limit);
     const reviewedCandidates = [];
 
     for (const queueEntry of queueEntries) {

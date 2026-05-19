@@ -77,10 +77,9 @@ async function routeApiRequest(
   response: ServerResponse
 ) {
   if (method === "GET" && url.pathname === "/api/review-queue") {
-    const limit = readPositiveInteger(url.searchParams.get("limit"), 20);
     const captureKind = readOptionalString(url.searchParams.get("captureKind"));
     const reviewState = readOptionalString(url.searchParams.get("reviewState")) ?? "unreviewed";
-    const items = await rationaleService.listReviewQueue(limit, captureKind, reviewState);
+    const items = await rationaleService.listReviewQueue(captureKind, reviewState);
     writeJson(response, 200, { items });
     return;
   }
@@ -154,19 +153,6 @@ function isAuthorized(request: IncomingMessage) {
 
 function readOptionalString(value: string | null) {
   return value && value.length > 0 ? value : undefined;
-}
-
-function readPositiveInteger(value: string | null, fallback: number) {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return Math.min(parsed, 50);
 }
 
 async function readJsonBody(request: IncomingMessage) {

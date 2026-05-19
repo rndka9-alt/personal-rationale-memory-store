@@ -160,6 +160,21 @@ export async function listMemoryEntriesByStatus(pool: pg.Pool, status: string, l
   return result.rows.map(mapMemoryEntryRow);
 }
 
+export async function listAllMemoryEntriesByStatus(pool: pg.Pool, status: string) {
+  logInfo("DB list all memory entries by status started.", {
+    status
+  });
+  const result = await pool.query(
+    "SELECT * FROM memory_entries WHERE status = $1 ORDER BY updated_at DESC",
+    [status]
+  );
+  logInfo("DB list all memory entries by status completed.", {
+    status,
+    resultCount: result.rows.length
+  });
+  return result.rows.map(mapMemoryEntryRow);
+}
+
 export async function getDatabaseStatus(pool: pg.Pool) {
   logInfo("DB status query started.");
   const result = await pool.query(

@@ -2,14 +2,12 @@ import { requestJson } from "./http";
 import type { ProjectContext, ReviewAction, ReviewQueueDetail, ReviewQueueItem } from "../types/review";
 
 export type ReviewQueueFilters = {
-  limit: number;
   captureKind?: string;
   reviewState: string;
 };
 
 export async function fetchReviewQueue(filters: ReviewQueueFilters) {
   const params = new URLSearchParams({
-    limit: String(filters.limit),
     reviewState: filters.reviewState
   });
 

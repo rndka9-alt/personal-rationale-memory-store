@@ -30,7 +30,6 @@ export function App() {
   const [notes, setNotes] = useState("");
 
   const filters: ReviewQueueFilters = useMemo(() => ({
-    limit: 30,
     captureKind: captureKind.length > 0 ? captureKind : undefined,
     reviewState
   }), [captureKind, reviewState]);
@@ -161,7 +160,7 @@ function QueueList(props: {
       ) : props.items.length === 0 ? (
         <div className="border-t border-line-base py-8 text-sm text-ink-muted">No queued rationale memories match this view.</div>
       ) : (
-        <div className="divide-y divide-line-base border-y border-line-base">
+        <div className="max-h-[calc(100vh-14rem)] overflow-y-auto divide-y divide-line-base border-y border-line-base">
           {props.items.map((item) => (
             <button
               key={item.id}
