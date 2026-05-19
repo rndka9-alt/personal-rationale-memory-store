@@ -234,7 +234,7 @@ Lifecycle is represented by explicit frontmatter fields:
 
 The legacy `status` field is deprecated and retained only for compatibility during migration. New code should use the explicit lifecycle fields as the primary source of meaning.
 
-Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, lifecycle state, confidence, and lightweight usage signals. Deprecated entries are excluded by `acceptanceState` unless explicitly requested. Returned entries include ranking reasons such as vector score, lexical score, acceptance state, domain/mode matches, and usage hints so callers can inspect why a memory was selected.
+Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, lifecycle state, confidence, and lightweight usage signals. Deprecated entries are excluded by `acceptanceState` unless explicitly requested. Returned entries include ranking reasons such as vector score, lexical score, acceptance state, domain/mode matches, and usage hints so callers can inspect why a memory was selected. If vector retrieval falls back to lexical retrieval, `search_rationales` returns warnings and `compose_context` includes a retrieval warnings section so the degraded path is visible without reading server logs.
 
 New candidate memories infer missing `domains`, `intents`, and `modes` from their rationale content while preserving any explicit metadata tags supplied by the caller. Use `reindex_memory({ "scope": "untagged" })` or `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
 

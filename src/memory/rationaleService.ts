@@ -89,6 +89,13 @@ type RecordUsageEventInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type RationaleSearchWarning = {
+  kind: "query_embedding_empty" | "vector_search_failed";
+  severity: "warning";
+  message: string;
+  details: Record<string, unknown>;
+};
+
 const refinementOpinionLimitSchema = z.number().int().positive().max(5);
 
 export class RationaleService {
@@ -433,6 +440,11 @@ export class RationaleService {
   }
 
   async search(input: unknown) {
+    const result = await this.searchWithDiagnostics(input);
+    return result.results;
+  }
+
+  async searchWithDiagnostics(input: unknown) {
     const parsedInput = searchInputSchema.parse(input);
     logInfo("Searching rationales started.", {
       query: parsedInput.query,
@@ -454,6 +466,7 @@ export class RationaleService {
       includeDeprecated: parsedInput.includeDeprecated
     };
 
+    const warnings: RationaleSearchWarning[] = [];
     const lexicalResults = await searchMemoryEntriesLexical(this.pool, parsedInput.query, filters);
     logInfo("Lexical rationale search completed.", {
       query: parsedInput.query,
@@ -478,6 +491,16 @@ export class RationaleService {
         logWarn("Vector rationale search skipped because embedding response was empty.", {
           query: parsedInput.query
         });
+        warnings.push({
+          kind: "query_embedding_empty",
+          severity: "warning",
+          message: "Vector search was skipped because the query embedding response was empty.",
+          details: {
+            query: parsedInput.query,
+            provider: this.config.embedding.provider,
+            model: this.config.embedding.model
+          }
+        });
       }
     } catch (error) {
       if (lexicalResults.length === 0) {
@@ -490,6 +513,18 @@ export class RationaleService {
         query: parsedInput.query,
         lexicalResultCount: lexicalResults.length
       });
+      warnings.push({
+        kind: "vector_search_failed",
+        severity: "warning",
+        message: "Vector search failed; returning lexical fallback results.",
+        details: {
+          query: parsedInput.query,
+          lexicalResultCount: lexicalResults.length,
+          provider: this.config.embedding.provider,
+          model: this.config.embedding.model,
+          error: formatErrorMessage(error)
+        }
+      });
     }
 
     const results = rankSearchResults(
@@ -498,9 +533,10 @@ export class RationaleService {
     ).slice(0, parsedInput.limit);
     logInfo("Searching rationales completed.", {
       query: parsedInput.query,
-      resultCount: results.length
+      resultCount: results.length,
+      warningCount: warnings.length
     });
-    return results;
+    return { results, warnings };
   }
 
   async recordUsageEvents(events: RecordUsageEventInput[]) {
@@ -1049,6 +1085,10 @@ function calculateRecentUsageScore(lastUsedAt: string | undefined) {
   }
 
   return Math.max(0, 0.5 * (1 - ageDays / 30));
+}
+
+function formatErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error";
 }
 
 function isAutoCapturedUnreviewedCandidate(entry: Pick<MemoryEntryRecord, "acceptanceState" | "reviewState" | "metadata">) {

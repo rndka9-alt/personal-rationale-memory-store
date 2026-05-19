@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
 import { classifyTask } from "../ontology/taskClassifier.js";
-import type { RationaleService } from "./rationaleService.js";
+import type { RationaleSearchWarning, RationaleService } from "./rationaleService.js";
 import type { MemoryEntryRecord, MemoryRefinementOpinionRecord } from "./schema.js";
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
@@ -58,17 +58,19 @@ export class ContextComposer {
       fileHints: classification.fileHints
     });
     const kernel = await this.loadKernel(tokenBudget);
-    const searchResults = await this.rationaleService.search({
+    const searchResult = await this.rationaleService.searchWithDiagnostics({
       query: input.task,
       domains: input.explicitDomains,
       modes: input.explicitMode ? [input.explicitMode] : undefined,
       limit: 50,
       includeDeprecated: false
     });
+    const searchResults = searchResult.results;
     const relevantResults = searchResults.filter((result) => (result.searchScore ?? 0) >= minScore);
     logInfo("Rationale context retrieval completed.", {
       resultCount: searchResults.length,
-      relevantResultCount: relevantResults.length
+      relevantResultCount: relevantResults.length,
+      warningCount: searchResult.warnings.length
     });
     const refinementOpinionsByEntryId = await this.rationaleService.listOpenRefinementOpinions(
       relevantResults.map((result) => result.id),
@@ -91,6 +93,7 @@ export class ContextComposer {
       `- trivial: ${classification.trivial}`,
       classification.fileHints.length > 0 ? `- file hints: ${classification.fileHints.join(", ")}` : "- file hints: none",
       classification.reasons.length > 0 ? `- classification reasons: ${classification.reasons.join("; ")}` : "- classification reasons: default fallback",
+      ...formatSearchWarnings(searchResult.warnings),
       "",
       "## Stable kernel",
       kernel,
@@ -264,6 +267,18 @@ export class ContextComposer {
     const text = await readFile(kernelPath, "utf8");
     return truncateToTokens(text.trim(), Math.min(250, Math.floor(tokenBudget / 4)));
   }
+}
+
+function formatSearchWarnings(warnings: RationaleSearchWarning[]) {
+  if (warnings.length === 0) {
+    return [];
+  }
+
+  return [
+    "",
+    "## Retrieval warnings",
+    ...warnings.map((warning) => `- ${warning.kind}: ${warning.message}`)
+  ];
 }
 
 function formatSummary(result: {

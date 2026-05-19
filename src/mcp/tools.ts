@@ -54,7 +54,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       name: "search_rationales",
       description: "Search rationale memories with lexical, vector, and metadata signals.",
       schema: searchInputSchema.shape,
-      handler: async (input: unknown) => jsonToolResult(await services.rationaleService.search(input))
+      handler: async (input: unknown) => jsonToolResult(await services.rationaleService.searchWithDiagnostics(input))
     },
     {
       name: "get_rationale",
