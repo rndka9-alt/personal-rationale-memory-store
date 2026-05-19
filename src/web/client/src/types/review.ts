@@ -20,6 +20,9 @@ export type ReviewQueueItem = {
   sourceRef?: string;
   project?: ProjectContext;
   confidence: number;
+  useCount: number;
+  lastUsedAt?: string;
+  openRefinementOpinionCount: number;
   metadata: Record<string, unknown>;
 };
 
@@ -70,9 +73,28 @@ export type CandidateReview = {
   cautions: string[];
 };
 
+export type RefinementOpinion = {
+  id: string;
+  entryId: string;
+  opinionType: string;
+  status: string;
+  body: string;
+  suggestedPatch?: Record<string, unknown>;
+  sourceKind: string;
+  sourceRef?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ReviewQueueDetail = {
   entry: RationaleEntry;
   review: CandidateReview;
+  usage: {
+    useCount: number;
+    lastUsedAt?: string;
+  };
+  refinementOpinions: RefinementOpinion[];
 };
 
 export type ReviewAction = "accept" | "keep_candidate" | "needs_revision" | "deprecate";

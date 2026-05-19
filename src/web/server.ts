@@ -80,15 +80,31 @@ async function routeApiRequest(
     const captureKind = readOptionalString(url.searchParams.get("captureKind"));
     const reviewState = readOptionalString(url.searchParams.get("reviewState")) ?? "unreviewed";
     const items = await rationaleService.listReviewQueue(captureKind, reviewState);
-    writeJson(response, 200, { items });
+    const openOpinionCounts = await rationaleService.countOpenRefinementOpinions(items.map((item) => item.id));
+    writeJson(response, 200, {
+      items: items.map((item) => ({
+        ...item,
+        openRefinementOpinionCount: openOpinionCounts.get(item.id) ?? 0
+      }))
+    });
     return;
   }
 
   const detailMatch = matchReviewQueueDetailPath(url.pathname);
   if (detailMatch && method === "GET") {
     const entry = await rationaleService.getRationale(detailMatch.id);
+    const indexedEntry = await rationaleService.getMemoryEntryRecord(detailMatch.id);
+    const refinementOpinions = await rationaleService.listOpenRefinementOpinions([detailMatch.id], 5);
     const review = await rationaleService.reviewRationale(detailMatch.id);
-    writeJson(response, 200, { entry, review });
+    writeJson(response, 200, {
+      entry,
+      review,
+      usage: {
+        useCount: indexedEntry.useCount,
+        lastUsedAt: indexedEntry.lastUsedAt
+      },
+      refinementOpinions: refinementOpinions.get(detailMatch.id) ?? []
+    });
     return;
   }
 

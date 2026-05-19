@@ -6,7 +6,7 @@ import {
   submitReviewAction,
   type ReviewQueueFilters
 } from "./api/reviewQueue";
-import type { ProjectContext, ReviewAction, ReviewQueueItem } from "./types/review";
+import type { ProjectContext, RefinementOpinion, ReviewAction, ReviewQueueItem } from "./types/review";
 import { namedStatusColor } from "./theme/tokens";
 
 const reviewStates = [
@@ -177,6 +177,11 @@ function QueueList(props: {
               {item.project ? (
                 <p className="mt-2 line-clamp-1 text-xs text-ink-muted">{formatProjectLabel(item.project)}</p>
               ) : null}
+              <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-ink-muted">
+                <QueueMetric label="Uses" value={String(item.useCount)} />
+                <QueueMetric label="Last used" value={formatRelativeDate(item.lastUsedAt)} />
+                <QueueMetric label="Opinions" value={String(item.openRefinementOpinionCount)} />
+              </div>
               <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-muted">{item.summary ?? "No summary available."}</p>
               <p className="mt-3 text-xs text-ink-faint">{item.id}</p>
             </button>
@@ -208,7 +213,7 @@ function DetailPanel(props: {
     return <section className="text-sm text-ink-muted">Select a rationale memory to review.</section>;
   }
 
-  const { entry, review } = props.item;
+  const { entry, review, usage, refinementOpinions } = props.item;
   const reviewState = entry.frontmatter.reviewState;
 
   return (
@@ -221,6 +226,8 @@ function DetailPanel(props: {
             <MetadataPill value={entry.frontmatter.decisionState} />
             <MetadataPill value={readMetadataString(entry.frontmatter.metadata, "capture_kind") ?? "manual"} />
             <MetadataPill value={`score ${review.score}`} />
+            <MetadataPill value={`uses ${usage.useCount}`} />
+            <MetadataPill value={`opinions ${refinementOpinions.length}`} />
           </div>
           <h2 className="mt-3 text-xl font-semibold text-ink-strong">{entry.title}</h2>
           <p className="mt-2 text-sm text-ink-muted">{entry.frontmatter.id}</p>
@@ -252,7 +259,10 @@ function DetailPanel(props: {
             domains={entry.frontmatter.domains}
             intents={entry.frontmatter.intents}
             modes={entry.frontmatter.modes}
+            useCount={usage.useCount}
+            lastUsedAt={usage.lastUsedAt}
           />
+          <RefinementOpinionList opinions={refinementOpinions} />
           <ReviewFacts title="Missing" items={review.missingSections} tone="warning" />
           <ReviewFacts title="Strengths" items={review.strengths} tone="success" />
           <ReviewFacts title="Cautions" items={review.cautions} tone="danger" />
@@ -277,6 +287,15 @@ function DetailPanel(props: {
         </aside>
       </div>
     </section>
+  );
+}
+
+function QueueMetric(props: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-[0.68rem] font-medium uppercase tracking-wide text-ink-faint">{props.label}</p>
+      <p className="mt-0.5 truncate text-xs text-ink-base">{props.value}</p>
+    </div>
   );
 }
 
@@ -358,6 +377,8 @@ function ProjectFacts(props: {
   domains: string[];
   intents: string[];
   modes: string[];
+  useCount: number;
+  lastUsedAt?: string;
 }) {
   return (
     <section>
@@ -368,6 +389,8 @@ function ProjectFacts(props: {
         <MetadataLine label="Root" value={props.project?.root} />
         <MetadataLine label="Scope" value={props.scope} />
         <MetadataLine label="Confidence" value={props.confidence.toFixed(2)} />
+        <MetadataLine label="Use count" value={String(props.useCount)} />
+        <MetadataLine label="Last used" value={formatDateTime(props.lastUsedAt)} />
         <MetadataLine label="Acceptance" value={props.acceptanceState} />
         <MetadataLine label="Review" value={props.reviewState} />
         <MetadataLine label="Decision" value={props.decisionState} />
@@ -376,6 +399,38 @@ function ProjectFacts(props: {
         <MetadataList label="Intents" items={props.intents} />
         <MetadataList label="Modes" items={props.modes} />
       </div>
+    </section>
+  );
+}
+
+function RefinementOpinionList(props: { opinions: RefinementOpinion[] }) {
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Open refinement opinions</h3>
+      {props.opinions.length === 0 ? (
+        <p className="text-sm text-ink-muted">None</p>
+      ) : (
+        <div className="space-y-3">
+          {props.opinions.map((opinion) => (
+            <div key={opinion.id} className="rounded-md border border-line-base bg-surface-panel p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <MetadataPill value={opinion.opinionType} />
+                <MetadataPill value={opinion.status} />
+                <span className="text-xs text-ink-muted">{formatDateTime(opinion.createdAt)}</span>
+              </div>
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-base">{opinion.body}</p>
+              {opinion.suggestedPatch ? (
+                <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-subtle p-3 text-xs leading-5 text-ink-base">
+                  {JSON.stringify(opinion.suggestedPatch, null, 2)}
+                </pre>
+              ) : null}
+              <p className="mt-3 break-words text-xs text-ink-muted">
+                {opinion.sourceRef ? `${opinion.sourceKind}: ${opinion.sourceRef}` : opinion.sourceKind}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -458,4 +513,49 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
 
 function formatProjectLabel(project: ProjectContext) {
   return project.repo ? `${project.name} (${project.repo})` : project.name;
+}
+
+function formatRelativeDate(value: string | undefined) {
+  if (!value) {
+    return "Never";
+  }
+
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return "Invalid";
+  }
+
+  const ageMs = Date.now() - timestamp;
+  if (ageMs < 0) {
+    return "Future";
+  }
+
+  const ageMinutes = Math.floor(ageMs / (1000 * 60));
+  if (ageMinutes < 1) {
+    return "Now";
+  }
+  if (ageMinutes < 60) {
+    return `${ageMinutes}m`;
+  }
+
+  const ageHours = Math.floor(ageMinutes / 60);
+  if (ageHours < 24) {
+    return `${ageHours}h`;
+  }
+
+  const ageDays = Math.floor(ageHours / 24);
+  return `${ageDays}d`;
+}
+
+function formatDateTime(value: string | undefined) {
+  if (!value) {
+    return "Not used yet.";
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "Invalid date.";
+  }
+
+  return date.toLocaleString();
 }

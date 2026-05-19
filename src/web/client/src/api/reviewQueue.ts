@@ -1,5 +1,11 @@
 import { requestJson } from "./http";
-import type { ProjectContext, ReviewAction, ReviewQueueDetail, ReviewQueueItem } from "../types/review";
+import type {
+  ProjectContext,
+  RefinementOpinion,
+  ReviewAction,
+  ReviewQueueDetail,
+  ReviewQueueItem
+} from "../types/review";
 
 export type ReviewQueueFilters = {
   captureKind?: string;
@@ -79,6 +85,9 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
     sourceKind: readOptionalString(value, "sourceKind"),
     sourceRef: readOptionalString(value, "sourceRef"),
     project: parseProject(value.project),
+    useCount: readNumber(value, "useCount"),
+    lastUsedAt: readOptionalString(value, "lastUsedAt"),
+    openRefinementOpinionCount: readNumber(value, "openRefinementOpinionCount"),
     metadata: readRecord(value, "metadata")
   };
 }
@@ -98,8 +107,41 @@ function parseReviewQueueDetail(value: unknown): ReviewQueueDetail {
       missingSections: readStringArray(value.review, "missingSections"),
       strengths: readStringArray(value.review, "strengths"),
       cautions: readStringArray(value.review, "cautions")
-    }
+    },
+    usage: parseUsage(value.usage),
+    refinementOpinions: readRefinementOpinions(value.refinementOpinions)
   };
+}
+
+function parseUsage(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error("Invalid usage facts.");
+  }
+
+  return {
+    useCount: readNumber(value, "useCount"),
+    lastUsedAt: readOptionalString(value, "lastUsedAt")
+  };
+}
+
+function readRefinementOpinions(value: unknown): RefinementOpinion[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(isRecord).map((item) => ({
+    id: readRequiredString(item, "id"),
+    entryId: readRequiredString(item, "entryId"),
+    opinionType: readRequiredString(item, "opinionType"),
+    status: readRequiredString(item, "status"),
+    body: readRequiredString(item, "body"),
+    suggestedPatch: readOptionalRecord(item, "suggestedPatch"),
+    sourceKind: readRequiredString(item, "sourceKind"),
+    sourceRef: readOptionalString(item, "sourceRef"),
+    metadata: readRecord(item, "metadata"),
+    createdAt: readRequiredString(item, "createdAt"),
+    updatedAt: readRequiredString(item, "updatedAt")
+  }));
 }
 
 function parseRationaleEntry(value: Record<string, unknown>) {
@@ -220,6 +262,11 @@ function readStringArray(value: Record<string, unknown>, key: string) {
 function readRecord(value: Record<string, unknown>, key: string) {
   const fieldValue = value[key];
   return isRecord(fieldValue) ? fieldValue : {};
+}
+
+function readOptionalRecord(value: Record<string, unknown>, key: string) {
+  const fieldValue = value[key];
+  return isRecord(fieldValue) ? fieldValue : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

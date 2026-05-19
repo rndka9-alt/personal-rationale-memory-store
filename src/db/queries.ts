@@ -269,6 +269,36 @@ export async function findMemoryEntry(pool: pg.Pool, id: string) {
   return row ? mapMemoryEntryRow(row) : undefined;
 }
 
+export async function countOpenMemoryRefinementOpinions(pool: pg.Pool, entryIds: string[]) {
+  if (entryIds.length === 0) {
+    return new Map<string, number>();
+  }
+
+  logInfo("DB count open memory refinement opinions started.", {
+    entryCount: entryIds.length
+  });
+
+  const result = await pool.query(
+    `SELECT entry_id, COUNT(*)::int AS open_count
+    FROM memory_refinement_opinions
+    WHERE entry_id = ANY($1)
+      AND status = 'open'
+    GROUP BY entry_id`,
+    [entryIds]
+  );
+
+  const counts = new Map<string, number>();
+  for (const row of result.rows) {
+    counts.set(String(row.entry_id), Number(row.open_count));
+  }
+
+  logInfo("DB count open memory refinement opinions completed.", {
+    entryCount: entryIds.length,
+    resultCount: result.rows.length
+  });
+  return counts;
+}
+
 export async function updateMemoryStatus(
   pool: pg.Pool,
   id: string,

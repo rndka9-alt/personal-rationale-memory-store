@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import {
+  countOpenMemoryRefinementOpinions,
   findMemoryEntry,
   listAllMemoryEntriesByAcceptanceState,
   listMemoryEntriesByAcceptanceState,
@@ -211,6 +212,14 @@ export class RationaleService {
       canonicalPath,
       foundInDatabase: Boolean(databaseEntry)
     });
+    return entry;
+  }
+
+  async getMemoryEntryRecord(id: string) {
+    const entry = await findMemoryEntry(this.pool, id);
+    if (!entry) {
+      throw new Error(`Memory entry not found in index: ${id}`);
+    }
     return entry;
   }
 
@@ -544,6 +553,11 @@ export class RationaleService {
     const parsedLimit = refinementOpinionLimitSchema.parse(limitPerEntry);
     const opinions = await listOpenMemoryRefinementOpinions(this.pool, parsedEntryIds, parsedLimit);
     return groupRefinementOpinionsByEntryId(opinions);
+  }
+
+  async countOpenRefinementOpinions(entryIds: string[]) {
+    const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
+    return countOpenMemoryRefinementOpinions(this.pool, parsedEntryIds);
   }
 
   async reindexMemory(scope: "all" | "changed" | "untagged" = "all", ids?: string[]) {
