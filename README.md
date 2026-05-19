@@ -151,6 +151,8 @@ Review actions available in the first UI pass:
 
 The UI uses React, Tailwind CSS, TanStack Query, and a small fetch wrapper. It talks to the separate `web` server API, not directly to the MCP transport.
 
+Queued memories are sorted by review priority instead of raw update time. Open refinement opinions are the strongest signal, followed by `needs_revision`, positive usage count, and recent usage. The queue includes the priority score and compact reasons so reviewers can see why an item rose to the top.
+
 ## Embeddings
 
 Local and test usage defaults to mock embeddings, so no external API key is required.

@@ -100,6 +100,12 @@ export type RationaleSearchWarning = {
   details: Record<string, unknown>;
 };
 
+export type ReviewQueueEntry = MemoryEntryRecord & {
+  openRefinementOpinionCount: number;
+  reviewPriorityScore: number;
+  reviewPriorityReasons: string[];
+};
+
 const refinementOpinionLimitSchema = z.number().int().positive().max(5);
 const refinementOpinionActionSchema = z.enum(["resolve", "reject", "apply_patch"]);
 type RefinementOpinionAction = z.infer<typeof refinementOpinionActionSchema>;
@@ -360,10 +366,12 @@ export class RationaleService {
       const reviewStateMatches = !reviewState || entry.reviewState === reviewState;
       return captureKindMatches && reviewStateMatches;
     });
+    const openOpinionCounts = await countOpenMemoryRefinementOpinions(this.pool, filteredEntries.map((entry) => entry.id));
+    const prioritizedEntries = prioritizeReviewQueueEntries(filteredEntries, openOpinionCounts);
     logInfo("Listed rationale review queue.", {
-      resultCount: filteredEntries.length
+      resultCount: prioritizedEntries.length
     });
-    return filteredEntries;
+    return prioritizedEntries;
   }
 
   async reviewCandidates(limit: number) {
@@ -1077,6 +1085,66 @@ function rankSearchResults<TEntry extends {
       return entry;
     })
     .sort((left, right) => (right.searchScore ?? 0) - (left.searchScore ?? 0));
+}
+
+function prioritizeReviewQueueEntries(
+  entries: MemoryEntryRecord[],
+  openOpinionCounts: Map<string, number>
+): ReviewQueueEntry[] {
+  return entries
+    .map((entry, originalIndex) => {
+      const openRefinementOpinionCount = openOpinionCounts.get(entry.id) ?? 0;
+      const priority = calculateReviewPriority(entry, openRefinementOpinionCount);
+      return {
+        ...entry,
+        openRefinementOpinionCount,
+        reviewPriorityScore: priority.score,
+        reviewPriorityReasons: priority.reasons,
+        originalIndex
+      };
+    })
+    .sort((left, right) => {
+      const priorityDifference = right.reviewPriorityScore - left.reviewPriorityScore;
+      return priorityDifference === 0 ? left.originalIndex - right.originalIndex : priorityDifference;
+    })
+    .map(({ originalIndex, ...entry }) => entry);
+}
+
+export function calculateReviewPriority(entry: {
+  reviewState: MemoryEntryRecord["reviewState"];
+  useCount: number;
+  lastUsedAt?: string;
+}, openRefinementOpinionCount: number) {
+  let score = 0;
+  const reasons: string[] = [];
+
+  if (openRefinementOpinionCount > 0) {
+    score += Math.min(openRefinementOpinionCount * 4, 12);
+    reasons.push(`open-opinions:${openRefinementOpinionCount}`);
+  }
+
+  if (entry.reviewState === "needs_revision") {
+    score += 4;
+    reasons.push("needs-revision");
+  }
+
+  if (entry.useCount > 0) {
+    const usageScore = Math.min(Math.log1p(entry.useCount) * 1.5, 6);
+    score += usageScore;
+    reasons.push(`usage:${entry.useCount}`);
+  }
+
+  const recentUsageScore = calculateRecentUsageScore(entry.lastUsedAt) * 4;
+  if (recentUsageScore > 0) {
+    score += recentUsageScore;
+    reasons.push(`recent-usage:${recentUsageScore.toFixed(2)}`);
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("standard-candidate");
+  }
+
+  return { score: Number(score.toFixed(2)), reasons };
 }
 
 function calculateSearchRanking(entry: {

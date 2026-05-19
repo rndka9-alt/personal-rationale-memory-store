@@ -23,6 +23,8 @@ export type ReviewQueueItem = {
   useCount: number;
   lastUsedAt?: string;
   openRefinementOpinionCount: number;
+  reviewPriorityScore: number;
+  reviewPriorityReasons: string[];
   metadata: Record<string, unknown>;
 };
 

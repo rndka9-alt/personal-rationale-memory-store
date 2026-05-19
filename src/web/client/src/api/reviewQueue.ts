@@ -103,6 +103,8 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
     useCount: readNumber(value, "useCount"),
     lastUsedAt: readOptionalString(value, "lastUsedAt"),
     openRefinementOpinionCount: readNumber(value, "openRefinementOpinionCount"),
+    reviewPriorityScore: readNumber(value, "reviewPriorityScore"),
+    reviewPriorityReasons: readStringArray(value, "reviewPriorityReasons"),
     metadata: readRecord(value, "metadata")
   };
 }

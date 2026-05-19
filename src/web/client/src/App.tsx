@@ -198,11 +198,13 @@ function QueueList(props: {
               {item.project ? (
                 <p className="mt-2 line-clamp-1 text-xs text-ink-muted">{formatProjectLabel(item.project)}</p>
               ) : null}
-              <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-ink-muted">
+              <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-ink-muted">
+                <QueueMetric label="Priority" value={item.reviewPriorityScore.toFixed(1)} />
                 <QueueMetric label="Uses" value={String(item.useCount)} />
                 <QueueMetric label="Last used" value={formatRelativeDate(item.lastUsedAt)} />
                 <QueueMetric label="Opinions" value={String(item.openRefinementOpinionCount)} />
               </div>
+              <p className="mt-2 line-clamp-1 text-xs text-ink-faint">{formatPriorityReasons(item.reviewPriorityReasons)}</p>
               <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-muted">{item.summary ?? "No summary available."}</p>
               <p className="mt-3 text-xs text-ink-faint">{item.id}</p>
             </button>
@@ -614,4 +616,8 @@ function formatDateTime(value: string | undefined) {
   }
 
   return date.toLocaleString();
+}
+
+function formatPriorityReasons(reasons: string[]) {
+  return reasons.length > 0 ? reasons.join(" / ") : "standard-candidate";
 }

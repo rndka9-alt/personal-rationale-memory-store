@@ -80,13 +80,7 @@ async function routeApiRequest(
     const captureKind = readOptionalString(url.searchParams.get("captureKind"));
     const reviewState = readOptionalString(url.searchParams.get("reviewState")) ?? "unreviewed";
     const items = await rationaleService.listReviewQueue(captureKind, reviewState);
-    const openOpinionCounts = await rationaleService.countOpenRefinementOpinions(items.map((item) => item.id));
-    writeJson(response, 200, {
-      items: items.map((item) => ({
-        ...item,
-        openRefinementOpinionCount: openOpinionCounts.get(item.id) ?? 0
-      }))
-    });
+    writeJson(response, 200, { items });
     return;
   }
 
