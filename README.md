@@ -152,7 +152,7 @@ Review actions available in the first UI pass:
 
 The UI uses React, Tailwind CSS, TanStack Query, and a small fetch wrapper. It talks to the separate `web` server API, not directly to the MCP transport.
 
-Queued memories are sorted by review priority instead of raw update time. Open refinement opinions are the strongest signal, followed by `needs_revision`, positive usage count, and recent usage. The queue includes the priority score and compact reasons so reviewers can see why an item rose to the top.
+Queued memories are sorted by review priority instead of raw update time by default. Open refinement opinions are the strongest signal, followed by `needs_revision`, positive usage count, and recent usage. The queue includes the priority score and compact reasons so reviewers can see why an item rose to the top. Reviewers can also sort by last used, opinions, positive feedback, negative feedback, or uses, and filter the list to entries with opinions, feedback, or recent usage.
 
 ## Embeddings
 
@@ -251,7 +251,7 @@ Use `record_usage_feedback` after a memory is actually applied, judged helpful, 
 
 The Review UI surfaces aggregated feedback counts for `applied`, `user_helpful`, `user_unhelpful`, and `dismissed` events. These aggregates are displayed for review context and are intended as the basis for later ranking weight tuning.
 
-Refinement opinions are stored separately from canonical Markdown in `memory_refinement_opinions`. Use `record_refinement_opinion` to attach an unresolved `opinion`, `patch_request`, `correction`, or `question` to a memory without mutating the memory body immediately. `compose_context` and `continue_context` include up to three open refinement opinions per retrieved memory so pending critique can travel with the rationale while keeping context bounded. The Review UI can close open opinions as resolved or rejected; `apply_patch` first updates the canonical rationale with the suggested patch, then marks the opinion resolved.
+Refinement opinions are stored separately from canonical Markdown in `memory_refinement_opinions`. Use `record_refinement_opinion` to attach an unresolved `opinion`, `patch_request`, `correction`, or `question` to a memory without mutating the memory body immediately. `compose_context` and `continue_context` include up to three open refinement opinions per retrieved memory so pending critique can travel with the rationale while keeping context bounded. The Review UI can create refinement opinions with a field-oriented patch editor or raw JSON patch input. It can also close open opinions as resolved or rejected; `apply_patch` first updates the canonical rationale with the suggested patch, then marks the opinion resolved.
 
 When more relevant candidates exist than fit the initial context, it appends a compact continuation manifest with an in-memory cursor and omitted preview. `continue_context` uses that cursor to return the next retrieved candidates without rerunning the search; cursors are process-local and kept in a small FIFO cache, so evicted cursors require rerunning `compose_context`.
 

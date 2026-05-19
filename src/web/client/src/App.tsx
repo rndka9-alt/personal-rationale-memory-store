@@ -39,10 +39,54 @@ const refinementOpinionTypes: Array<{ value: RefinementOpinionType; label: strin
   { value: "question", label: "Question" }
 ];
 
+const queueSortModes = [
+  { value: "priority", label: "Priority" },
+  { value: "last_used", label: "Last used" },
+  { value: "opinions", label: "Opinions" },
+  { value: "positive_feedback", label: "Positive feedback" },
+  { value: "negative_feedback", label: "Negative feedback" },
+  { value: "uses", label: "Uses" }
+];
+
+const queueSignalFilters = [
+  { value: "all", label: "All signals" },
+  { value: "with_opinions", label: "Has opinions" },
+  { value: "with_negative_feedback", label: "Negative feedback" },
+  { value: "with_positive_feedback", label: "Positive feedback" },
+  { value: "recently_used", label: "Recently used" }
+];
+
+type QueueSortMode = "priority" | "last_used" | "opinions" | "positive_feedback" | "negative_feedback" | "uses";
+type QueueSignalFilter = "all" | "with_opinions" | "with_negative_feedback" | "with_positive_feedback" | "recently_used";
+type PatchInputMode = "fields" | "json";
+type PatchFieldValues = {
+  title: string;
+  situation: string;
+  goal: string;
+  decision: string;
+  rationale: string;
+  tradeoff: string;
+  reuseWhen: string;
+  avoidWhen: string;
+};
+
+const emptyPatchFieldValues: PatchFieldValues = {
+  title: "",
+  situation: "",
+  goal: "",
+  decision: "",
+  rationale: "",
+  tradeoff: "",
+  reuseWhen: "",
+  avoidWhen: ""
+};
+
 export function App() {
   const queryClient = useQueryClient();
   const [reviewState, setReviewState] = useState("unreviewed");
   const [captureKind, setCaptureKind] = useState("");
+  const [queueSortMode, setQueueSortMode] = useState<QueueSortMode>("priority");
+  const [queueSignalFilter, setQueueSignalFilter] = useState<QueueSignalFilter>("all");
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [notes, setNotes] = useState("");
 
@@ -56,7 +100,11 @@ export function App() {
     queryFn: () => fetchReviewQueue(filters)
   });
 
-  const items = queueQuery.data ?? [];
+  const queueItems = queueQuery.data ?? [];
+  const items = useMemo(
+    () => sortQueueItems(filterQueueItems(queueItems, queueSignalFilter), queueSortMode),
+    [queueItems, queueSignalFilter, queueSortMode]
+  );
 
   useEffect(() => {
     if (selectedId && items.some((item) => item.id === selectedId)) {
@@ -164,6 +212,10 @@ export function App() {
             selectedId={selectedId}
             isLoading={queueQuery.isLoading}
             error={queueQuery.error}
+            sortMode={queueSortMode}
+            signalFilter={queueSignalFilter}
+            onSortModeChange={setQueueSortMode}
+            onSignalFilterChange={setQueueSignalFilter}
             onSelect={setSelectedId}
           />
           <DetailPanel
@@ -191,13 +243,45 @@ function QueueList(props: {
   selectedId?: string;
   isLoading: boolean;
   error: Error | null;
+  sortMode: QueueSortMode;
+  signalFilter: QueueSignalFilter;
+  onSortModeChange: (value: QueueSortMode) => void;
+  onSignalFilterChange: (value: QueueSignalFilter) => void;
   onSelect: (id: string) => void;
 }) {
   return (
     <aside className="min-h-0 border-r border-line-base pr-0 lg:pr-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-ink-strong">Queued memories</h2>
-        <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">{props.items.length}</span>
+      <div className="mb-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink-strong">Queued memories</h2>
+          <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">{props.items.length}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label>
+            <span className="mb-1 block text-xs font-medium text-ink-muted">Sort</span>
+            <select
+              className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+              value={props.sortMode}
+              onChange={(event) => props.onSortModeChange(readQueueSortMode(event.target.value))}
+            >
+              {queueSortModes.map((mode) => (
+                <option key={mode.value} value={mode.value}>{mode.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="mb-1 block text-xs font-medium text-ink-muted">Filter</span>
+            <select
+              className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+              value={props.signalFilter}
+              onChange={(event) => props.onSignalFilterChange(readQueueSignalFilter(event.target.value))}
+            >
+              {queueSignalFilters.map((filter) => (
+                <option key={filter.value} value={filter.value}>{filter.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       {props.isLoading ? (
@@ -553,6 +637,8 @@ function CreateRefinementOpinionForm(props: {
 }) {
   const [opinionType, setOpinionType] = useState<RefinementOpinionType>("opinion");
   const [body, setBody] = useState("");
+  const [patchInputMode, setPatchInputMode] = useState<PatchInputMode>("fields");
+  const [patchFields, setPatchFields] = useState<PatchFieldValues>(emptyPatchFieldValues);
   const [suggestedPatchText, setSuggestedPatchText] = useState("");
   const [formError, setFormError] = useState<string | undefined>();
 
@@ -564,7 +650,7 @@ function CreateRefinementOpinionForm(props: {
       return;
     }
 
-    const suggestedPatchResult = parseSuggestedPatchInput(suggestedPatchText);
+    const suggestedPatchResult = parseSuggestedPatchInput(patchInputMode, patchFields, suggestedPatchText);
     if (!suggestedPatchResult.ok) {
       setFormError(suggestedPatchResult.message);
       return;
@@ -579,6 +665,7 @@ function CreateRefinementOpinionForm(props: {
         suggestedPatch: suggestedPatchResult.value
       });
       setBody("");
+      setPatchFields(emptyPatchFieldValues);
       setSuggestedPatchText("");
     } catch (error) {
       setFormError(formatErrorMessage(error));
@@ -609,15 +696,38 @@ function CreateRefinementOpinionForm(props: {
           placeholder="What should be clarified, corrected, or patched?"
         />
       </label>
-      <label className="block">
-        <span className="mb-1 block text-xs font-medium text-ink-muted">Suggested patch JSON</span>
-        <textarea
-          className="min-h-24 w-full rounded-md border-line-base bg-surface-panel font-mono text-xs shadow-none focus:border-action-base focus:ring-action-base"
-          value={suggestedPatchText}
-          onChange={(event) => setSuggestedPatchText(event.target.value)}
-          placeholder='{"rationale":"Updated rationale..."}'
-        />
-      </label>
+      <div>
+        <span className="mb-1 block text-xs font-medium text-ink-muted">Suggested patch</span>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            className={patchModeButtonClassName(patchInputMode === "fields")}
+            onClick={() => setPatchInputMode("fields")}
+          >
+            Fields
+          </button>
+          <button
+            type="button"
+            className={patchModeButtonClassName(patchInputMode === "json")}
+            onClick={() => setPatchInputMode("json")}
+          >
+            JSON
+          </button>
+        </div>
+      </div>
+      {patchInputMode === "fields" ? (
+        <PatchFieldsEditor values={patchFields} onChange={setPatchFields} />
+      ) : (
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-ink-muted">Suggested patch JSON</span>
+          <textarea
+            className="min-h-24 w-full rounded-md border-line-base bg-surface-panel font-mono text-xs shadow-none focus:border-action-base focus:ring-action-base"
+            value={suggestedPatchText}
+            onChange={(event) => setSuggestedPatchText(event.target.value)}
+            placeholder='{"rationale":"Updated rationale..."}'
+          />
+        </label>
+      )}
       {formError ? <p className="text-sm text-danger-base">{formError}</p> : null}
       {props.mutationError ? <p className="text-sm text-danger-base">{props.mutationError.message}</p> : null}
       <button
@@ -628,6 +738,58 @@ function CreateRefinementOpinionForm(props: {
         Add opinion
       </button>
     </form>
+  );
+}
+
+function PatchFieldsEditor(props: {
+  values: PatchFieldValues;
+  onChange: (values: PatchFieldValues) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <PatchTextInput label="Title" value={props.values.title} onChange={(value) => props.onChange({ ...props.values, title: value })} />
+      <PatchTextArea label="Situation" value={props.values.situation} onChange={(value) => props.onChange({ ...props.values, situation: value })} />
+      <PatchTextArea label="Goal" value={props.values.goal} onChange={(value) => props.onChange({ ...props.values, goal: value })} />
+      <PatchTextArea label="Decision" value={props.values.decision} onChange={(value) => props.onChange({ ...props.values, decision: value })} />
+      <PatchTextArea label="Rationale" value={props.values.rationale} onChange={(value) => props.onChange({ ...props.values, rationale: value })} />
+      <PatchTextArea label="Tradeoff" value={props.values.tradeoff} onChange={(value) => props.onChange({ ...props.values, tradeoff: value })} />
+      <PatchTextArea label="Reuse when" value={props.values.reuseWhen} onChange={(value) => props.onChange({ ...props.values, reuseWhen: value })} />
+      <PatchTextArea label="Avoid when" value={props.values.avoidWhen} onChange={(value) => props.onChange({ ...props.values, avoidWhen: value })} />
+    </div>
+  );
+}
+
+function PatchTextInput(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-ink-muted">{props.label}</span>
+      <input
+        className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm shadow-none focus:border-action-base focus:ring-action-base"
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function PatchTextArea(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-ink-muted">{props.label}</span>
+      <textarea
+        className="min-h-20 w-full rounded-md border-line-base bg-surface-panel text-sm shadow-none focus:border-action-base focus:ring-action-base"
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+    </label>
   );
 }
 
@@ -707,6 +869,35 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
+function readQueueSortMode(value: string): QueueSortMode {
+  if (
+    value === "priority"
+    || value === "last_used"
+    || value === "opinions"
+    || value === "positive_feedback"
+    || value === "negative_feedback"
+    || value === "uses"
+  ) {
+    return value;
+  }
+
+  throw new Error(`Invalid queue sort mode: ${value}`);
+}
+
+function readQueueSignalFilter(value: string): QueueSignalFilter {
+  if (
+    value === "all"
+    || value === "with_opinions"
+    || value === "with_negative_feedback"
+    || value === "with_positive_feedback"
+    || value === "recently_used"
+  ) {
+    return value;
+  }
+
+  throw new Error(`Invalid queue signal filter: ${value}`);
+}
+
 function readRefinementOpinionType(value: string): RefinementOpinionType {
   if (value === "opinion" || value === "patch_request" || value === "correction" || value === "question") {
     return value;
@@ -715,10 +906,75 @@ function readRefinementOpinionType(value: string): RefinementOpinionType {
   throw new Error(`Invalid refinement opinion type: ${value}`);
 }
 
-function parseSuggestedPatchInput(value: string):
+function filterQueueItems(items: ReviewQueueItem[], signalFilter: QueueSignalFilter) {
+  if (signalFilter === "all") {
+    return items;
+  }
+
+  return items.filter((item) => {
+    if (signalFilter === "with_opinions") {
+      return item.openRefinementOpinionCount > 0;
+    }
+    if (signalFilter === "with_negative_feedback") {
+      return item.usageFeedback.negativeCount > 0;
+    }
+    if (signalFilter === "with_positive_feedback") {
+      return item.usageFeedback.positiveCount > 0;
+    }
+    return calculateTimestamp(item.lastUsedAt) > 0;
+  });
+}
+
+function sortQueueItems(items: ReviewQueueItem[], sortMode: QueueSortMode) {
+  return items
+    .map((item, originalIndex) => ({ item, originalIndex }))
+    .sort((left, right) => {
+      const scoreDifference = calculateQueueSortValue(right.item, sortMode) - calculateQueueSortValue(left.item, sortMode);
+      return scoreDifference === 0 ? left.originalIndex - right.originalIndex : scoreDifference;
+    })
+    .map((entry) => entry.item);
+}
+
+function calculateQueueSortValue(item: ReviewQueueItem, sortMode: QueueSortMode) {
+  if (sortMode === "priority") {
+    return item.reviewPriorityScore;
+  }
+  if (sortMode === "last_used") {
+    return calculateTimestamp(item.lastUsedAt);
+  }
+  if (sortMode === "opinions") {
+    return item.openRefinementOpinionCount;
+  }
+  if (sortMode === "positive_feedback") {
+    return item.usageFeedback.positiveCount;
+  }
+  if (sortMode === "negative_feedback") {
+    return item.usageFeedback.negativeCount;
+  }
+  return item.useCount;
+}
+
+function calculateTimestamp(value: string | undefined) {
+  if (!value) {
+    return 0;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function parseSuggestedPatchInput(
+  mode: PatchInputMode,
+  fields: PatchFieldValues,
+  jsonValue: string
+):
   | { ok: true; value?: Record<string, unknown> }
   | { ok: false; message: string } {
-  const trimmedValue = value.trim();
+  if (mode === "fields") {
+    return { ok: true, value: buildPatchFromFields(fields) };
+  }
+
+  const trimmedValue = jsonValue.trim();
   if (trimmedValue.length === 0) {
     return { ok: true };
   }
@@ -735,12 +991,49 @@ function parseSuggestedPatchInput(value: string):
   }
 }
 
+function buildPatchFromFields(fields: PatchFieldValues) {
+  const patch: Record<string, unknown> = {};
+  setPatchString(patch, "title", fields.title);
+  setPatchString(patch, "situation", fields.situation);
+  setPatchString(patch, "goal", fields.goal);
+  setPatchString(patch, "decision", fields.decision);
+  setPatchString(patch, "rationale", fields.rationale);
+  setPatchString(patch, "tradeoff", fields.tradeoff);
+  setPatchStringArray(patch, "reuseWhen", fields.reuseWhen);
+  setPatchStringArray(patch, "avoidWhen", fields.avoidWhen);
+  return Object.keys(patch).length > 0 ? patch : undefined;
+}
+
+function setPatchString(patch: Record<string, unknown>, key: string, value: string) {
+  const trimmedValue = value.trim();
+  if (trimmedValue.length > 0) {
+    patch[key] = trimmedValue;
+  }
+}
+
+function setPatchStringArray(patch: Record<string, unknown>, key: string, value: string) {
+  const items = value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (items.length > 0) {
+    patch[key] = items;
+  }
+}
+
 function formatErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error.";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function patchModeButtonClassName(isActive: boolean) {
+  const activeClass = isActive
+    ? "border-action-base bg-action-faint text-action-base"
+    : "border-line-strong bg-surface-panel text-ink-base hover:border-action-base hover:bg-action-faint hover:text-action-base";
+  return `h-9 rounded-md border text-sm font-medium transition-colors ${activeClass}`;
 }
 
 function formatProjectLabel(project: ProjectContext) {
