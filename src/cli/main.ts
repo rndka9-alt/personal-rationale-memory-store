@@ -53,10 +53,22 @@ if (command === "search") {
     rationale: rationaleParts.join(" ")
   }), null, 2));
 } else if (command === "reindex") {
-  const scope = rest[0] === "changed" ? "changed" : "all";
+  const scope = parseReindexScope(rest[0]);
   console.log(JSON.stringify({ indexed: await rationaleService.reindexMemory(scope) }, null, 2));
 } else {
   throw new Error("Usage: npm run cli -- <search|compose|candidates|review-queue|review-candidates|auto-capture|record-candidate|reindex> ...");
+}
+
+function parseReindexScope(value: string | undefined) {
+  if (!value) {
+    return "all";
+  }
+
+  if (value === "all" || value === "changed" || value === "untagged") {
+    return value;
+  }
+
+  throw new Error("Reindex scope must be all, changed, or untagged.");
 }
 
 await pool.end();

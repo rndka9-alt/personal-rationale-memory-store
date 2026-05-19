@@ -12,6 +12,7 @@ import {
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
+import { classifyTask } from "../ontology/taskClassifier.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { IndexingService } from "./indexingService.js";
 import {
@@ -76,6 +77,10 @@ export class RationaleService {
     const metadata = normalizeCandidateMetadata(validatedInput.metadata, "manual");
     const project = validatedInput.project ?? readProjectMetadata(validatedInput.metadata);
     const reviewState = readReviewStateMetadata(metadata, "unreviewed");
+    const inferredTags = inferRationaleTags(validatedInput);
+    const domains = mergeTagValues(getStringArray(validatedInput.metadata, "domains"), inferredTags.domains);
+    const intents = mergeTagValues(getStringArray(validatedInput.metadata, "intents"), inferredTags.intents);
+    const modes = mergeTagValues(getStringArray(validatedInput.metadata, "modes"), inferredTags.modes);
     logInfo("Recording rationale candidate started.", {
       entryId: id,
       title: validatedInput.title
@@ -89,13 +94,19 @@ export class RationaleService {
         reviewState,
         decisionState: "unknown",
         scope: "general",
-        domains: getStringArray(validatedInput.metadata, "domains"),
-        intents: getStringArray(validatedInput.metadata, "intents"),
-        modes: getStringArray(validatedInput.metadata, "modes"),
+        domains,
+        intents,
+        modes,
         confidence: 0.5,
         source: validatedInput.source,
         project,
-        metadata
+        metadata: {
+          ...metadata,
+          domains,
+          intents,
+          modes,
+          tag_inference_reasons: inferredTags.reasons
+        }
       },
       title: validatedInput.title,
       situation: validatedInput.situation,
@@ -455,7 +466,7 @@ export class RationaleService {
     return results;
   }
 
-  async reindexMemory(scope: "all" | "changed" = "all", ids?: string[]) {
+  async reindexMemory(scope: "all" | "changed" | "untagged" = "all", ids?: string[]) {
     logInfo("Rationale reindex requested.", {
       scope,
       ids
@@ -475,7 +486,41 @@ export class RationaleService {
       return this.indexingService.reindexChanged();
     }
 
+    if (scope === "untagged") {
+      return this.repairUntaggedMemory();
+    }
+
     return this.indexingService.reindexAll();
+  }
+
+  private async repairUntaggedMemory() {
+    const entries = await this.fileStore.listEntries();
+    let repairedCount = 0;
+
+    logInfo("Repairing untagged rationale memory started.", {
+      entryCount: entries.length
+    });
+
+    for (const { canonicalPath, entry } of entries) {
+      const inferredEntry = inferMissingRationaleTags(entry);
+      if (!inferredEntry.changed) {
+        continue;
+      }
+
+      const updatedCanonicalPath = await this.fileStore.writeEntry(inferredEntry.entry);
+      await this.indexingService.indexEntry(inferredEntry.entry, updatedCanonicalPath);
+      repairedCount += 1;
+
+      logInfo("Repaired untagged rationale memory.", {
+        entryId: entry.frontmatter.id,
+        canonicalPath
+      });
+    }
+
+    logInfo("Repairing untagged rationale memory completed.", {
+      repairedCount
+    });
+    return repairedCount;
   }
 }
 
@@ -570,6 +615,68 @@ function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknow
   }
 
   return updatedEntry;
+}
+
+export function inferRationaleTags(input: Pick<
+  RecordCandidateInput,
+  "title" | "situation" | "goal" | "constraints" | "decision" | "rationale" | "tradeoff" | "reuseWhen" | "avoidWhen"
+>) {
+  const classification = classifyTask(formatRationaleForClassification(input));
+  return {
+    domains: classification.domains,
+    intents: classification.intents,
+    modes: classification.modes,
+    reasons: classification.reasons
+  };
+}
+
+function inferMissingRationaleTags(entry: RationaleEntry) {
+  const inferredTags = inferRationaleTags(entry);
+  const domains = mergeTagValues(entry.frontmatter.domains, inferredTags.domains);
+  const intents = mergeTagValues(entry.frontmatter.intents, inferredTags.intents);
+  const modes = mergeTagValues(entry.frontmatter.modes, inferredTags.modes);
+  const changed = domains.length !== entry.frontmatter.domains.length
+    || intents.length !== entry.frontmatter.intents.length
+    || modes.length !== entry.frontmatter.modes.length;
+
+  if (!changed) {
+    return { changed, entry };
+  }
+
+  const updatedEntry: RationaleEntry = {
+    ...entry,
+    frontmatter: {
+      ...entry.frontmatter,
+      domains,
+      intents,
+      modes,
+      metadata: {
+        ...entry.frontmatter.metadata,
+        domains,
+        intents,
+        modes,
+        tag_inference_reasons: inferredTags.reasons
+      }
+    }
+  };
+  return { changed, entry: updatedEntry };
+}
+
+function formatRationaleForClassification(input: Pick<
+  RecordCandidateInput,
+  "title" | "situation" | "goal" | "constraints" | "decision" | "rationale" | "tradeoff" | "reuseWhen" | "avoidWhen"
+>) {
+  return [
+    input.title,
+    input.situation,
+    input.goal,
+    input.decision,
+    input.rationale,
+    input.tradeoff,
+    ...(input.constraints ?? []),
+    ...(input.reuseWhen ?? []),
+    ...(input.avoidWhen ?? [])
+  ].filter(isNonEmptyString).join("\n");
 }
 
 type CandidateReview = {
@@ -831,6 +938,10 @@ function getStringArray(metadata: Record<string, unknown> | undefined, key: stri
   return Array.isArray(value) && value.every(isString) ? value : [];
 }
 
+function mergeTagValues(explicitValues: string[], inferredValues: string[]) {
+  return [...new Set([...explicitValues, ...inferredValues])];
+}
+
 function readStringMetadata(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   return typeof value === "string" ? value : undefined;
@@ -888,6 +999,10 @@ function normalizeCandidateMetadata(metadata: Record<string, unknown> | undefine
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function createRationaleId() {

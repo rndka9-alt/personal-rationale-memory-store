@@ -131,6 +131,7 @@ npm run cli -- auto-capture "Keep DB private" "This is reusable for tunnel-backe
 npm run cli -- review-candidates
 npm run cli -- reindex
 npm run cli -- reindex changed
+npm run cli -- reindex untagged
 ```
 
 ## Review UI
@@ -233,6 +234,8 @@ Lifecycle is represented by explicit frontmatter fields:
 The legacy `status` field is deprecated and retained only for compatibility during migration. New code should use the explicit lifecycle fields as the primary source of meaning.
 
 Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, lifecycle state, and confidence. Deprecated entries are excluded by `acceptanceState` unless explicitly requested. Returned entries include ranking reasons such as vector score, lexical score, acceptance state, and domain/mode matches so callers can inspect why a memory was selected.
+
+New candidate memories infer missing `domains`, `intents`, and `modes` from their rationale content while preserving any explicit metadata tags supplied by the caller. Use `reindex_memory({ "scope": "untagged" })` or `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
 
 Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs; it is not currently used as a search penalty for memories from other projects.
 

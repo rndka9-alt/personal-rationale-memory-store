@@ -95,7 +95,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       name: "reindex_memory",
       description: "Rebuild the DB index from canonical Markdown files.",
       schema: {
-        scope: z.enum(["all", "changed"]).optional(),
+        scope: z.enum(["all", "changed", "untagged"]).optional(),
         ids: z.array(z.string()).optional()
       },
       handler: async (input) => {
@@ -148,7 +148,7 @@ const continueInputSchema = z.object({
 });
 
 const reindexInputSchema = z.object({
-  scope: z.enum(["all", "changed"]).optional(),
+  scope: z.enum(["all", "changed", "untagged"]).optional(),
   ids: z.array(z.string()).optional()
 });
 
