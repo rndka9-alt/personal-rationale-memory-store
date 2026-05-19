@@ -26,7 +26,7 @@ describe("calculateReviewPriority", () => {
     expect(priority.reasons).toEqual(["standard-candidate"]);
   });
 
-  it("subtracts explicit negative feedback from review priority", () => {
+  it("raises explicit negative feedback as review attention", () => {
     const helpful = calculateReviewPriority({
       reviewState: "unreviewed",
       useCount: 0
@@ -50,8 +50,9 @@ describe("calculateReviewPriority", () => {
       negativeCount: 2
     });
 
-    expect(helpful.score).toBeGreaterThan(unhelpful.score);
-    expect(unhelpful.reasons).toContain("feedback:-2.00");
+    expect(unhelpful.score).toBeGreaterThan(helpful.score);
+    expect(helpful.reasons).toContain("positive-feedback:2:+1.50");
+    expect(unhelpful.reasons).toContain("negative-feedback:2:+3.00");
   });
 });
 

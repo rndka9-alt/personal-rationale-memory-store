@@ -141,7 +141,9 @@ const reviewPriorityWeights = {
   usageMax: 6,
   recentUsageMultiplier: 4,
   feedbackPositive: 0.75,
-  feedbackNegative: 1
+  feedbackPositiveMax: 3,
+  feedbackNegativeAttention: 1.5,
+  feedbackNegativeAttentionMax: 6
 };
 
 export class RationaleService {
@@ -1184,6 +1186,10 @@ function calculateExplicitFeedbackScore(
   return Number((positiveScore - negativeScore).toFixed(2));
 }
 
+function calculateBoundedSignalScore(count: number, weight: number, maxScore: number) {
+  return Number(Math.min(count * weight, maxScore).toFixed(2));
+}
+
 function addScoreContribution(reasons: string[], label: string, score: number, detail?: string) {
   if (score === 0) {
     return 0;
@@ -1235,12 +1241,23 @@ export function calculateReviewPriority(entry: {
 
   score += addScoreContribution(
     reasons,
-    "feedback",
-    calculateExplicitFeedbackScore(
-      usageFeedback,
+    "positive-feedback",
+    calculateBoundedSignalScore(
+      usageFeedback.positiveCount,
       reviewPriorityWeights.feedbackPositive,
-      reviewPriorityWeights.feedbackNegative
-    )
+      reviewPriorityWeights.feedbackPositiveMax
+    ),
+    String(usageFeedback.positiveCount)
+  );
+  score += addScoreContribution(
+    reasons,
+    "negative-feedback",
+    calculateBoundedSignalScore(
+      usageFeedback.negativeCount,
+      reviewPriorityWeights.feedbackNegativeAttention,
+      reviewPriorityWeights.feedbackNegativeAttentionMax
+    ),
+    String(usageFeedback.negativeCount)
   );
 
   if (reasons.length === 0) {
