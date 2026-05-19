@@ -22,7 +22,8 @@ import { namedStatusColor } from "./theme/tokens";
 const reviewStates = [
   { value: "unreviewed", label: "Unreviewed" },
   { value: "needs_revision", label: "Needs revision" },
-  { value: "reviewed", label: "Reviewed" }
+  { value: "reviewed", label: "Reviewed" },
+  { value: "all", label: "All states" }
 ];
 
 const captureKinds = [
@@ -50,6 +51,7 @@ const queueSortModes = [
 
 const queueSignalFilters = [
   { value: "all", label: "All signals" },
+  { value: "repair_attention", label: "Repair attention" },
   { value: "with_opinions", label: "Has opinions" },
   { value: "with_negative_feedback", label: "Negative feedback" },
   { value: "with_positive_feedback", label: "Positive feedback" },
@@ -57,7 +59,7 @@ const queueSignalFilters = [
 ];
 
 type QueueSortMode = "priority" | "last_used" | "opinions" | "positive_feedback" | "negative_feedback" | "uses";
-type QueueSignalFilter = "all" | "with_opinions" | "with_negative_feedback" | "with_positive_feedback" | "recently_used";
+type QueueSignalFilter = "all" | "repair_attention" | "with_opinions" | "with_negative_feedback" | "with_positive_feedback" | "recently_used";
 type PatchInputMode = "fields" | "json";
 type PatchFieldValues = {
   title: string;
@@ -88,7 +90,9 @@ export function App() {
   const [queueSortMode, setQueueSortMode] = useState<QueueSortMode>("priority");
   const [queueSignalFilter, setQueueSignalFilter] = useState<QueueSignalFilter>("all");
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
+  const [operationMessage, setOperationMessage] = useState<string | undefined>();
 
   const filters: ReviewQueueFilters = useMemo(() => ({
     captureKind: captureKind.length > 0 ? captureKind : undefined,
@@ -114,6 +118,10 @@ export function App() {
     setSelectedId(items[0]?.id);
   }, [items, selectedId]);
 
+  useEffect(() => {
+    setSelectedIds((currentIds) => currentIds.filter((id) => items.some((item) => item.id === id)));
+  }, [items]);
+
   const detailQuery = useQuery({
     queryKey: ["review-queue-detail", selectedId],
     queryFn: () => {
@@ -126,20 +134,42 @@ export function App() {
   });
 
   const reviewMutation = useMutation({
-    mutationFn: (action: ReviewAction) => {
-      if (!selectedId) {
-        throw new Error("No selected item.");
-      }
-
+    mutationFn: (input: { id: string; action: ReviewAction }) => {
       return submitReviewAction({
-        id: selectedId,
-        action,
+        id: input.id,
+        action: input.action,
         notes,
         reason: notes || "Reviewed from web UI."
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (_, input) => {
       setNotes("");
+      setOperationMessage(formatReviewActionMessage(input.action, 1));
+      setSelectedId(findNextQueuedItemId(items, input.id));
+      await queryClient.invalidateQueries({ queryKey: ["review-queue"] });
+      await queryClient.invalidateQueries({ queryKey: ["review-queue-detail"] });
+    }
+  });
+
+  const bulkReviewMutation = useMutation({
+    mutationFn: async (input: { ids: string[]; action: ReviewAction }) => {
+      for (const id of input.ids) {
+        await submitReviewAction({
+          id,
+          action: input.action,
+          notes,
+          reason: notes || "Reviewed from web UI."
+        });
+      }
+      return input.ids.length;
+    },
+    onSuccess: async (count, input) => {
+      setNotes("");
+      setSelectedIds([]);
+      setOperationMessage(formatReviewActionMessage(input.action, count));
+      if (selectedId && input.ids.includes(selectedId)) {
+        setSelectedId(findNextQueuedItemIdExcluding(items, input.ids));
+      }
       await queryClient.invalidateQueries({ queryKey: ["review-queue"] });
       await queryClient.invalidateQueries({ queryKey: ["review-queue-detail"] });
     }
@@ -178,31 +208,50 @@ export function App() {
             <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Rationale Memory Store</p>
             <h1 className="mt-2 text-2xl font-semibold text-ink-strong">Review Queue</h1>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
-            <label className="text-sm">
-              <span className="mb-1 block text-xs font-medium text-ink-muted">State</span>
-              <select
-                className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-                value={reviewState}
-                onChange={(event) => setReviewState(event.target.value)}
-              >
-                {reviewStates.map((state) => (
-                  <option key={state.value} value={state.value}>{state.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-xs font-medium text-ink-muted">Source</span>
-              <select
-                className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-                value={captureKind}
-                onChange={(event) => setCaptureKind(event.target.value)}
-              >
-                {captureKinds.map((kind) => (
-                  <option key={kind.value} value={kind.value}>{kind.label}</option>
-                ))}
-              </select>
-            </label>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
+              <label className="text-sm">
+                <span className="mb-1 block text-xs font-medium text-ink-muted">State</span>
+                <select
+                  className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+                  value={reviewState}
+                  onChange={(event) => setReviewState(event.target.value)}
+                >
+                  {reviewStates.map((state) => (
+                    <option key={state.value} value={state.value}>{state.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm">
+                <span className="mb-1 block text-xs font-medium text-ink-muted">Source</span>
+                <select
+                  className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+                  value={captureKind}
+                  onChange={(event) => setCaptureKind(event.target.value)}
+                >
+                  {captureKinds.map((kind) => (
+                    <option key={kind.value} value={kind.value}>{kind.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <QuickViewControls
+              onInbox={() => {
+                setReviewState("unreviewed");
+                setQueueSignalFilter("all");
+                setQueueSortMode("priority");
+              }}
+              onRepair={() => {
+                setReviewState("all");
+                setQueueSignalFilter("repair_attention");
+                setQueueSortMode("priority");
+              }}
+              onPromotion={() => {
+                setReviewState("reviewed");
+                setQueueSignalFilter("all");
+                setQueueSortMode("positive_feedback");
+              }}
+            />
           </div>
         </header>
 
@@ -214,17 +263,36 @@ export function App() {
             error={queueQuery.error}
             sortMode={queueSortMode}
             signalFilter={queueSignalFilter}
+            selectedIds={selectedIds}
+            isBulkMutating={bulkReviewMutation.isPending}
+            bulkError={bulkReviewMutation.error}
             onSortModeChange={setQueueSortMode}
             onSignalFilterChange={setQueueSignalFilter}
             onSelect={setSelectedId}
+            onToggleSelection={(id) => setSelectedIds((currentIds) => toggleSelectedId(currentIds, id))}
+            onSelectVisible={() => setSelectedIds(items.map((item) => item.id))}
+            onClearSelection={() => setSelectedIds([])}
+            onBulkAction={(action) => {
+              if (selectedIds.length === 0) {
+                throw new Error("No selected items.");
+              }
+              bulkReviewMutation.mutate({ ids: selectedIds, action });
+            }}
           />
           <DetailPanel
             item={detailQuery.data}
             isLoading={detailQuery.isLoading}
             error={detailQuery.error}
             notes={notes}
+            operationMessage={operationMessage}
+            actionError={reviewMutation.error}
             onNotesChange={setNotes}
-            onAction={(action) => reviewMutation.mutate(action)}
+            onAction={(action) => {
+              if (!selectedId) {
+                throw new Error("No selected item.");
+              }
+              reviewMutation.mutate({ id: selectedId, action });
+            }}
             isMutating={reviewMutation.isPending}
             onRefinementOpinionAction={(input) => refinementOpinionMutation.mutate(input)}
             isRefinementOpinionMutating={refinementOpinionMutation.isPending}
@@ -238,6 +306,65 @@ export function App() {
   );
 }
 
+function QuickViewControls(props: {
+  onInbox: () => void;
+  onRepair: () => void;
+  onPromotion: () => void;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <SmallControlButton onClick={props.onInbox}>Inbox</SmallControlButton>
+      <SmallControlButton onClick={props.onRepair}>Repair</SmallControlButton>
+      <SmallControlButton onClick={props.onPromotion}>Promote</SmallControlButton>
+    </div>
+  );
+}
+
+function BulkReviewControls(props: {
+  selectedCount: number;
+  visibleCount: number;
+  isMutating: boolean;
+  error: Error | null;
+  onSelectVisible: () => void;
+  onClearSelection: () => void;
+  onBulkAction: (action: ReviewAction) => void;
+}) {
+  const hasSelection = props.selectedCount > 0;
+
+  return (
+    <div className="space-y-2 rounded-md border border-line-base bg-surface-panel p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-ink-muted">{props.selectedCount} selected</span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className="text-xs font-medium text-action-base disabled:cursor-not-allowed disabled:text-ink-faint"
+            disabled={props.visibleCount === 0 || props.isMutating}
+            onClick={props.onSelectVisible}
+          >
+            Select visible
+          </button>
+          <button
+            type="button"
+            className="text-xs font-medium text-ink-muted disabled:cursor-not-allowed disabled:text-ink-faint"
+            disabled={!hasSelection || props.isMutating}
+            onClick={props.onClearSelection}
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        <SmallControlButton disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("accept")}>Accept</SmallControlButton>
+        <SmallControlButton disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("keep_candidate")}>Keep</SmallControlButton>
+        <SmallControlButton disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("needs_revision")}>Revise</SmallControlButton>
+        <SmallControlButton danger disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("deprecate")}>Deprecate</SmallControlButton>
+      </div>
+      {props.error ? <p className="text-xs text-danger-base">{props.error.message}</p> : null}
+    </div>
+  );
+}
+
 function QueueList(props: {
   items: ReviewQueueItem[];
   selectedId?: string;
@@ -245,9 +372,16 @@ function QueueList(props: {
   error: Error | null;
   sortMode: QueueSortMode;
   signalFilter: QueueSignalFilter;
+  selectedIds: string[];
+  isBulkMutating: boolean;
+  bulkError: Error | null;
   onSortModeChange: (value: QueueSortMode) => void;
   onSignalFilterChange: (value: QueueSignalFilter) => void;
   onSelect: (id: string) => void;
+  onToggleSelection: (id: string) => void;
+  onSelectVisible: () => void;
+  onClearSelection: () => void;
+  onBulkAction: (action: ReviewAction) => void;
 }) {
   return (
     <aside className="min-h-0 border-r border-line-base pr-0 lg:pr-6">
@@ -282,6 +416,15 @@ function QueueList(props: {
             </select>
           </label>
         </div>
+        <BulkReviewControls
+          selectedCount={props.selectedIds.length}
+          visibleCount={props.items.length}
+          isMutating={props.isBulkMutating}
+          error={props.bulkError}
+          onSelectVisible={props.onSelectVisible}
+          onClearSelection={props.onClearSelection}
+          onBulkAction={props.onBulkAction}
+        />
       </div>
 
       {props.isLoading ? (
@@ -293,36 +436,71 @@ function QueueList(props: {
       ) : (
         <div className="max-h-[calc(100vh-14rem)] overflow-y-auto divide-y divide-line-base border-y border-line-base">
           {props.items.map((item) => (
-            <button
+            <div
               key={item.id}
-              type="button"
-              className={`block w-full px-1 py-4 text-left transition-colors hover:bg-surface-subtle ${
+              className={`flex gap-3 px-1 py-4 transition-colors hover:bg-surface-subtle ${
                 props.selectedId === item.id ? "bg-surface-subtle" : "bg-transparent"
               }`}
-              onClick={() => props.onSelect(item.id)}
             >
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="line-clamp-2 text-sm font-medium text-ink-strong">{item.title}</h3>
-                <MetadataPill value={readMetadataString(item.metadata, "capture_kind") ?? "manual"} />
-              </div>
-              {item.project ? (
-                <p className="mt-2 line-clamp-1 text-xs text-ink-muted">{formatProjectLabel(item.project)}</p>
-              ) : null}
-              <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-ink-muted">
-                <QueueMetric label="Priority" value={item.reviewPriorityScore.toFixed(1)} />
-                <QueueMetric label="Uses" value={String(item.useCount)} />
-                <QueueMetric label="Last used" value={formatRelativeDate(item.lastUsedAt)} />
-                <QueueMetric label="Opinions" value={String(item.openRefinementOpinionCount)} />
-              </div>
-              <p className="mt-2 line-clamp-1 text-xs text-ink-faint">{formatPriorityReasons(item.reviewPriorityReasons)}</p>
-              <p className="mt-1 line-clamp-1 text-xs text-ink-faint">{formatFeedbackSummary(item.usageFeedback)}</p>
-              <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-muted">{item.summary ?? "No summary available."}</p>
-              <p className="mt-3 text-xs text-ink-faint">{item.id}</p>
-            </button>
+              <label className="pt-0.5">
+                <span className="sr-only">Select {item.title}</span>
+                <input
+                  type="checkbox"
+                  className="rounded border-line-base text-action-base focus:ring-action-base"
+                  checked={props.selectedIds.includes(item.id)}
+                  onChange={() => props.onToggleSelection(item.id)}
+                />
+              </label>
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left"
+                onClick={() => props.onSelect(item.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="line-clamp-2 text-sm font-medium text-ink-strong">{item.title}</h3>
+                  <MetadataPill value={readMetadataString(item.metadata, "capture_kind") ?? "manual"} />
+                </div>
+                {item.project ? (
+                  <p className="mt-2 line-clamp-1 text-xs text-ink-muted">{formatProjectLabel(item.project)}</p>
+                ) : null}
+                <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-ink-muted">
+                  <QueueMetric label="Priority" value={item.reviewPriorityScore.toFixed(1)} />
+                  <QueueMetric label="Uses" value={String(item.useCount)} />
+                  <QueueMetric label="Last used" value={formatRelativeDate(item.lastUsedAt)} />
+                  <QueueMetric label="Opinions" value={String(item.openRefinementOpinionCount)} />
+                </div>
+                <p className="mt-2 line-clamp-1 text-xs text-ink-faint">{formatPriorityReasons(item.reviewPriorityReasons)}</p>
+                <p className="mt-1 line-clamp-1 text-xs text-ink-faint">{formatFeedbackSummary(item.usageFeedback)}</p>
+                <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-muted">{item.summary ?? "No summary available."}</p>
+                <p className="mt-3 text-xs text-ink-faint">{item.id}</p>
+              </button>
+            </div>
           ))}
         </div>
       )}
     </aside>
+  );
+}
+
+function SmallControlButton(props: {
+  children: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const color = props.danger
+    ? "border-danger-base text-danger-base hover:bg-danger-faint"
+    : "border-line-strong text-ink-base hover:border-action-base hover:bg-action-faint hover:text-action-base";
+
+  return (
+    <button
+      type="button"
+      className={`h-8 rounded-md border bg-surface-panel px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${color}`}
+      disabled={props.disabled}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
   );
 }
 
@@ -331,6 +509,8 @@ function DetailPanel(props: {
   isLoading: boolean;
   error: Error | null;
   notes: string;
+  operationMessage?: string;
+  actionError: Error | null;
   onNotesChange: (value: string) => void;
   onAction: (action: ReviewAction) => void;
   isMutating: boolean;
@@ -392,6 +572,16 @@ function DetailPanel(props: {
         </article>
 
         <aside className="space-y-5 border-t border-line-base pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
+          {props.operationMessage ? (
+            <div className="rounded-md border border-action-base bg-action-faint px-3 py-2 text-sm text-action-base">
+              {props.operationMessage}
+            </div>
+          ) : null}
+          {props.actionError ? (
+            <div className="rounded-md border border-danger-base bg-danger-faint px-3 py-2 text-sm text-danger-base">
+              {props.actionError.message}
+            </div>
+          ) : null}
           <ProjectFacts
             project={entry.frontmatter.project}
             source={entry.frontmatter.source}
@@ -887,6 +1077,7 @@ function readQueueSortMode(value: string): QueueSortMode {
 function readQueueSignalFilter(value: string): QueueSignalFilter {
   if (
     value === "all"
+    || value === "repair_attention"
     || value === "with_opinions"
     || value === "with_negative_feedback"
     || value === "with_positive_feedback"
@@ -912,6 +1103,11 @@ function filterQueueItems(items: ReviewQueueItem[], signalFilter: QueueSignalFil
   }
 
   return items.filter((item) => {
+    if (signalFilter === "repair_attention") {
+      return item.openRefinementOpinionCount > 0
+        || item.usageFeedback.negativeCount > 0
+        || item.reviewState === "needs_revision";
+    }
     if (signalFilter === "with_opinions") {
       return item.openRefinementOpinionCount > 0;
     }
@@ -952,6 +1148,37 @@ function calculateQueueSortValue(item: ReviewQueueItem, sortMode: QueueSortMode)
     return item.usageFeedback.negativeCount;
   }
   return item.useCount;
+}
+
+function toggleSelectedId(selectedIds: string[], id: string) {
+  return selectedIds.includes(id)
+    ? selectedIds.filter((selectedId) => selectedId !== id)
+    : [...selectedIds, id];
+}
+
+function findNextQueuedItemId(items: ReviewQueueItem[], currentId: string) {
+  const currentIndex = items.findIndex((item) => item.id === currentId);
+  if (currentIndex === -1) {
+    return items[0]?.id;
+  }
+
+  const nextItem = items[currentIndex + 1] ?? items[currentIndex - 1];
+  return nextItem?.id;
+}
+
+function findNextQueuedItemIdExcluding(items: ReviewQueueItem[], excludedIds: string[]) {
+  return items.find((item) => !excludedIds.includes(item.id))?.id;
+}
+
+function formatReviewActionMessage(action: ReviewAction, count: number) {
+  const label = action === "accept"
+    ? "accepted"
+    : action === "keep_candidate"
+      ? "kept"
+      : action === "needs_revision"
+        ? "marked for revision"
+        : "deprecated";
+  return `${count} item${count === 1 ? "" : "s"} ${label}.`;
 }
 
 function calculateTimestamp(value: string | undefined) {

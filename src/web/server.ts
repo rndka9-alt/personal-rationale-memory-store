@@ -78,7 +78,8 @@ async function routeApiRequest(
 ) {
   if (method === "GET" && url.pathname === "/api/review-queue") {
     const captureKind = readOptionalString(url.searchParams.get("captureKind"));
-    const reviewState = readOptionalString(url.searchParams.get("reviewState")) ?? "unreviewed";
+    const reviewStateParam = readOptionalString(url.searchParams.get("reviewState"));
+    const reviewState = reviewStateParam === "all" ? undefined : reviewStateParam ?? "unreviewed";
     const items = await rationaleService.listReviewQueue(captureKind, reviewState);
     writeJson(response, 200, { items });
     return;
