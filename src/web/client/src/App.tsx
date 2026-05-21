@@ -563,6 +563,7 @@ function DetailPanel(props: {
         <article className="space-y-6">
           <Section title="Rationale">{entry.rationale}</Section>
           <Section title="Situation">{entry.situation}</Section>
+          <Section title="Goal">{entry.goal}</Section>
           <Section title="Decision">{entry.decision}</Section>
           <ListSection title="Constraints" items={entry.constraints} />
           <Section title="Tradeoff">{entry.tradeoff}</Section>
@@ -585,6 +586,7 @@ function DetailPanel(props: {
           <ProjectFacts
             project={entry.frontmatter.project}
             source={entry.frontmatter.source}
+            type={entry.frontmatter.type}
             scope={entry.frontmatter.scope}
             confidence={entry.frontmatter.confidence}
             acceptanceState={entry.frontmatter.acceptanceState}
@@ -714,6 +716,7 @@ function ReviewFacts(props: { title: string; items: string[]; tone: "warning" | 
 function ProjectFacts(props: {
   project?: ProjectContext;
   source?: { kind: string; ref: string };
+  type: string;
   scope: string;
   confidence: number;
   acceptanceState: string;
@@ -733,10 +736,13 @@ function ProjectFacts(props: {
         <MetadataLine label="Project" value={props.project ? formatProjectLabel(props.project) : "Not provided."} />
         <MetadataLine label="Repository" value={props.project?.repo} />
         <MetadataLine label="Root" value={props.project?.root} />
+        <MetadataLine label="Type" value={props.type} />
         <MetadataLine label="Scope" value={props.scope} />
         <MetadataLine label="Confidence" value={props.confidence.toFixed(2)} />
         <MetadataLine label="Use count" value={String(props.useCount)} />
         <MetadataLine label="Last used" value={formatDateTime(props.lastUsedAt)} />
+        <MetadataLine label="Positive feedback" value={String(props.usageFeedback.positiveCount)} />
+        <MetadataLine label="Negative feedback" value={String(props.usageFeedback.negativeCount)} />
         <MetadataLine label="Applied" value={String(props.usageFeedback.appliedCount)} />
         <MetadataLine label="Helpful" value={String(props.usageFeedback.helpfulCount)} />
         <MetadataLine label="Unhelpful" value={String(props.usageFeedback.unhelpfulCount)} />
