@@ -22,6 +22,8 @@ type VoyageContextualizedResponse = {
 };
 
 const voyageApiBaseUrl = "https://api.voyageai.com/v1";
+const voyageMaxRetryCount = 3;
+const voyageBaseRetryDelayMs = 1000;
 
 export class VoyageEmbeddingProvider implements EmbeddingProvider {
   constructor(private readonly options: VoyageProviderOptions) {}
@@ -45,7 +47,7 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
       outputDtype: options.outputDtype
     });
 
-    if (this.options.mode === "contextualized" && this.options.model === "voyage-context-3") {
+    if (this.options.mode === "contextualized") {
       const contextualizedDocuments = options.inputType === "query"
         ? texts.map((text, textIndex) => ({ documentId: `query-${textIndex}`, chunks: [text] }))
         : [{ documentId: "document", chunks: texts }];
@@ -142,33 +144,99 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
       path,
       model: this.options.model
     });
-    const response = await fetch(`${voyageApiBaseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.options.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
 
-    if (!response.ok) {
+    let retryCount = 0;
+    while (true) {
+      const response = await fetch(`${voyageApiBaseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.options.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        const json = await response.json();
+        logInfo("Voyage API request completed.", {
+          path,
+          status: response.status,
+          model: this.options.model,
+          retryCount
+        });
+        return json;
+      }
+
       const body = await response.text();
+      if (shouldRetryVoyageStatus(response.status) && retryCount < voyageMaxRetryCount) {
+        const nextRetryCount = retryCount + 1;
+        const retryDelayMs = getVoyageRetryDelayMs(
+          response.headers.get("retry-after"),
+          nextRetryCount
+        );
+        logWarn("Voyage API request failed; retrying.", {
+          path,
+          status: response.status,
+          model: this.options.model,
+          retryCount: nextRetryCount,
+          maxRetryCount: voyageMaxRetryCount,
+          retryDelayMs,
+          body
+        });
+        retryCount = nextRetryCount;
+        await delay(retryDelayMs);
+        continue;
+      }
+
       logError("Voyage API request failed.", new Error(body), {
         path,
         status: response.status,
-        model: this.options.model
+        model: this.options.model,
+        retryCount
       });
       throw new Error(`Voyage API request failed with ${response.status}: ${body}`);
     }
-
-    const json = await response.json();
-    logInfo("Voyage API request completed.", {
-      path,
-      status: response.status,
-      model: this.options.model
-    });
-    return json;
   }
+}
+
+function shouldRetryVoyageStatus(status: number) {
+  return status === 429 || status >= 500;
+}
+
+function getVoyageRetryDelayMs(retryAfterHeader: string | null, retryCount: number) {
+  const retryAfterDelayMs = parseRetryAfterDelayMs(retryAfterHeader);
+  if (retryAfterDelayMs !== undefined) {
+    return retryAfterDelayMs;
+  }
+
+  return voyageBaseRetryDelayMs * (2 ** (retryCount - 1));
+}
+
+function parseRetryAfterDelayMs(value: string | null) {
+  if (value === null) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const dateMs = Date.parse(value);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+
+  logWarn("Voyage API returned an invalid Retry-After header.", {
+    retryAfter: value
+  });
+  return undefined;
+}
+
+function delay(delayMs: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 function getContextualizedResponseDocuments(response: VoyageContextualizedResponse) {
