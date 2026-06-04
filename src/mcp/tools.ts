@@ -12,9 +12,18 @@ import { logError, logInfo } from "../diagnostics/index.js";
 import type { StatusService } from "../diagnostics/statusService.js";
 
 export type ToolServices = {
-  rationaleService: RationaleService;
-  contextComposer: ContextComposer;
-  statusService: StatusService;
+  rationaleService: Pick<
+    RationaleService,
+    | "searchWithDiagnostics"
+    | "getRationale"
+    | "autoCaptureRationale"
+    | "recordRefinementOpinion"
+    | "recordUsageFeedback"
+    | "reindexMemory"
+    | "recordCandidate"
+  >;
+  contextComposer: Pick<ContextComposer, "compose" | "continueContext">;
+  statusService: Pick<StatusService, "status">;
 };
 
 export type ToolDefinition = {
@@ -95,21 +104,27 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       description: "Let an LLM autonomously record a reusable rationale candidate into the review queue.",
       schema: autoCaptureRationaleInputSchema.shape,
       handler: async (input: unknown) =>
-        jsonToolResult(await services.rationaleService.autoCaptureRationale(autoCaptureRationaleInputSchema.parse(input)))
+        jsonToolResult(compactRationaleWriteResult(
+          await services.rationaleService.autoCaptureRationale(autoCaptureRationaleInputSchema.parse(input))
+        ))
     },
     {
       name: "record_refinement_opinion",
       description: "Attach a bounded unresolved refinement opinion or patch request to a rationale memory.",
       schema: recordRefinementOpinionInputSchema.shape,
       handler: async (input: unknown) =>
-        jsonToolResult(await services.rationaleService.recordRefinementOpinion(recordRefinementOpinionInputSchema.parse(input)))
+        jsonToolResult(compactRefinementOpinionWriteResult(
+          await services.rationaleService.recordRefinementOpinion(recordRefinementOpinionInputSchema.parse(input))
+        ))
     },
     {
       name: "record_usage_feedback",
       description: "Record explicit feedback after a rationale memory was applied, helpful, unhelpful, or dismissed.",
       schema: recordUsageFeedbackInputSchema.shape,
       handler: async (input: unknown) =>
-        jsonToolResult(await services.rationaleService.recordUsageFeedback(recordUsageFeedbackInputSchema.parse(input)))
+        jsonToolResult(compactUsageFeedbackWriteResult(
+          await services.rationaleService.recordUsageFeedback(recordUsageFeedbackInputSchema.parse(input))
+        ))
     },
     {
       name: "reindex_memory",
@@ -120,7 +135,10 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       },
       handler: async (input) => {
         const parsedInput = reindexInputSchema.parse(input);
-        return jsonToolResult({ indexed: await services.rationaleService.reindexMemory(parsedInput.scope, parsedInput.ids) });
+        return jsonToolResult({
+          ok: true,
+          indexed: await services.rationaleService.reindexMemory(parsedInput.scope, parsedInput.ids)
+        });
       }
     },
     {
@@ -144,7 +162,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
             }
           }));
         }
-        return jsonToolResult(results);
+        return jsonToolResult(compactBulkRationaleWriteResult(results));
       }
     }
   ];
@@ -180,6 +198,46 @@ const ingestSessionInputSchema = z.object({
 function jsonToolResult(value: unknown): ToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }]
+  };
+}
+
+function compactRationaleWriteResult(result: { id: string; canonicalPath: string }) {
+  return {
+    ok: true,
+    id: result.id,
+    canonicalPath: result.canonicalPath
+  };
+}
+
+function compactBulkRationaleWriteResult(results: Array<{ id: string }>) {
+  return {
+    ok: true,
+    count: results.length,
+    ids: results.map((result) => result.id)
+  };
+}
+
+function compactRefinementOpinionWriteResult(result: { id: string; entryId: string; status: string }) {
+  return {
+    ok: true,
+    id: result.id,
+    entryId: result.entryId,
+    status: result.status
+  };
+}
+
+function compactUsageFeedbackWriteResult(result: {
+  entryId: string;
+  eventType: string;
+  useCount: number;
+  lastUsedAt?: string;
+}) {
+  return {
+    ok: true,
+    entryId: result.entryId,
+    eventType: result.eventType,
+    useCount: result.useCount,
+    lastUsedAt: result.lastUsedAt
   };
 }
 
