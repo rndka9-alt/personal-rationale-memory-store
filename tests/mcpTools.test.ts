@@ -27,6 +27,35 @@ describe("MCP write tool results", () => {
     expect(payload).not.toHaveProperty("entry");
   });
 
+  it("returns existing rationale ids for duplicate auto-capture results", async () => {
+    const services = createToolServices();
+    services.rationaleService.autoCaptureRationale = async () => ({
+      id: "R20260604T000000000Z-existing",
+      canonicalPath: "/memory/R20260604T000000000Z-existing.md",
+      status: "duplicate",
+      existingId: "R20260604T000000000Z-existing"
+    });
+
+    const result = await getTool(services, "auto_capture_rationale").handler({
+      title: "Keep duplicate responses compact",
+      rationale: "The caller only needs the existing id to verify duplicate content.",
+      captureReason: "Duplicate capture should not return the full entry.",
+      reuseWhen: ["A matching rationale already exists."],
+      avoidWhen: ["The content is distinct."]
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload).toEqual({
+      ok: true,
+      id: "R20260604T000000000Z-existing",
+      canonicalPath: "/memory/R20260604T000000000Z-existing.md",
+      status: "duplicate",
+      existingId: "R20260604T000000000Z-existing"
+    });
+    expect(payload).not.toHaveProperty("entry");
+  });
+
   it("returns compact success metadata for refinement opinions", async () => {
     const services = createToolServices();
     const result = await getTool(services, "record_refinement_opinion").handler({
@@ -73,6 +102,35 @@ describe("MCP write tool results", () => {
       ids: ["R20260604T000000000Z-bulk-1", "R20260604T000000000Z-bulk-2"]
     });
     expect(payload).not.toHaveProperty("entries");
+  });
+
+  it("includes duplicate ids for bulk session ingestion", async () => {
+    const services = createToolServices();
+    services.rationaleService.recordCandidate = async () => ({
+      id: "R20260604T000000000Z-existing",
+      canonicalPath: "/memory/R20260604T000000000Z-existing.md",
+      status: "duplicate",
+      existingId: "R20260604T000000000Z-existing"
+    });
+
+    const result = await getTool(services, "ingest_session_candidates").handler({
+      sessionRef: "session-1",
+      candidates: [
+        {
+          title: "Existing rationale",
+          rationale: "Duplicate content should point back to the existing rationale."
+        }
+      ]
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload).toEqual({
+      ok: true,
+      count: 1,
+      ids: ["R20260604T000000000Z-existing"],
+      duplicateIds: ["R20260604T000000000Z-existing"]
+    });
   });
 });
 

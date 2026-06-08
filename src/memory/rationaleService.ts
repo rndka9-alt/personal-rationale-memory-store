@@ -1,8 +1,11 @@
 import type pg from "pg";
 import { z } from "zod";
 import {
+  claimRationaleContentFingerprint,
+  completeRationaleContentFingerprint,
   countMemoryUsageFeedback,
   countOpenMemoryRefinementOpinions,
+  failRationaleContentFingerprint,
   findMemoryEntry,
   findMemoryRefinementOpinion,
   listAllMemoryEntriesByAcceptanceState,
@@ -43,6 +46,7 @@ import {
   type RecordUsageFeedbackInput,
   type RationaleEntry
 } from "./schema.js";
+import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
 
 const rationalePatchSchema = z.object({
   title: z.string().optional(),
@@ -109,6 +113,14 @@ export type ReviewQueueEntry = MemoryEntryRecord & {
   reviewPriorityReasons: string[];
 };
 
+export type RationaleWriteResult = {
+  id: string;
+  canonicalPath: string;
+  entry?: RationaleEntry;
+  status?: "duplicate" | "processing";
+  existingId?: string;
+};
+
 const refinementOpinionLimitSchema = z.number().int().positive().max(5);
 const refinementOpinionActionSchema = z.enum(["resolve", "reject", "apply_patch"]);
 type RefinementOpinionAction = z.infer<typeof refinementOpinionActionSchema>;
@@ -152,9 +164,43 @@ export class RationaleService {
     private readonly config: AppConfig
   ) {}
 
-  async recordCandidate(input: RecordCandidateInput) {
+  async recordCandidate(input: RecordCandidateInput): Promise<RationaleWriteResult> {
     const validatedInput = recordCandidateInputSchema.parse(input);
     const id = createRationaleId();
+    const contentFingerprint = fingerprintRationaleContent(validatedInput);
+    const fingerprintClaim = await claimRationaleContentFingerprint(this.pool, contentFingerprint, id);
+
+    if (fingerprintClaim.status === "completed") {
+      logInfo("Recording rationale candidate skipped duplicate content.", {
+        entryId: fingerprintClaim.entry.id,
+        title: validatedInput.title
+      });
+      return {
+        id: fingerprintClaim.entry.id,
+        canonicalPath: fingerprintClaim.entry.canonicalPath,
+        entry: await this.getRationale(fingerprintClaim.entry.id),
+        status: "duplicate",
+        existingId: fingerprintClaim.entry.id
+      };
+    }
+
+    if (fingerprintClaim.status === "processing") {
+      logInfo("Recording rationale candidate skipped processing duplicate content.", {
+        entryId: fingerprintClaim.entryId,
+        title: validatedInput.title
+      });
+      return {
+        id: fingerprintClaim.entryId,
+        canonicalPath: this.fileStore.pathForId(fingerprintClaim.entryId),
+        status: "processing",
+        existingId: fingerprintClaim.entryId
+      };
+    }
+
+    if (fingerprintClaim.status === "failed") {
+      throw new Error(`Rationale content fingerprint is still failed for ${fingerprintClaim.entryId}.`);
+    }
+
     const metadata = normalizeCandidateMetadata(validatedInput.metadata, "manual");
     const project = validatedInput.project ?? readProjectMetadata(validatedInput.metadata);
     const reviewState = readReviewStateMetadata(metadata, "unreviewed");
@@ -202,16 +248,22 @@ export class RationaleService {
       rawMarkdown: ""
     };
 
-    const canonicalPath = await this.fileStore.writeEntry(entry);
-    await this.indexingService.indexEntry(entry, canonicalPath);
-    logInfo("Recording rationale candidate completed.", {
-      entryId: id,
-      canonicalPath
-    });
-    return { id, canonicalPath, entry };
+    try {
+      const canonicalPath = await this.fileStore.writeEntry(entry);
+      await this.indexingService.indexEntry(entry, canonicalPath);
+      await completeRationaleContentFingerprint(this.pool, contentFingerprint, id);
+      logInfo("Recording rationale candidate completed.", {
+        entryId: id,
+        canonicalPath
+      });
+      return { id, canonicalPath, entry };
+    } catch (error) {
+      await failRationaleContentFingerprint(this.pool, contentFingerprint, id, formatErrorMessage(error));
+      throw error;
+    }
   }
 
-  async autoCaptureRationale(input: AutoCaptureRationaleInput) {
+  async autoCaptureRationale(input: AutoCaptureRationaleInput): Promise<RationaleWriteResult> {
     const validatedInput = autoCaptureRationaleInputSchema.parse(input);
     logInfo("Auto-capturing rationale candidate started.", {
       title: validatedInput.title,

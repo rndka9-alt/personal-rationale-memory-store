@@ -53,6 +53,176 @@ export type MemoryRefinementOpinionInsert = {
   metadata: Record<string, unknown>;
 };
 
+export type RationaleContentFingerprintClaim =
+  | { status: "claimed"; entryId: string }
+  | { status: "processing"; entryId: string }
+  | { status: "completed"; entry: MemoryEntryRecord }
+  | { status: "failed"; entryId: string; failureReason?: string };
+
+export async function claimRationaleContentFingerprint(
+  pool: pg.Pool,
+  contentFingerprint: string,
+  entryId: string
+): Promise<RationaleContentFingerprintClaim> {
+  logInfo("DB claim rationale content fingerprint started.", {
+    entryId,
+    contentFingerprint
+  });
+
+  const inserted = await pool.query(
+    `INSERT INTO rationale_content_fingerprints (content_fingerprint, entry_id, status)
+    VALUES ($1, $2, 'processing')
+    ON CONFLICT (content_fingerprint) DO NOTHING
+    RETURNING entry_id`,
+    [contentFingerprint, entryId]
+  );
+
+  if (inserted.rows.length > 0) {
+    logInfo("DB claim rationale content fingerprint completed.", {
+      entryId,
+      contentFingerprint,
+      status: "claimed"
+    });
+    return { status: "claimed", entryId };
+  }
+
+  const existing = await findRationaleContentFingerprint(pool, contentFingerprint);
+  if (existing.status === "failed") {
+    const reclaimed = await pool.query(
+      `UPDATE rationale_content_fingerprints
+        SET entry_id = $2,
+            status = 'processing',
+            failure_reason = NULL,
+            updated_at = now()
+        WHERE content_fingerprint = $1
+          AND status = 'failed'
+        RETURNING entry_id`,
+      [contentFingerprint, entryId]
+    );
+
+    if (reclaimed.rows.length > 0) {
+      logInfo("DB claim rationale content fingerprint completed.", {
+        entryId,
+        contentFingerprint,
+        previousEntryId: existing.entryId,
+        status: "claimed"
+      });
+      return { status: "claimed", entryId };
+    }
+  }
+
+  const current = existing.status === "failed"
+    ? await findRationaleContentFingerprint(pool, contentFingerprint)
+    : existing;
+  logInfo("DB claim rationale content fingerprint completed.", {
+    entryId,
+    contentFingerprint,
+    status: current.status,
+    existingEntryId: current.status === "completed" ? current.entry.id : current.entryId
+  });
+  return current;
+}
+
+export async function completeRationaleContentFingerprint(
+  pool: pg.Pool,
+  contentFingerprint: string,
+  entryId: string
+) {
+  logInfo("DB complete rationale content fingerprint started.", {
+    entryId,
+    contentFingerprint
+  });
+  const result = await pool.query(
+    `UPDATE rationale_content_fingerprints
+      SET status = 'completed',
+          failure_reason = NULL,
+          updated_at = now()
+      WHERE content_fingerprint = $1
+        AND entry_id = $2
+      RETURNING entry_id`,
+    [contentFingerprint, entryId]
+  );
+
+  if (result.rows.length === 0) {
+    throw new Error(`Rationale content fingerprint claim was not found for ${entryId}.`);
+  }
+
+  logInfo("DB complete rationale content fingerprint completed.", {
+    entryId,
+    contentFingerprint
+  });
+}
+
+export async function failRationaleContentFingerprint(
+  pool: pg.Pool,
+  contentFingerprint: string,
+  entryId: string,
+  failureReason: string
+) {
+  logInfo("DB fail rationale content fingerprint started.", {
+    entryId,
+    contentFingerprint
+  });
+  await pool.query(
+    `UPDATE rationale_content_fingerprints
+      SET status = 'failed',
+          failure_reason = $3,
+          updated_at = now()
+      WHERE content_fingerprint = $1
+        AND entry_id = $2`,
+    [contentFingerprint, entryId, failureReason]
+  );
+  logInfo("DB fail rationale content fingerprint completed.", {
+    entryId,
+    contentFingerprint
+  });
+}
+
+export async function syncCompletedRationaleContentFingerprint(
+  pool: pg.Pool,
+  contentFingerprint: string,
+  entryId: string
+) {
+  logInfo("DB sync completed rationale content fingerprint started.", {
+    entryId,
+    contentFingerprint
+  });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM rationale_content_fingerprints
+      WHERE entry_id = $1
+        AND content_fingerprint <> $2`,
+      [entryId, contentFingerprint]
+    );
+    await client.query(
+      `INSERT INTO rationale_content_fingerprints (content_fingerprint, entry_id, status)
+      VALUES ($1, $2, 'completed')
+      ON CONFLICT (content_fingerprint) DO UPDATE SET
+        entry_id = EXCLUDED.entry_id,
+        status = 'completed',
+        failure_reason = NULL,
+        updated_at = now()
+      WHERE rationale_content_fingerprints.entry_id = EXCLUDED.entry_id
+        OR rationale_content_fingerprints.status = 'failed'`,
+      [contentFingerprint, entryId]
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  logInfo("DB sync completed rationale content fingerprint completed.", {
+    entryId,
+    contentFingerprint
+  });
+}
+
 export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord) {
   logInfo("DB upsert memory entry started.", {
     entryId: entry.id,
@@ -355,6 +525,47 @@ export async function findMemoryEntry(pool: pg.Pool, id: string) {
     found: Boolean(row)
   });
   return row ? mapMemoryEntryRow(row) : undefined;
+}
+
+async function findRationaleContentFingerprint(
+  pool: pg.Pool,
+  contentFingerprint: string
+): Promise<Exclude<RationaleContentFingerprintClaim, { status: "claimed" }>> {
+  const result = await pool.query(
+    `SELECT
+      fingerprint.entry_id AS fingerprint_entry_id,
+      fingerprint.status AS fingerprint_status,
+      fingerprint.failure_reason AS fingerprint_failure_reason,
+      entry.*
+    FROM rationale_content_fingerprints fingerprint
+    LEFT JOIN memory_entries entry ON entry.id = fingerprint.entry_id
+    WHERE fingerprint.content_fingerprint = $1`,
+    [contentFingerprint]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Rationale content fingerprint disappeared before it could be read: ${contentFingerprint}`);
+  }
+
+  if (row.fingerprint_status === "completed") {
+    if (typeof row.id !== "string") {
+      throw new Error(`Completed rationale content fingerprint has no memory entry: ${contentFingerprint}`);
+    }
+    return { status: "completed", entry: mapMemoryEntryRow(row) };
+  }
+
+  if (row.fingerprint_status === "processing") {
+    return { status: "processing", entryId: String(row.fingerprint_entry_id) };
+  }
+
+  if (row.fingerprint_status === "failed") {
+    const failureReason = typeof row.fingerprint_failure_reason === "string"
+      ? row.fingerprint_failure_reason
+      : undefined;
+    return { status: "failed", entryId: String(row.fingerprint_entry_id), failureReason };
+  }
+
+  throw new Error(`Unexpected rationale content fingerprint status: ${String(row.fingerprint_status)}`);
 }
 
 export async function countOpenMemoryRefinementOpinions(pool: pg.Pool, entryIds: string[]) {

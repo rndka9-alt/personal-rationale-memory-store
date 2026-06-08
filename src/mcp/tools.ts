@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ContextComposer } from "../memory/contextComposer.js";
-import type { RationaleService } from "../memory/rationaleService.js";
+import type { RationaleService, RationaleWriteResult } from "../memory/rationaleService.js";
 import {
   autoCaptureRationaleInputSchema,
   recordCandidateInputSchema,
@@ -201,20 +201,59 @@ function jsonToolResult(value: unknown): ToolResult {
   };
 }
 
-function compactRationaleWriteResult(result: { id: string; canonicalPath: string }) {
-  return {
+function compactRationaleWriteResult(result: RationaleWriteResult) {
+  const response: {
+    ok: true;
+    id: string;
+    canonicalPath: string;
+    status?: RationaleWriteResult["status"];
+    existingId?: string;
+  } = {
     ok: true,
     id: result.id,
     canonicalPath: result.canonicalPath
   };
+
+  if (result.status) {
+    response.status = result.status;
+  }
+
+  if (result.existingId) {
+    response.existingId = result.existingId;
+  }
+
+  return response;
 }
 
-function compactBulkRationaleWriteResult(results: Array<{ id: string }>) {
-  return {
+function compactBulkRationaleWriteResult(results: RationaleWriteResult[]) {
+  const duplicateIds = results
+    .filter((result) => result.status === "duplicate")
+    .map((result) => result.id);
+  const processingIds = results
+    .filter((result) => result.status === "processing")
+    .map((result) => result.id);
+
+  const response: {
+    ok: true;
+    count: number;
+    ids: string[];
+    duplicateIds?: string[];
+    processingIds?: string[];
+  } = {
     ok: true,
     count: results.length,
     ids: results.map((result) => result.id)
   };
+
+  if (duplicateIds.length > 0) {
+    response.duplicateIds = duplicateIds;
+  }
+
+  if (processingIds.length > 0) {
+    response.processingIds = processingIds;
+  }
+
+  return response;
 }
 
 function compactRefinementOpinionWriteResult(result: { id: string; entryId: string; status: string }) {

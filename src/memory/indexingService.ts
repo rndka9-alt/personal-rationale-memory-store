@@ -1,11 +1,17 @@
 import type pg from "pg";
 import type { AppConfig } from "../config.js";
-import { findMemoryEntry, replaceMemoryChunks, upsertMemoryEntry } from "../db/queries.js";
+import {
+  findMemoryEntry,
+  replaceMemoryChunks,
+  syncCompletedRationaleContentFingerprint,
+  upsertMemoryEntry
+} from "../db/queries.js";
 import { logInfo } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { toMemoryEntryRecord, type RationaleEntry } from "./schema.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { fingerprintCanonicalFile, readIndexedFileHash, withIndexMetadata } from "./fileIndex.js";
+import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
 
 export class IndexingService {
   constructor(
@@ -43,6 +49,11 @@ export class IndexingService {
           canonical_path: canonicalPath
         }
       }))
+    );
+    await syncCompletedRationaleContentFingerprint(
+      this.pool,
+      fingerprintRationaleContent(entry),
+      entry.frontmatter.id
     );
     logInfo("Indexing memory entry completed.", {
       entryId: entry.frontmatter.id,
