@@ -50,16 +50,20 @@ export class IndexingService {
         }
       }))
     );
-    await syncCompletedRationaleContentFingerprint(
-      this.pool,
-      fingerprintRationaleContent(entry),
-      entry.frontmatter.id
-    );
+    await this.syncContentFingerprint(entry);
     logInfo("Indexing memory entry completed.", {
       entryId: entry.frontmatter.id,
       chunkCount: chunks.length,
       embeddingCount: embeddings.length
     });
+  }
+
+  async syncContentFingerprint(entry: RationaleEntry) {
+    await syncCompletedRationaleContentFingerprint(
+      this.pool,
+      fingerprintRationaleContent(entry),
+      entry.frontmatter.id
+    );
   }
 
   async reindexAll() {

@@ -826,6 +826,22 @@ export class RationaleService {
     return this.indexingService.reindexAll();
   }
 
+  async backfillRationaleContentFingerprints() {
+    const entries = await this.fileStore.listEntries();
+    logInfo("Backfilling rationale content fingerprints started.", {
+      entryCount: entries.length
+    });
+
+    for (const { entry } of entries) {
+      await this.indexingService.syncContentFingerprint(entry);
+    }
+
+    logInfo("Backfilling rationale content fingerprints completed.", {
+      entryCount: entries.length
+    });
+    return entries.length;
+  }
+
   private async repairUntaggedMemory() {
     const entries = await this.fileStore.listEntries();
     let repairedCount = 0;

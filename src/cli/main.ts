@@ -55,8 +55,12 @@ if (command === "search") {
 } else if (command === "reindex") {
   const scope = parseReindexScope(rest[0]);
   console.log(JSON.stringify({ indexed: await rationaleService.reindexMemory(scope) }, null, 2));
+} else if (command === "backfill-fingerprints") {
+  console.log(JSON.stringify({
+    fingerprinted: await rationaleService.backfillRationaleContentFingerprints()
+  }, null, 2));
 } else {
-  throw new Error("Usage: npm run cli -- <search|compose|candidates|review-queue|review-candidates|auto-capture|record-candidate|reindex> ...");
+  throw new Error("Usage: npm run cli -- <search|compose|candidates|review-queue|review-candidates|auto-capture|record-candidate|reindex|backfill-fingerprints> ...");
 }
 
 function parseReindexScope(value: string | undefined) {
