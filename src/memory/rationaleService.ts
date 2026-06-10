@@ -44,7 +44,8 @@ import {
   type RecordCandidateInput,
   type RecordRefinementOpinionInput,
   type RecordUsageFeedbackInput,
-  type RationaleEntry
+  type RationaleEntry,
+  type SearchProjectFilter
 } from "./schema.js";
 import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
 
@@ -138,7 +139,8 @@ const searchRankingWeights = {
   typeMatch: 1,
   domainMatch: 2,
   intentMatch: 1.5,
-  modeMatch: 1.5
+  modeMatch: 1.5,
+  projectMatch: 1.5
 };
 
 const reviewPriorityWeights = {
@@ -552,12 +554,14 @@ export class RationaleService {
       limit: parsedInput.limit,
       domains: parsedInput.domains,
       intents: parsedInput.intents,
-      modes: parsedInput.modes
+      modes: parsedInput.modes,
+      project: parsedInput.project
     });
     const filters = {
       domains: parsedInput.domains,
       intents: parsedInput.intents,
       modes: parsedInput.modes,
+      project: parsedInput.project,
       acceptanceStates: parsedInput.acceptanceStates,
       reviewStates: parsedInput.reviewStates,
       decisionStates: parsedInput.decisionStates,
@@ -1185,6 +1189,7 @@ function rankSearchResults<TEntry extends {
   metadata: Record<string, unknown>;
   useCount: number;
   lastUsedAt?: string;
+  project?: ProjectContext;
   lexicalRank?: number;
   vectorScore?: number;
   searchScore?: number;
@@ -1194,6 +1199,7 @@ function rankSearchResults<TEntry extends {
   intents?: string[];
   modes?: string[];
   types?: string[];
+  project?: SearchProjectFilter;
 }, usageFeedbackCounts: Map<string, MemoryUsageFeedbackCounts>) {
   return entries
     .map((entry) => {
@@ -1331,6 +1337,7 @@ export function calculateSearchRanking(entry: {
   metadata: Record<string, unknown>;
   useCount: number;
   lastUsedAt?: string;
+  project?: ProjectContext;
   lexicalRank?: number;
   vectorScore?: number;
 }, filters: {
@@ -1338,6 +1345,7 @@ export function calculateSearchRanking(entry: {
   intents?: string[];
   modes?: string[];
   types?: string[];
+  project?: SearchProjectFilter;
 }, usageFeedback = createEmptyUsageFeedbackCounts()) {
   let score = 0;
   const reasons: string[] = [];
@@ -1435,7 +1443,26 @@ export function calculateSearchRanking(entry: {
     );
   }
 
+  if (matchesProjectFilter(entry.project, filters.project)) {
+    score += addScoreContribution(reasons, "project-match", searchRankingWeights.projectMatch);
+  }
+
   return { score, reasons };
+}
+
+// Project context is provenance: matching the caller's current project boosts
+// ranking, but other projects are never penalized so cross-project rationale
+// stays discoverable (R20260514T070848652Z-j3uj1b).
+function matchesProjectFilter(project: ProjectContext | undefined, filter: SearchProjectFilter | undefined) {
+  if (!project || !filter) {
+    return false;
+  }
+
+  if (project.name === filter.name) {
+    return true;
+  }
+
+  return filter.repo !== undefined && project.repo === filter.repo;
 }
 
 function calculateRecentUsageScore(lastUsedAt: string | undefined) {

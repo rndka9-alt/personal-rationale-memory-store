@@ -6,7 +6,8 @@ import {
   recordCandidateInputSchema,
   recordRefinementOpinionInputSchema,
   recordUsageFeedbackInputSchema,
-  searchInputSchema
+  searchInputSchema,
+  searchProjectFilterSchema
 } from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
 import type { StatusService } from "../diagnostics/statusService.js";
@@ -62,7 +63,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "search_rationales",
-      description: "Search rationale memories with lexical, vector, and metadata signals.",
+      description: "Search rationale memories with lexical, vector, and metadata signals. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
       schema: searchInputSchema.shape,
       handler: async (input: unknown) => jsonToolResult(await services.rationaleService.searchWithDiagnostics(input))
     },
@@ -74,11 +75,12 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task.",
+      description: "Compose bounded prompt-ready rationale context for a task. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized.",
       schema: {
         task: z.string().min(1),
         explicitMode: z.string().optional(),
         explicitDomains: z.array(z.string()).optional(),
+        project: searchProjectFilterSchema.optional(),
         tokenBudget: z.number().int().positive().optional(),
         includeFullTopK: z.number().int().min(0).optional(),
         minScore: z.number().min(0).optional()
@@ -175,6 +177,7 @@ const composeInputSchema = z.object({
   task: z.string().min(1),
   explicitMode: z.string().optional(),
   explicitDomains: z.array(z.string()).optional(),
+  project: searchProjectFilterSchema.optional(),
   tokenBudget: z.number().int().positive().optional(),
   includeFullTopK: z.number().int().min(0).optional(),
   minScore: z.number().min(0).optional()

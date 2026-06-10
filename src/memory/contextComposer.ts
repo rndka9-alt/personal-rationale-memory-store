@@ -4,7 +4,7 @@ import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
 import { classifyTask } from "../ontology/taskClassifier.js";
 import type { RationaleSearchWarning, RationaleService } from "./rationaleService.js";
-import type { MemoryEntryRecord, MemoryRefinementOpinionRecord } from "./schema.js";
+import type { MemoryEntryRecord, MemoryRefinementOpinionRecord, SearchProjectFilter } from "./schema.js";
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
 const refinementOpinionLimitPerEntry = 3;
@@ -13,6 +13,7 @@ export type ComposeContextInput = {
   task: string;
   explicitMode?: string;
   explicitDomains?: string[];
+  project?: SearchProjectFilter;
   tokenBudget?: number;
   includeFullTopK?: number;
   minScore?: number;
@@ -40,6 +41,7 @@ export class ContextComposer {
       task: input.task,
       explicitMode: input.explicitMode,
       explicitDomains: input.explicitDomains,
+      project: input.project,
       tokenBudget,
       includeFullTopK,
       minScore
@@ -62,6 +64,7 @@ export class ContextComposer {
       query: input.task,
       domains: input.explicitDomains,
       modes: input.explicitMode ? [input.explicitMode] : undefined,
+      project: input.project,
       limit: 50,
       includeDeprecated: false
     });

@@ -115,6 +115,43 @@ describe("calculateSearchRanking", () => {
     expect(ranking.reasons).toContain("negative-feedback:2:-1.50");
   });
 
+  it("boosts matching-project memories without penalizing other projects", () => {
+    const noProjectRanking = calculateSearchRanking({
+      confidence: 0.5,
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      type: "rationale",
+      metadata: {},
+      useCount: 0,
+      vectorScore: 0.7
+    }, { project: { name: "alpha" } });
+    const matchingProjectRanking = calculateSearchRanking({
+      confidence: 0.5,
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      type: "rationale",
+      metadata: {},
+      useCount: 0,
+      vectorScore: 0.7,
+      project: { name: "alpha" }
+    }, { project: { name: "alpha" } });
+    const otherProjectRanking = calculateSearchRanking({
+      confidence: 0.5,
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      type: "rationale",
+      metadata: {},
+      useCount: 0,
+      vectorScore: 0.7,
+      project: { name: "beta" }
+    }, { project: { name: "alpha" } });
+
+    expect(matchingProjectRanking.reasons).toContain("project-match:+1.50");
+    expect(matchingProjectRanking.score).toBeGreaterThan(noProjectRanking.score);
+    expect(otherProjectRanking.score).toBe(noProjectRanking.score);
+    expect(otherProjectRanking.reasons.some((reason) => reason.startsWith("project-"))).toBe(false);
+  });
+
   it("does not penalize auto-captured unreviewed candidates", () => {
     const manualCandidateRanking = calculateSearchRanking({
       confidence: 0.5,

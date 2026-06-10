@@ -122,12 +122,20 @@ export const recordUsageFeedbackInputSchema = z.object({
   metadata: z.record(z.unknown()).optional()
 });
 
+// Ranking-only signal: boosts matching-project entries without filtering or
+// penalizing other projects, so cross-project rationale stays discoverable.
+export const searchProjectFilterSchema = z.object({
+  name: projectContextSchema.shape.name,
+  repo: projectContextSchema.shape.repo
+});
+
 export const searchInputSchema = z.object({
   query: z.string().min(1),
   domains: z.array(z.string()).optional(),
   intents: z.array(z.string()).optional(),
   modes: z.array(z.string()).optional(),
   types: z.array(z.string()).optional(),
+  project: searchProjectFilterSchema.optional(),
   acceptanceStates: z.array(acceptanceStateSchema).optional(),
   reviewStates: z.array(reviewStateSchema).optional(),
   decisionStates: z.array(decisionStateSchema).optional(),
@@ -141,6 +149,7 @@ export type RationaleEntry = z.infer<typeof rationaleEntrySchema>;
 export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
 export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
 export type ProjectContext = z.infer<typeof projectContextSchema>;
+export type SearchProjectFilter = z.infer<typeof searchProjectFilterSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
 export type MemoryUsageEventType = z.infer<typeof memoryUsageEventTypeSchema>;
 export type UsageFeedbackEventType = z.infer<typeof usageFeedbackEventTypeSchema>;
