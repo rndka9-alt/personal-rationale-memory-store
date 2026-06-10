@@ -705,6 +705,85 @@ export async function listAllMemoryEntriesByAcceptanceState(pool: pg.Pool, accep
   return result.rows.map(mapMemoryEntryRow);
 }
 
+export type RetrievalQuerySourceKind = "search" | "compose";
+
+export type RetrievalQueryEventInsert = {
+  sourceKind: RetrievalQuerySourceKind;
+  query: string;
+  resultCount: number;
+  topScore?: number;
+  warningKinds: string[];
+};
+
+export async function recordRetrievalQueryEvent(pool: pg.Pool, event: RetrievalQueryEventInsert) {
+  await pool.query(
+    `INSERT INTO retrieval_query_events (
+      id, source_kind, query, result_count, top_score, warning_kinds
+    ) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      randomUUID(),
+      event.sourceKind,
+      event.query,
+      event.resultCount,
+      event.topScore,
+      event.warningKinds
+    ]
+  );
+  logInfo("DB record retrieval query event completed.", {
+    sourceKind: event.sourceKind,
+    resultCount: event.resultCount
+  });
+}
+
+export async function getRetrievalQueryStatus(pool: pg.Pool, windowDays = 7) {
+  logInfo("DB retrieval query status started.", { windowDays });
+  const countsResult = await pool.query(
+    `SELECT
+      COUNT(*)::int AS total_count,
+      COUNT(*) FILTER (WHERE source_kind = 'search')::int AS search_count,
+      COUNT(*) FILTER (WHERE source_kind = 'compose')::int AS compose_count,
+      COUNT(*) FILTER (WHERE result_count = 0)::int AS zero_hit_count
+    FROM retrieval_query_events
+    WHERE created_at >= now() - make_interval(days => $1)`,
+    [windowDays]
+  );
+  const countsRow = countsResult.rows[0];
+  if (!countsRow) {
+    throw new Error("Retrieval query status returned no rows.");
+  }
+
+  const zeroHitResult = await pool.query(
+    `SELECT query, source_kind, created_at
+    FROM retrieval_query_events
+    WHERE result_count = 0 AND created_at >= now() - make_interval(days => $1)
+    ORDER BY created_at DESC
+    LIMIT 20`,
+    [windowDays]
+  );
+
+  const totalCount = Number(countsRow.total_count);
+  const zeroHitCount = Number(countsRow.zero_hit_count);
+  const status = {
+    windowDays,
+    totalCount,
+    searchCount: Number(countsRow.search_count),
+    composeCount: Number(countsRow.compose_count),
+    zeroHitCount,
+    zeroHitRate: totalCount > 0 ? zeroHitCount / totalCount : 0,
+    recentZeroHitQueries: zeroHitResult.rows.map((row) => ({
+      query: String(row.query),
+      sourceKind: String(row.source_kind),
+      createdAt: new Date(row.created_at).toISOString()
+    }))
+  };
+  logInfo("DB retrieval query status completed.", {
+    windowDays,
+    totalCount,
+    zeroHitCount
+  });
+  return status;
+}
+
 export async function getDatabaseStatus(pool: pg.Pool) {
   logInfo("DB status query started.");
   const result = await pool.query(
@@ -894,6 +973,11 @@ function appendSearchFilters(conditions: string[], values: unknown[], filters: M
   if (filters.types && filters.types.length > 0) {
     values.push(filters.types);
     conditions.push(`e.type = ANY($${values.length})`);
+  }
+
+  if (filters.excludeTypes && filters.excludeTypes.length > 0) {
+    values.push(filters.excludeTypes);
+    conditions.push(`NOT (e.type = ANY($${values.length}))`);
   }
 
   if (filters.domains && filters.domains.length > 0) {

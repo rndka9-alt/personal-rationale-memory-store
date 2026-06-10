@@ -8,3 +8,15 @@ terms:
   - id: memory-type-known-failure
     name: known_failure
     description: A remembered failure mode and its cause.
+  - id: memory-type-preference
+    name: preference
+    description: A standing user or team preference that should shape future work.
+  - id: memory-type-convention
+    name: convention
+    description: A project or codebase convention that future changes should follow.
+  - id: memory-type-constraint
+    name: constraint
+    description: An external constraint that bounds which solutions are viable.
+  - id: memory-type-note
+    name: note
+    description: A general observation or idea; searchable on demand but excluded from composed task context by default.

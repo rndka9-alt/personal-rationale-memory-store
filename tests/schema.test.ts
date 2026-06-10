@@ -59,6 +59,26 @@ describe("autoCaptureRationaleInputSchema", () => {
     })).toThrow();
   });
 
+  it("accepts agent-assignable memory types and rejects principle", () => {
+    const input = autoCaptureRationaleInputSchema.parse({
+      title: "Prefer fail-fast over silent fallback",
+      rationale: "Silent fallbacks hide corrupted data until it is expensive to repair.",
+      type: "preference"
+    });
+
+    expect(input.type).toBe("preference");
+    expect(autoCaptureRationaleInputSchema.parse({
+      title: "Remember a curious pgvector behavior",
+      rationale: "Worth keeping around for future retrieval tuning conversations.",
+      type: "note"
+    }).type).toBe("note");
+    expect(() => autoCaptureRationaleInputSchema.parse({
+      title: "Promote to principle directly",
+      rationale: "Principles must come from promoting accepted rationale.",
+      type: "principle"
+    })).toThrow();
+  });
+
   it("keeps boundary fields when provided", () => {
     const input = autoCaptureRationaleInputSchema.parse({
       title: "Capture reusable rationale",

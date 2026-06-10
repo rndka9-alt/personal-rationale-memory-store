@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import type pg from "pg";
 import type { AppConfig } from "../config.js";
-import { getDatabaseStatus } from "../db/queries.js";
+import { getDatabaseStatus, getRetrievalQueryStatus } from "../db/queries.js";
 import { MemoryFileStore } from "../memory/fileStore.js";
 import { IndexingService } from "../memory/indexingService.js";
 
@@ -25,6 +25,7 @@ export class StatusService {
 
   async status() {
     const database = await getDatabaseStatus(this.pool);
+    const retrieval = await getRetrievalQueryStatus(this.pool);
     const fileEntries = await this.fileStore.listEntries();
     const changedEntries = await this.indexingService.listChangedEntries();
     const dataDirectoryStat = await stat(this.config.dataDirectory);
@@ -51,7 +52,8 @@ export class StatusService {
         canonicalFileCount: fileEntries.length,
         changedCanonicalFileCount: changedEntries.length
       },
-      database
+      database,
+      retrieval
     };
   }
 }

@@ -8,12 +8,16 @@ import type { MemoryEntryRecord, MemoryRefinementOpinionRecord, SearchProjectFil
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
 const refinementOpinionLimitPerEntry = 3;
+// Note memories are storage-first: they stay searchable on demand, but they do not
+// compete for the composed task-context token budget unless explicitly requested.
+const composeExcludedTypes = ["note"];
 
 export type ComposeContextInput = {
   task: string;
   explicitMode?: string;
   explicitDomains?: string[];
   project?: SearchProjectFilter;
+  includeNotes?: boolean;
   tokenBudget?: number;
   includeFullTopK?: number;
   minScore?: number;
@@ -65,9 +69,10 @@ export class ContextComposer {
       domains: input.explicitDomains,
       modes: input.explicitMode ? [input.explicitMode] : undefined,
       project: input.project,
+      excludeTypes: input.includeNotes ? undefined : composeExcludedTypes,
       limit: 50,
       includeDeprecated: false
-    });
+    }, "compose");
     const searchResults = searchResult.results;
     const relevantResults = searchResults.filter((result) => (result.searchScore ?? 0) >= minScore);
     logInfo("Rationale context retrieval completed.", {

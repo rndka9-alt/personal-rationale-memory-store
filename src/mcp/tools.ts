@@ -40,6 +40,7 @@ type ToolResult = {
 
 const sessionCandidateInputSchema = z.object({
   title: recordCandidateInputSchema.shape.title,
+  type: recordCandidateInputSchema.shape.type,
   situation: recordCandidateInputSchema.shape.situation,
   goal: recordCandidateInputSchema.shape.goal,
   constraints: recordCandidateInputSchema.shape.constraints,
@@ -75,12 +76,13 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized.",
+      description: "Compose bounded prompt-ready rationale context for a task. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Note-type memories are excluded by default; set includeNotes to pull them in.",
       schema: {
         task: z.string().min(1),
         explicitMode: z.string().optional(),
         explicitDomains: z.array(z.string()).optional(),
         project: searchProjectFilterSchema.optional(),
+        includeNotes: z.boolean().optional(),
         tokenBudget: z.number().int().positive().optional(),
         includeFullTopK: z.number().int().min(0).optional(),
         minScore: z.number().min(0).optional()
@@ -104,7 +106,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record relevant content into memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Memories can be referenced from other tasks and later conversations, so actively capture anything that seems useful later — decisions, reasoning, preferences, lessons learned. Weak or duplicate captures are filtered out downstream; when in doubt, capture.",
+        "Record relevant content into memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Memories can be referenced from other tasks and later conversations, so actively capture anything that seems useful later — decisions, reasoning, preferences, lessons learned. Set type to preference, convention, constraint, or known_failure for non-decision knowledge, or note for general observations and ideas (defaults to rationale). Notes stay searchable but are kept out of composed task context. Weak or duplicate captures are filtered out downstream; when in doubt, capture.",
       schema: autoCaptureRationaleInputSchema.shape,
       handler: async (input: unknown) =>
         jsonToolResult(compactRationaleWriteResult(
@@ -178,6 +180,7 @@ const composeInputSchema = z.object({
   explicitMode: z.string().optional(),
   explicitDomains: z.array(z.string()).optional(),
   project: searchProjectFilterSchema.optional(),
+  includeNotes: z.boolean().optional(),
   tokenBudget: z.number().int().positive().optional(),
   includeFullTopK: z.number().int().min(0).optional(),
   minScore: z.number().min(0).optional()

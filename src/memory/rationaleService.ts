@@ -14,12 +14,13 @@ import {
   listRecentMemoryEntries,
   recordMemoryRefinementOpinion,
   recordMemoryUsageEvents,
+  recordRetrievalQueryEvent,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
   updateMemoryRefinementOpinionStatus,
   updateMemoryStatus
 } from "../db/queries.js";
-import type { MemoryUsageFeedbackCounts } from "../db/queries.js";
+import type { MemoryUsageFeedbackCounts, RetrievalQuerySourceKind } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
@@ -217,7 +218,7 @@ export class RationaleService {
     const entry: RationaleEntry = {
       frontmatter: {
         id,
-        type: "rationale",
+        type: validatedInput.type ?? "rationale",
         status: "candidate",
         acceptanceState: "candidate",
         reviewState,
@@ -284,6 +285,7 @@ export class RationaleService {
 
     const result = await this.recordCandidate({
       title: validatedInput.title,
+      type: validatedInput.type,
       situation: validatedInput.situation,
       goal: validatedInput.goal,
       constraints: validatedInput.constraints,
@@ -547,7 +549,7 @@ export class RationaleService {
     return result.results;
   }
 
-  async searchWithDiagnostics(input: unknown) {
+  async searchWithDiagnostics(input: unknown, sourceKind: RetrievalQuerySourceKind = "search") {
     const parsedInput = searchInputSchema.parse(input);
     logInfo("Searching rationales started.", {
       query: parsedInput.query,
@@ -566,6 +568,7 @@ export class RationaleService {
       reviewStates: parsedInput.reviewStates,
       decisionStates: parsedInput.decisionStates,
       types: parsedInput.types,
+      excludeTypes: parsedInput.excludeTypes,
       status: parsedInput.status,
       limit: parsedInput.limit,
       includeDeprecated: parsedInput.includeDeprecated
@@ -644,6 +647,22 @@ export class RationaleService {
       resultCount: results.length,
       warningCount: warnings.length
     });
+
+    try {
+      await recordRetrievalQueryEvent(this.pool, {
+        sourceKind,
+        query: parsedInput.query,
+        resultCount: results.length,
+        topScore: results[0]?.searchScore,
+        warningKinds: warnings.map((warning) => warning.kind)
+      });
+    } catch (error) {
+      // Query logging is observability-only; a lost event must not break retrieval.
+      logError("Recording retrieval query event failed.", error, {
+        query: parsedInput.query
+      });
+    }
+
     return { results, warnings };
   }
 
@@ -1078,7 +1097,9 @@ function reviewCandidateEntry(entry: RationaleEntry): CandidateReview {
   };
 }
 
-function findMissingSections(entry: RationaleEntry) {
+const decisionShapedSections = new Set(["constraints", "decision", "rejectedAlternatives", "tradeoff"]);
+
+export function findMissingSections(entry: RationaleEntry) {
   const missingSections: string[] = [];
   if (!entry.situation) {
     missingSections.push("situation");
@@ -1104,7 +1125,16 @@ function findMissingSections(entry: RationaleEntry) {
   if (entry.avoidWhen.length === 0) {
     missingSections.push("avoidWhen");
   }
-  return missingSections;
+  if (expectsDecisionSections(entry.frontmatter.type)) {
+    return missingSections;
+  }
+  return missingSections.filter((section) => !decisionShapedSections.has(section));
+}
+
+// Non-decision memory types (preference, convention, constraint, known_failure) describe
+// standing knowledge rather than a choice, so decision-shaped sections are not gaps for them.
+function expectsDecisionSections(type: string) {
+  return type === "rationale" || type === "principle";
 }
 
 function findStrengths(entry: RationaleEntry) {

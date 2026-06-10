@@ -71,8 +71,22 @@ export const rationaleEntrySchema = z.object({
   rawMarkdown: z.string().default("")
 });
 
+// Principle is excluded on purpose: principles are created only by promoting
+// accepted rationale, so capture inputs cannot mint them directly.
+// Note is storage-first: searchable on demand but kept out of composed task
+// context by default, so casual observations cannot crowd out vetted rationale.
+export const capturedMemoryTypeSchema = z.enum([
+  "rationale",
+  "known_failure",
+  "preference",
+  "convention",
+  "constraint",
+  "note"
+]);
+
 export const recordCandidateInputSchema = z.object({
   title: z.string().min(1),
+  type: capturedMemoryTypeSchema.optional(),
   situation: z.string().optional(),
   goal: z.string().optional(),
   constraints: z.array(z.string()).optional(),
@@ -89,6 +103,7 @@ export const recordCandidateInputSchema = z.object({
 
 export const autoCaptureRationaleInputSchema = z.object({
   title: recordCandidateInputSchema.shape.title,
+  type: recordCandidateInputSchema.shape.type,
   situation: recordCandidateInputSchema.shape.situation,
   goal: recordCandidateInputSchema.shape.goal,
   constraints: recordCandidateInputSchema.shape.constraints,
@@ -135,6 +150,7 @@ export const searchInputSchema = z.object({
   intents: z.array(z.string()).optional(),
   modes: z.array(z.string()).optional(),
   types: z.array(z.string()).optional(),
+  excludeTypes: z.array(z.string()).optional(),
   project: searchProjectFilterSchema.optional(),
   acceptanceStates: z.array(acceptanceStateSchema).optional(),
   reviewStates: z.array(reviewStateSchema).optional(),
@@ -146,6 +162,7 @@ export const searchInputSchema = z.object({
 });
 
 export type RationaleEntry = z.infer<typeof rationaleEntrySchema>;
+export type CapturedMemoryType = z.infer<typeof capturedMemoryTypeSchema>;
 export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
 export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
 export type ProjectContext = z.infer<typeof projectContextSchema>;

@@ -35,7 +35,7 @@ GET http://127.0.0.1:3443/health
 GET http://127.0.0.1:3443/status
 ```
 
-`/health` checks that the app can reach the database. `/status` also reports MCP config, embedding mode, canonical file counts, changed file counts, and indexed DB counts. If `MCP_AUTH_TOKEN` is set, `/status` requires the same bearer token as `/mcp`.
+`/health` checks that the app can reach the database. `/status` also reports MCP config, embedding mode, canonical file counts, changed file counts, and indexed DB counts, plus a `retrieval` section with 7-day search/compose counts, the zero-hit rate, and recent zero-hit queries. If `MCP_AUTH_TOKEN` is set, `/status` requires the same bearer token as `/mcp`.
 
 ## Persistence
 
@@ -241,6 +241,8 @@ The legacy `status` field is deprecated and retained only for compatibility duri
 
 Search uses a hybrid ranking pass over vector results, lexical results, metadata filters, lifecycle state, confidence, and explicit positive or negative usage feedback. Deprecated entries are excluded by `acceptanceState` unless explicitly requested. Accepted and reviewed memories receive trust boosts, while candidates receive only a small boost, so reviewed guidance stays ahead of unreviewed capture without a separate penalty; memories marked `needs_revision` are penalized in search because a human explicitly flagged them. Passive exposure signals such as being included by `compose_context` are recorded for audit but do not boost search ranking, which prevents frequently retrieved memories from reinforcing themselves without an explicit usefulness signal. Positive feedback raises normal search ranking, while negative feedback lowers normal search ranking and raises review queue priority as an attention signal. Returned entries include signed ranking reasons such as `vector:0.800:+4.00`, `domain-match:2:+4.00`, `positive-feedback:2:+0.70`, or `negative-feedback:2:-1.50` so callers can inspect how each signal changed the score. If vector retrieval falls back to lexical retrieval, `search_rationales` returns warnings and `compose_context` includes a retrieval warnings section so the degraded path is visible without reading server logs.
 
+Every `search_rationales` and `compose_context` retrieval records a query event (source kind, query, result count, top score, warning kinds) in `retrieval_query_events`. Zero-hit queries surface through `/status` under `retrieval` as a backlog of memories that were needed but never captured. Query events are observability-only and never affect ranking.
+
 New candidate memories infer missing `domains`, `intents`, and `modes` from their rationale content while preserving any explicit metadata tags supplied by the caller. Use `reindex_memory({ "scope": "untagged" })` or `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
 
 Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs. `search_rationales` and `compose_context` accept an optional `project` argument; when the caller passes the active project, entries whose `project.name` or `project.repo` matches receive a `project-match` ranking boost. Project context is never used as a penalty: memories from other projects keep their relevance-based ranking so cross-project rationale stays discoverable.
@@ -269,6 +271,10 @@ capture_reason: ...
 ```
 
 Only `title` and `rationale` are required for capture. Each new candidate records a `capture_tier` in its metadata: `full` when both `reuseWhen` and `avoidWhen` are present, `quick` otherwise. The tier never affects search ranking; it marks entries whose boundary sections still need backfill during review or batch enrichment.
+
+Capture inputs accept an optional `type`: `rationale` (default), `known_failure`, `preference`, `convention`, `constraint`, or `note`. `principle` is reserved for promotion from accepted rationale and cannot be set at capture time. Non-decision types are not flagged for missing decision-shaped sections (constraints, decision, rejected alternatives, tradeoff) during candidate review, so preferences and conventions stay first-class memories without pretending to be decisions.
+
+`note` is the storage-first type for general observations and ideas. Notes remain fully searchable through `search_rationales`, but `compose_context` excludes them from task context packs by default so casual notes never compete with vetted rationale for the token budget. Pass `includeNotes: true` to compose with notes included. Search also accepts an `excludeTypes` filter for the same mechanism.
 
 Auto-captured unreviewed candidates remain searchable and rank purely on relevance and lifecycle boosts; they carry `candidate`/`unreviewed` lifecycle fields in search results so callers can weigh trust themselves, and the larger `accepted`/`reviewed` boosts keep human-accepted rationale ahead. Use the administrative review flow later to accept, keep as candidate, mark as needing revision, or deprecate entries.
 
