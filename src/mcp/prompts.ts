@@ -21,7 +21,7 @@ export function registerPrompts(server: McpServer) {
       role: "user",
       content: {
         type: "text",
-        text: `Extract reusable rationale candidates from this session:\n\n${sessionSummary}`
+        text: `Extract rationale candidates from this session. Actively record anything that could help other tasks or later conversations — decisions, reasoning, preferences, lessons learned.\n\n${sessionSummary}`
       }
     }]
   }));

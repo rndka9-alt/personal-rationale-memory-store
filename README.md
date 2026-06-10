@@ -272,13 +272,13 @@ Auto-captured unreviewed candidates remain searchable and rank purely on relevan
 
 The internal review output is Markdown and highlights missing sections, strengths, cautions, and an accept/revise/deprecate recommendation. Review reports do not mutate candidates by themselves; explicit lifecycle operations perform the mutation.
 
-Recommended LLM instruction:
+Recommended LLM guidance:
 
 ```text
-When a reusable rationale emerges, you may call auto_capture_rationale.
-Only auto-capture when the rationale includes constraints, tradeoffs, reuseWhen, and avoidWhen.
-Prefer no capture over weak or one-off memories.
-Auto-captured memories must remain candidates until reviewed later.
+Record relevant content into memory with auto_capture_rationale.
+Memories can be referenced from other tasks and later conversations, so actively capture
+anything that seems useful later — decisions, reasoning, preferences, lessons learned.
+Weak or duplicate captures are filtered out downstream; when in doubt, capture.
 ```
 
 ## Safety
