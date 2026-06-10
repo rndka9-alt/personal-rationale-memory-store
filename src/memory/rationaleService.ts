@@ -654,7 +654,8 @@ export class RationaleService {
         query: parsedInput.query,
         resultCount: results.length,
         topScore: results[0]?.searchScore,
-        warningKinds: warnings.map((warning) => warning.kind)
+        warningKinds: warnings.map((warning) => warning.kind),
+        projectName: parsedInput.project?.name
       });
     } catch (error) {
       // Query logging is observability-only; a lost event must not break retrieval.

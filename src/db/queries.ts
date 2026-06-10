@@ -713,20 +713,22 @@ export type RetrievalQueryEventInsert = {
   resultCount: number;
   topScore?: number;
   warningKinds: string[];
+  projectName?: string;
 };
 
 export async function recordRetrievalQueryEvent(pool: pg.Pool, event: RetrievalQueryEventInsert) {
   await pool.query(
     `INSERT INTO retrieval_query_events (
-      id, source_kind, query, result_count, top_score, warning_kinds
-    ) VALUES ($1, $2, $3, $4, $5, $6)`,
+      id, source_kind, query, result_count, top_score, warning_kinds, project_name
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
       randomUUID(),
       event.sourceKind,
       event.query,
       event.resultCount,
       event.topScore,
-      event.warningKinds
+      event.warningKinds,
+      event.projectName
     ]
   );
   logInfo("DB record retrieval query event completed.", {
@@ -753,11 +755,21 @@ export async function getRetrievalQueryStatus(pool: pg.Pool, windowDays = 7) {
   }
 
   const zeroHitResult = await pool.query(
-    `SELECT query, source_kind, created_at
+    `SELECT query, source_kind, project_name, created_at
     FROM retrieval_query_events
     WHERE result_count = 0 AND created_at >= now() - make_interval(days => $1)
     ORDER BY created_at DESC
     LIMIT 20`,
+    [windowDays]
+  );
+
+  const zeroHitByProjectResult = await pool.query(
+    `SELECT project_name, COUNT(*)::int AS zero_hit_count
+    FROM retrieval_query_events
+    WHERE result_count = 0 AND created_at >= now() - make_interval(days => $1)
+    GROUP BY project_name
+    ORDER BY zero_hit_count DESC
+    LIMIT 10`,
     [windowDays]
   );
 
@@ -773,7 +785,13 @@ export async function getRetrievalQueryStatus(pool: pg.Pool, windowDays = 7) {
     recentZeroHitQueries: zeroHitResult.rows.map((row) => ({
       query: String(row.query),
       sourceKind: String(row.source_kind),
+      // null means the caller did not pass a project filter for this query.
+      projectName: row.project_name === null ? null : String(row.project_name),
       createdAt: new Date(row.created_at).toISOString()
+    })),
+    zeroHitByProject: zeroHitByProjectResult.rows.map((row) => ({
+      projectName: row.project_name === null ? null : String(row.project_name),
+      zeroHitCount: Number(row.zero_hit_count)
     }))
   };
   logInfo("DB retrieval query status completed.", {
