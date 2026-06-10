@@ -268,6 +268,8 @@ review_state: unreviewed
 capture_reason: ...
 ```
 
+Only `title` and `rationale` are required for capture. Each new candidate records a `capture_tier` in its metadata: `full` when both `reuseWhen` and `avoidWhen` are present, `quick` otherwise. The tier never affects search ranking; it marks entries whose boundary sections still need backfill during review or batch enrichment.
+
 Auto-captured unreviewed candidates remain searchable and rank purely on relevance and lifecycle boosts; they carry `candidate`/`unreviewed` lifecycle fields in search results so callers can weigh trust themselves, and the larger `accepted`/`reviewed` boosts keep human-accepted rationale ahead. Use the administrative review flow later to accept, keep as candidate, mark as needing revision, or deprecate entries.
 
 The internal review output is Markdown and highlights missing sections, strengths, cautions, and an accept/revise/deprecate recommendation. Review reports do not mutate candidates by themselves; explicit lifecycle operations perform the mutation.
@@ -276,6 +278,7 @@ Recommended LLM guidance:
 
 ```text
 Record relevant content into memory with auto_capture_rationale.
+Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them.
 Memories can be referenced from other tasks and later conversations, so actively capture
 anything that seems useful later — decisions, reasoning, preferences, lessons learned.
 Weak or duplicate captures are filtered out downstream; when in doubt, capture.

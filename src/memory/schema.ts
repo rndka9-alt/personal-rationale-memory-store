@@ -96,11 +96,11 @@ export const autoCaptureRationaleInputSchema = z.object({
   rationale: recordCandidateInputSchema.shape.rationale,
   rejectedAlternatives: recordCandidateInputSchema.shape.rejectedAlternatives,
   tradeoff: recordCandidateInputSchema.shape.tradeoff,
-  reuseWhen: z.array(z.string()).min(1),
-  avoidWhen: z.array(z.string()).min(1),
+  reuseWhen: recordCandidateInputSchema.shape.reuseWhen,
+  avoidWhen: recordCandidateInputSchema.shape.avoidWhen,
   source: sourceMetadataSchema.optional(),
   project: projectContextSchema.optional(),
-  captureReason: z.string().min(1),
+  captureReason: z.string().min(1).optional(),
   sessionRef: z.string().optional(),
   metadata: recordCandidateInputSchema.shape.metadata
 });

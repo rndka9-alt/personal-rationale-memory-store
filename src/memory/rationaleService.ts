@@ -201,6 +201,7 @@ export class RationaleService {
     }
 
     const metadata = normalizeCandidateMetadata(validatedInput.metadata, "manual");
+    const captureTier = readStringMetadata(metadata, "capture_tier") ?? deriveCaptureTier(validatedInput);
     const project = validatedInput.project ?? readProjectMetadata(validatedInput.metadata);
     const reviewState = readReviewStateMetadata(metadata, "unreviewed");
     const inferredTags = inferRationaleTags(validatedInput);
@@ -228,6 +229,7 @@ export class RationaleService {
         project,
         metadata: {
           ...metadata,
+          capture_tier: captureTier,
           domains,
           intents,
           modes,
@@ -1537,6 +1539,17 @@ function normalizeCandidateMetadata(metadata: Record<string, unknown> | undefine
     capture_kind: readStringMetadata(baseMetadata, "capture_kind") ?? defaultCaptureKind,
     review_state: readStringMetadata(baseMetadata, "review_state") ?? "unreviewed"
   };
+}
+
+// Quick captures intentionally skip reuse boundaries; the tier lets review flows and
+// batch enrichment target them for backfill without affecting search ranking.
+export function deriveCaptureTier(input: Pick<RecordCandidateInput, "reuseWhen" | "avoidWhen">) {
+  const hasBoundaries =
+    input.reuseWhen !== undefined &&
+    input.reuseWhen.length > 0 &&
+    input.avoidWhen !== undefined &&
+    input.avoidWhen.length > 0;
+  return hasBoundaries ? "full" : "quick";
 }
 
 function isString(value: unknown): value is string {

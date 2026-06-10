@@ -39,9 +39,7 @@ if (command === "search") {
   console.log(JSON.stringify(await rationaleService.autoCaptureRationale({
     title,
     captureReason,
-    rationale: rationaleParts.join(" "),
-    reuseWhen: ["A similar rationale-centered decision appears in a future task."],
-    avoidWhen: ["The future task is unrelated to this rationale."]
+    rationale: rationaleParts.join(" ")
   }), null, 2));
 } else if (command === "record-candidate") {
   const [title, ...rationaleParts] = rest;

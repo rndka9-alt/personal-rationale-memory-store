@@ -42,15 +42,24 @@ describe("rationaleEntrySchema", () => {
 });
 
 describe("autoCaptureRationaleInputSchema", () => {
-  it("requires reuse and avoid boundaries for autonomous capture", () => {
-    expect(() => autoCaptureRationaleInputSchema.parse({
+  it("accepts quick captures with only title and rationale", () => {
+    const input = autoCaptureRationaleInputSchema.parse({
       title: "Capture reusable rationale",
-      rationale: "This should not be auto-captured without boundaries.",
-      captureReason: "It may be useful later.",
-      reuseWhen: [],
-      avoidWhen: []
-    })).toThrow();
+      rationale: "Boundary fields can be backfilled during review."
+    });
 
+    expect(input.reuseWhen).toBeUndefined();
+    expect(input.avoidWhen).toBeUndefined();
+    expect(input.captureReason).toBeUndefined();
+  });
+
+  it("still requires a rationale body", () => {
+    expect(() => autoCaptureRationaleInputSchema.parse({
+      title: "Capture without rationale"
+    })).toThrow();
+  });
+
+  it("keeps boundary fields when provided", () => {
     const input = autoCaptureRationaleInputSchema.parse({
       title: "Capture reusable rationale",
       rationale: "This rationale includes enough boundary information to be queued safely.",
