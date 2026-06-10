@@ -132,7 +132,6 @@ const searchRankingWeights = {
   reviewed: 0.5,
   candidate: 0.25,
   needsRevision: -1,
-  autoUnreviewedCandidate: -0.75,
   confidenceMax: 1,
   feedbackPositive: 0.35,
   feedbackNegative: 0.75,
@@ -1371,10 +1370,6 @@ export function calculateSearchRanking(entry: {
     score += addScoreContribution(reasons, "needs-revision", searchRankingWeights.needsRevision);
   }
 
-  if (isAutoCapturedUnreviewedCandidate(entry)) {
-    score += addScoreContribution(reasons, "auto-unreviewed", searchRankingWeights.autoUnreviewedCandidate);
-  }
-
   if (entry.confidence > 0) {
     score += addScoreContribution(
       reasons,
@@ -1461,12 +1456,6 @@ function calculateRecentUsageScore(lastUsedAt: string | undefined) {
 
 function formatErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
-}
-
-function isAutoCapturedUnreviewedCandidate(entry: Pick<MemoryEntryRecord, "acceptanceState" | "reviewState" | "metadata">) {
-  return entry.acceptanceState === "candidate"
-    && readStringMetadata(entry.metadata, "capture_kind") === "auto"
-    && entry.reviewState === "unreviewed";
 }
 
 function countMetadataMatches(metadata: Record<string, unknown>, key: string, expectedValues: string[] | undefined) {

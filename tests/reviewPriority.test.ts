@@ -115,6 +115,30 @@ describe("calculateSearchRanking", () => {
     expect(ranking.reasons).toContain("negative-feedback:2:-1.50");
   });
 
+  it("does not penalize auto-captured unreviewed candidates", () => {
+    const manualCandidateRanking = calculateSearchRanking({
+      confidence: 0.5,
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      type: "rationale",
+      metadata: {},
+      useCount: 0,
+      vectorScore: 0.7
+    }, {});
+    const autoCapturedRanking = calculateSearchRanking({
+      confidence: 0.5,
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      type: "rationale",
+      metadata: { capture_kind: "auto" },
+      useCount: 0,
+      vectorScore: 0.7
+    }, {});
+
+    expect(autoCapturedRanking.score).toBe(manualCandidateRanking.score);
+    expect(autoCapturedRanking.reasons.some((reason) => reason.startsWith("auto-unreviewed:"))).toBe(false);
+  });
+
   it("does not boost search ranking from passive use counts", () => {
     const baseRanking = calculateSearchRanking({
       confidence: 0.5,
