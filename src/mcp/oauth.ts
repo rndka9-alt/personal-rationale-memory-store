@@ -1,0 +1,641 @@
+import { readFileSync } from "node:fs";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign, timingSafeEqual, verify } from "node:crypto";
+import type { KeyObject } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { z } from "zod";
+import type { AppConfig } from "../config.js";
+
+type OAuthConfig = AppConfig["mcp"]["oauth"];
+
+const authorizationRequestSchema = z.object({
+  response_type: z.literal("code"),
+  client_id: z.string(),
+  redirect_uri: z.string().url(),
+  scope: z.string().optional(),
+  state: z.string().optional(),
+  code_challenge: z.string().min(43),
+  code_challenge_method: z.literal("S256"),
+  resource: z.string().url().optional()
+});
+
+const tokenRequestSchema = z.object({
+  grant_type: z.literal("authorization_code"),
+  code: z.string().min(1),
+  redirect_uri: z.string().url(),
+  client_id: z.string(),
+  code_verifier: z.string().min(43),
+  resource: z.string().url().optional()
+});
+
+const jwtHeaderSchema = z.object({
+  alg: z.literal("RS256"),
+  typ: z.literal("JWT"),
+  kid: z.string()
+});
+
+const accessTokenPayloadSchema = z.object({
+  iss: z.string(),
+  sub: z.string(),
+  aud: z.string(),
+  exp: z.number().int(),
+  iat: z.number().int(),
+  scope: z.string(),
+  token_use: z.literal("access"),
+  resource: z.string()
+});
+
+type AuthorizationRequest = z.infer<typeof authorizationRequestSchema>;
+
+type AuthorizationCodeRecord = {
+  request: AuthorizationRequest;
+  scope: string;
+  expiresAt: number;
+};
+
+type VerifiedToken = {
+  subject: string;
+  email: string | undefined;
+  name: string;
+  scope: string;
+};
+
+type RsaPublicJwk = {
+  kty: "RSA";
+  n: string;
+  e: string;
+};
+
+const authorizationCodeTtlMilliseconds = 5 * 60 * 1000;
+const accessTokenTtlSeconds = 60 * 60;
+
+export function createOAuthAuthorizationServer(config: OAuthConfig) {
+  if (!config.enabled) {
+    return undefined;
+  }
+  return new OAuthAuthorizationServer(config);
+}
+
+export class OAuthAuthorizationServer {
+  private readonly authorizationCodes = new Map<string, AuthorizationCodeRecord>();
+  private readonly privateKey: KeyObject;
+  private readonly publicKey: KeyObject;
+  private readonly keyId: string;
+  private readonly issuer: string;
+  private readonly resource: string;
+
+  constructor(private readonly config: OAuthConfig) {
+    const configuredPrivateKey = loadConfiguredPrivateKey(config);
+    if (configuredPrivateKey) {
+      this.privateKey = configuredPrivateKey;
+      this.publicKey = createPublicKey(configuredPrivateKey);
+    } else {
+      const keyPair = generateKeyPairSync("rsa", {
+        modulusLength: 2048
+      });
+      this.privateKey = keyPair.privateKey;
+      this.publicKey = keyPair.publicKey;
+    }
+    this.keyId = createKeyId(this.publicKey);
+    this.issuer = requireConfiguredValue(config.publicUrl, "MCP_PUBLIC_URL");
+    this.resource = this.issuer;
+  }
+
+  getProtectedResourceMetadata() {
+    return {
+      resource: this.resource,
+      authorization_servers: [this.issuer],
+      scopes_supported: this.config.scopes,
+      resource_documentation: `${this.issuer}/`
+    };
+  }
+
+  getAuthorizationServerMetadata() {
+    return {
+      issuer: this.issuer,
+      authorization_endpoint: `${this.issuer}/oauth/authorize`,
+      token_endpoint: `${this.issuer}/oauth/token`,
+      jwks_uri: `${this.issuer}/oauth/jwks.json`,
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code"],
+      token_endpoint_auth_methods_supported: ["none"],
+      code_challenge_methods_supported: ["S256"],
+      scopes_supported: this.config.scopes,
+      subject_types_supported: ["public"],
+      id_token_signing_alg_values_supported: ["RS256"],
+      userinfo_endpoint: `${this.issuer}/oauth/userinfo`
+    };
+  }
+
+  getOpenIdConfiguration() {
+    return this.getAuthorizationServerMetadata();
+  }
+
+  getJwks() {
+    const publicJwk = exportRsaPublicJwk(this.publicKey);
+
+    return {
+      keys: [
+        {
+          kty: publicJwk.kty,
+          n: publicJwk.n,
+          e: publicJwk.e,
+          kid: this.keyId,
+          use: "sig",
+          alg: "RS256",
+          key_ops: ["verify"]
+        }
+      ]
+    };
+  }
+
+  renderAuthorizationForm(searchParams: URLSearchParams) {
+    const request = this.parseAuthorizationRequest(searchParams);
+    const hiddenInputs = [
+      ["response_type", request.response_type],
+      ["client_id", request.client_id],
+      ["redirect_uri", request.redirect_uri],
+      ["scope", request.scope ?? ""],
+      ["state", request.state ?? ""],
+      ["code_challenge", request.code_challenge],
+      ["code_challenge_method", request.code_challenge_method],
+      ["resource", request.resource ?? ""]
+    ].map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`);
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize Rationale Memory</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 36rem; }
+    label, input, button { display: block; width: 100%; box-sizing: border-box; }
+    input, button { font: inherit; padding: 0.75rem; margin-top: 0.5rem; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Authorize Rationale Memory</h1>
+  <p>Enter the one-time login code configured on this MCP server.</p>
+  <form method="post" action="/oauth/authorize">
+    ${hiddenInputs.join("\n    ")}
+    <label>
+      Login code
+      <input name="login_code" type="password" autocomplete="one-time-code" required autofocus>
+    </label>
+    <button type="submit">Authorize</button>
+  </form>
+</body>
+</html>`;
+  }
+
+  authorize(searchParams: URLSearchParams) {
+    const loginCode = searchParams.get("login_code");
+    if (loginCode === null || !secureEquals(loginCode, requireConfiguredValue(this.config.loginCode, "MCP_OAUTH_LOGIN_CODE"))) {
+      throw new OAuthHttpError(401, "invalid_login", "Invalid login code.");
+    }
+
+    const request = this.parseAuthorizationRequest(searchParams);
+    const code = base64UrlEncode(randomBytes(32));
+    this.authorizationCodes.set(code, {
+      request,
+      scope: this.resolveScope(request.scope),
+      expiresAt: Date.now() + authorizationCodeTtlMilliseconds
+    });
+
+    const redirectUrl = new URL(request.redirect_uri);
+    redirectUrl.searchParams.set("code", code);
+    if (request.state) {
+      redirectUrl.searchParams.set("state", request.state);
+    }
+    return redirectUrl;
+  }
+
+  exchangeToken(searchParams: URLSearchParams) {
+    const request = tokenRequestSchema.parse(readParams(searchParams, [
+      "grant_type",
+      "code",
+      "redirect_uri",
+      "client_id",
+      "code_verifier",
+      "resource"
+    ]));
+
+    if (request.client_id !== this.config.clientId) {
+      throw new OAuthHttpError(400, "invalid_client", "Unknown OAuth client.");
+    }
+
+    const codeRecord = this.authorizationCodes.get(request.code);
+    if (!codeRecord) {
+      throw new OAuthHttpError(400, "invalid_grant", "Authorization code was not found.");
+    }
+    this.authorizationCodes.delete(request.code);
+
+    if (Date.now() > codeRecord.expiresAt) {
+      throw new OAuthHttpError(400, "invalid_grant", "Authorization code expired.");
+    }
+    if (request.redirect_uri !== codeRecord.request.redirect_uri) {
+      throw new OAuthHttpError(400, "invalid_grant", "Redirect URI did not match the authorization request.");
+    }
+    if (request.resource && request.resource !== this.resource) {
+      throw new OAuthHttpError(400, "invalid_target", "Resource did not match this MCP server.");
+    }
+    if (!verifyPkce(request.code_verifier, codeRecord.request.code_challenge)) {
+      throw new OAuthHttpError(400, "invalid_grant", "PKCE verification failed.");
+    }
+
+    const accessToken = this.signToken("access", codeRecord.scope, this.resource);
+    const response: Record<string, string | number> = {
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: accessTokenTtlSeconds,
+      scope: codeRecord.scope
+    };
+
+    if (codeRecord.scope.split(" ").includes("openid")) {
+      response.id_token = this.signToken("id", codeRecord.scope, this.config.clientId);
+    }
+
+    return response;
+  }
+
+  verifyBearerToken(token: string): VerifiedToken | undefined {
+    const parsedToken = this.parseAndVerifyToken(token);
+    if (!parsedToken) {
+      return undefined;
+    }
+
+    const parsedPayload = accessTokenPayloadSchema.safeParse(parsedToken.payload);
+    if (!parsedPayload.success) {
+      return undefined;
+    }
+
+    const payload = parsedPayload.data;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (payload.iss !== this.issuer || payload.aud !== this.resource || payload.resource !== this.resource) {
+      return undefined;
+    }
+    if (payload.exp <= nowSeconds) {
+      return undefined;
+    }
+
+    const tokenScopes = payload.scope.split(" ");
+    for (const requiredScope of this.config.requiredScopes) {
+      if (!tokenScopes.includes(requiredScope)) {
+        return undefined;
+      }
+    }
+
+    return {
+      subject: payload.sub,
+      email: this.config.userEmail,
+      name: this.config.userName,
+      scope: payload.scope
+    };
+  }
+
+  getUserInfo(token: string) {
+    const verifiedToken = this.verifyBearerToken(token);
+    if (!verifiedToken) {
+      throw new OAuthHttpError(401, "invalid_token", "Access token is invalid.");
+    }
+
+    return {
+      sub: verifiedToken.subject,
+      name: verifiedToken.name,
+      email: verifiedToken.email,
+      email_verified: Boolean(verifiedToken.email)
+    };
+  }
+
+  createAuthenticateHeader() {
+    return `Bearer resource_metadata="${this.issuer}/.well-known/oauth-protected-resource", scope="${this.config.requiredScopes.join(" ")}"`;
+  }
+
+  private parseAuthorizationRequest(searchParams: URLSearchParams) {
+    const request = authorizationRequestSchema.parse(readParams(searchParams, [
+      "response_type",
+      "client_id",
+      "redirect_uri",
+      "scope",
+      "state",
+      "code_challenge",
+      "code_challenge_method",
+      "resource"
+    ]));
+
+    if (request.client_id !== this.config.clientId) {
+      throw new OAuthHttpError(400, "invalid_client", "Unknown OAuth client.");
+    }
+    if (request.redirect_uri !== requireConfiguredValue(this.config.redirectUri, "MCP_OAUTH_REDIRECT_URI")) {
+      throw new OAuthHttpError(400, "invalid_request", "Redirect URI is not allowed.");
+    }
+    if (request.resource && request.resource !== this.resource) {
+      throw new OAuthHttpError(400, "invalid_target", "Resource did not match this MCP server.");
+    }
+
+    this.resolveScope(request.scope);
+    return request;
+  }
+
+  private resolveScope(scope: string | undefined) {
+    const requestedScopes = scope ? scope.split(" ").filter((part) => part.length > 0) : this.config.scopes;
+    for (const requestedScope of requestedScopes) {
+      if (!this.config.scopes.includes(requestedScope)) {
+        throw new OAuthHttpError(400, "invalid_scope", `Unsupported scope: ${requestedScope}`);
+      }
+    }
+    return requestedScopes.join(" ");
+  }
+
+  private signToken(tokenUse: "access" | "id", scope: string, audience: string) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    return signJwt(
+      {
+        alg: "RS256",
+        typ: "JWT",
+        kid: this.keyId
+      },
+      {
+        iss: this.issuer,
+        sub: this.config.userSubject,
+        aud: audience,
+        exp: nowSeconds + accessTokenTtlSeconds,
+        iat: nowSeconds,
+        scope,
+        token_use: tokenUse,
+        resource: this.resource,
+        email: this.config.userEmail,
+        name: this.config.userName
+      },
+      this.privateKey
+    );
+  }
+
+  private parseAndVerifyToken(token: string) {
+    const tokenParts = token.split(".");
+    if (tokenParts.length !== 3) {
+      return undefined;
+    }
+
+    const [encodedHeader, encodedPayload, encodedSignature] = tokenParts;
+    if (!encodedHeader || !encodedPayload || !encodedSignature) {
+      return undefined;
+    }
+
+    const parsedHeader = jwtHeaderSchema.safeParse(parseBase64UrlJson(encodedHeader));
+    if (!parsedHeader.success || parsedHeader.data.kid !== this.keyId) {
+      return undefined;
+    }
+
+    const signature = base64UrlDecode(encodedSignature);
+    const signedPayload = Buffer.from(`${encodedHeader}.${encodedPayload}`);
+    if (!verify("RSA-SHA256", signedPayload, this.publicKey, signature)) {
+      return undefined;
+    }
+
+    return {
+      header: parsedHeader.data,
+      payload: parseBase64UrlJson(encodedPayload)
+    };
+  }
+}
+
+export class OAuthHttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly code: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+export async function handleOAuthRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  oauthServer: OAuthAuthorizationServer
+) {
+  if (!request.url) {
+    return false;
+  }
+
+  const url = new URL(request.url, "http://localhost");
+
+  if (request.method === "GET" && url.pathname === "/.well-known/oauth-protected-resource") {
+    writeJsonResponse(response, 200, oauthServer.getProtectedResourceMetadata());
+    return true;
+  }
+  if (request.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
+    writeJsonResponse(response, 200, oauthServer.getAuthorizationServerMetadata());
+    return true;
+  }
+  if (request.method === "GET" && url.pathname === "/.well-known/openid-configuration") {
+    writeJsonResponse(response, 200, oauthServer.getOpenIdConfiguration());
+    return true;
+  }
+  if (request.method === "GET" && url.pathname === "/oauth/jwks.json") {
+    writeJsonResponse(response, 200, oauthServer.getJwks());
+    return true;
+  }
+  if (request.method === "GET" && url.pathname === "/oauth/authorize") {
+    try {
+      writeHtmlResponse(response, 200, oauthServer.renderAuthorizationForm(url.searchParams));
+    } catch (error) {
+      writeOAuthError(response, error);
+    }
+    return true;
+  }
+  if (request.method === "POST" && url.pathname === "/oauth/authorize") {
+    try {
+      const redirectUrl = oauthServer.authorize(await readFormBody(request));
+      response.statusCode = 302;
+      response.setHeader("Location", redirectUrl.toString());
+      response.end();
+    } catch (error) {
+      writeOAuthError(response, error);
+    }
+    return true;
+  }
+  if (request.method === "POST" && url.pathname === "/oauth/token") {
+    try {
+      writeJsonResponse(response, 200, oauthServer.exchangeToken(await readFormBody(request)));
+    } catch (error) {
+      writeOAuthError(response, error);
+    }
+    return true;
+  }
+  if (request.method === "GET" && url.pathname === "/oauth/userinfo") {
+    try {
+      const token = readBearerToken(request);
+      if (!token) {
+        throw new OAuthHttpError(401, "invalid_token", "Missing bearer token.");
+      }
+      writeJsonResponse(response, 200, oauthServer.getUserInfo(token));
+    } catch (error) {
+      writeOAuthError(response, error);
+    }
+    return true;
+  }
+
+  if (url.pathname.startsWith("/oauth/")) {
+    writeJsonResponse(response, 404, {
+      error: "not_found",
+      error_description: "OAuth endpoint was not found."
+    });
+    return true;
+  }
+
+  return false;
+}
+
+export function readBearerToken(request: IncomingMessage) {
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string") {
+    return undefined;
+  }
+
+  const [scheme, token] = authorization.split(" ");
+  if (scheme !== "Bearer" || !token) {
+    return undefined;
+  }
+  return token;
+}
+
+function signJwt(header: Record<string, unknown>, payload: Record<string, unknown>, privateKey: KeyObject) {
+  const encodedHeader = base64UrlEncode(Buffer.from(JSON.stringify(header)));
+  const encodedPayload = base64UrlEncode(Buffer.from(JSON.stringify(payload)));
+  const signature = sign("RSA-SHA256", Buffer.from(`${encodedHeader}.${encodedPayload}`), privateKey);
+  return `${encodedHeader}.${encodedPayload}.${base64UrlEncode(signature)}`;
+}
+
+function loadConfiguredPrivateKey(config: OAuthConfig) {
+  if (config.signingPrivateKeyPath && config.signingPrivateKeyPem) {
+    throw new Error("Set only one OAuth signing private key source.");
+  }
+
+  if (config.signingPrivateKeyPath) {
+    return createPrivateKey(readFileSync(config.signingPrivateKeyPath, "utf8"));
+  }
+
+  if (config.signingPrivateKeyPem) {
+    return createPrivateKey(config.signingPrivateKeyPem.replace(/\\n/g, "\n"));
+  }
+
+  return undefined;
+}
+
+function createKeyId(publicKey: KeyObject) {
+  const publicJwk = exportRsaPublicJwk(publicKey);
+  return createHash("sha256")
+    .update(`${publicJwk.kty}.${publicJwk.n}.${publicJwk.e}`)
+    .digest("base64url");
+}
+
+function exportRsaPublicJwk(publicKey: KeyObject): RsaPublicJwk {
+  const publicJwk = publicKey.export({ format: "jwk" });
+  if (publicJwk.kty !== "RSA" || typeof publicJwk.n !== "string" || typeof publicJwk.e !== "string") {
+    throw new Error("OAuth signing key did not export as an RSA JWK.");
+  }
+
+  return {
+    kty: publicJwk.kty,
+    n: publicJwk.n,
+    e: publicJwk.e
+  };
+}
+
+function verifyPkce(codeVerifier: string, codeChallenge: string) {
+  const digest = createHash("sha256").update(codeVerifier).digest();
+  return base64UrlEncode(digest) === codeChallenge;
+}
+
+async function readFormBody(request: IncomingMessage) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    if (Buffer.isBuffer(chunk)) {
+      chunks.push(chunk);
+    } else {
+      chunks.push(Buffer.from(chunk));
+    }
+  }
+  return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+}
+
+function readParams(searchParams: URLSearchParams, names: string[]) {
+  const result: Record<string, string> = {};
+  for (const name of names) {
+    const value = searchParams.get(name);
+    if (value !== null && value.length > 0) {
+      result[name] = value;
+    }
+  }
+  return result;
+}
+
+function parseBase64UrlJson(value: string) {
+  const parsed: unknown = JSON.parse(base64UrlDecode(value).toString("utf8"));
+  return parsed;
+}
+
+function base64UrlEncode(value: Buffer) {
+  return value.toString("base64url");
+}
+
+function base64UrlDecode(value: string) {
+  return Buffer.from(value, "base64url");
+}
+
+function secureEquals(actual: string, expected: string) {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function requireConfiguredValue(value: string | undefined, name: string) {
+  if (!value) {
+    throw new Error(`${name} is required.`);
+  }
+  return value;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function writeOAuthError(response: ServerResponse, error: unknown) {
+  if (error instanceof OAuthHttpError) {
+    writeJsonResponse(response, error.statusCode, {
+      error: error.code,
+      error_description: error.message
+    });
+    return;
+  }
+  if (error instanceof z.ZodError) {
+    writeJsonResponse(response, 400, {
+      error: "invalid_request",
+      error_description: error.issues.map((issue) => issue.message).join("; ")
+    });
+    return;
+  }
+  throw error;
+}
+
+function writeJsonResponse(response: ServerResponse, statusCode: number, body: unknown) {
+  response.statusCode = statusCode;
+  response.setHeader("Content-Type", "application/json");
+  response.end(JSON.stringify(body));
+}
+
+function writeHtmlResponse(response: ServerResponse, statusCode: number, body: string) {
+  response.statusCode = statusCode;
+  response.setHeader("Content-Type", "text/html; charset=utf-8");
+  response.end(body);
+}

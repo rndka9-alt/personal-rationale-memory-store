@@ -16,6 +16,18 @@ services:
       MCP_PORT: ${MCP_PORT:-3443}
       MCP_PATH: ${MCP_PATH:-/mcp}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
+      MCP_OAUTH_ENABLED: ${MCP_OAUTH_ENABLED:-false}
+      MCP_OAUTH_CLIENT_ID: ${MCP_OAUTH_CLIENT_ID:-mtdl-memory-mcp}
+      MCP_OAUTH_REDIRECT_URI: ${MCP_OAUTH_REDIRECT_URI:-}
+      MCP_OAUTH_LOGIN_CODE: ${MCP_OAUTH_LOGIN_CODE:-}
+      MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH: ${MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH:-}
+      MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM: ${MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM:-}
+      MCP_OAUTH_USER_SUBJECT: ${MCP_OAUTH_USER_SUBJECT:-mtdl}
+      MCP_OAUTH_USER_EMAIL: ${MCP_OAUTH_USER_EMAIL:-}
+      MCP_OAUTH_USER_NAME: ${MCP_OAUTH_USER_NAME:-Rationale Memory Owner}
+      MCP_OAUTH_SCOPES: ${MCP_OAUTH_SCOPES:-openid email profile rationale:read rationale:write}
+      MCP_OAUTH_REQUIRED_SCOPES: ${MCP_OAUTH_REQUIRED_SCOPES:-rationale:read rationale:write}
     command: ["npm", "run", "start:mcp"]
     stdin_open: true
     tty: true

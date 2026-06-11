@@ -9,13 +9,24 @@ import type { AppConfig } from "../config.js";
 import type { McpServices } from "./server.js";
 import { configureMcpServer } from "./server.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
+import {
+  createOAuthAuthorizationServer,
+  handleOAuthRequest,
+  readBearerToken,
+  type OAuthAuthorizationServer
+} from "./oauth.js";
 
 export async function startHttpMcpServer(config: AppConfig, services: McpServices) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
+  const oauthServer = createOAuthAuthorizationServer(config.mcp.oauth);
 
   const requestHandler = async (request: IncomingMessage, response: ServerResponse) => {
     try {
-      if (isOauthDiscoveryPath(request)) {
+      if (oauthServer && await handleOAuthRequest(request, response, oauthServer)) {
+        return;
+      }
+
+      if (isOauthDiscoveryPath(request) || isOpenIdDiscoveryPath(request)) {
         writeJsonResponse(response, 404, {
           error: "oauth_not_configured",
           error_description: "This MCP server uses static headers or no auth, not OAuth discovery."
@@ -29,8 +40,8 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
       }
 
       if (isPath(request, "/status")) {
-        if (!isAuthorized(request, config.mcp.authToken)) {
-          response.setHeader("WWW-Authenticate", "Bearer");
+        if (!isAuthorized(request, config.mcp.authToken, oauthServer)) {
+          setUnauthorizedChallenge(response, oauthServer);
           writePlainResponse(response, 401, "Unauthorized");
           return;
         }
@@ -44,8 +55,8 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
         return;
       }
 
-      if (!isAuthorized(request, config.mcp.authToken)) {
-        response.setHeader("WWW-Authenticate", "Bearer");
+      if (!isAuthorized(request, config.mcp.authToken, oauthServer)) {
+        setUnauthorizedChallenge(response, oauthServer);
         writePlainResponse(response, 401, "Unauthorized");
         return;
       }
@@ -86,7 +97,8 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
     transport: config.mcp.transport,
     host: config.mcp.host,
     port: config.mcp.port,
-    path: config.mcp.path
+    path: config.mcp.path,
+    oauthEnabled: config.mcp.oauth.enabled
   });
 
   return server;
@@ -243,6 +255,15 @@ function isOauthDiscoveryPath(request: IncomingMessage) {
   return url.pathname.startsWith("/.well-known/oauth-");
 }
 
+function isOpenIdDiscoveryPath(request: IncomingMessage) {
+  if (!request.url) {
+    return false;
+  }
+
+  const url = new URL(request.url, "http://localhost");
+  return url.pathname === "/.well-known/openid-configuration";
+}
+
 function isExpectedPath(request: IncomingMessage, expectedPath: string) {
   return isPath(request, expectedPath);
 }
@@ -256,12 +277,34 @@ function isPath(request: IncomingMessage, expectedPath: string) {
   return url.pathname === expectedPath;
 }
 
-function isAuthorized(request: IncomingMessage, authToken: string | undefined) {
-  if (!authToken) {
+function isAuthorized(
+  request: IncomingMessage,
+  authToken: string | undefined,
+  oauthServer: OAuthAuthorizationServer | undefined
+) {
+  if (!authToken && !oauthServer) {
     return true;
   }
 
-  return request.headers.authorization === `Bearer ${authToken}`;
+  const bearerToken = readBearerToken(request);
+  if (!bearerToken) {
+    return false;
+  }
+
+  if (authToken && bearerToken === authToken) {
+    return true;
+  }
+
+  return Boolean(oauthServer?.verifyBearerToken(bearerToken));
+}
+
+function setUnauthorizedChallenge(response: ServerResponse, oauthServer: OAuthAuthorizationServer | undefined) {
+  if (oauthServer) {
+    response.setHeader("WWW-Authenticate", oauthServer.createAuthenticateHeader());
+    return;
+  }
+
+  response.setHeader("WWW-Authenticate", "Bearer");
 }
 
 function readHeader(request: IncomingMessage, name: string) {

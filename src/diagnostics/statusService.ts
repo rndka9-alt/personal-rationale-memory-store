@@ -37,7 +37,8 @@ export class StatusService {
         host: this.config.mcp.host,
         port: this.config.mcp.port,
         path: this.config.mcp.path,
-        authEnabled: Boolean(this.config.mcp.authToken)
+        authEnabled: Boolean(this.config.mcp.authToken) || this.config.mcp.oauth.enabled,
+        oauthEnabled: this.config.mcp.oauth.enabled
       },
       embedding: {
         provider: this.config.embedding.provider,

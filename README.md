@@ -95,6 +95,55 @@ When `MCP_AUTH_TOKEN` is set, MCP clients must send:
 Authorization: Bearer choose-a-local-token
 ```
 
+The same HTTP server can also expose a small OAuth/OIDC authorization surface for ChatGPT MCP connectors while keeping `MCP_AUTH_TOKEN` valid for existing clients:
+
+```env
+MCP_PUBLIC_URL=https://memory-mcp.mtdl.kr
+MCP_OAUTH_ENABLED=true
+MCP_OAUTH_CLIENT_ID=mtdl-memory-mcp
+MCP_OAUTH_REDIRECT_URI=https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV
+MCP_OAUTH_LOGIN_CODE=choose-a-private-login-code
+MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH=/app/data/oauth-private-key.pem
+MCP_OAUTH_USER_SUBJECT=mtdl
+MCP_OAUTH_USER_EMAIL=you@example.com
+MCP_OAUTH_USER_NAME=Rationale Memory Owner
+MCP_OAUTH_SCOPES=openid email profile rationale:read rationale:write
+MCP_OAUTH_REQUIRED_SCOPES=rationale:read rationale:write
+```
+
+Generate the signing key once and keep it mounted across restarts:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out data/oauth-private-key.pem
+chmod 600 data/oauth-private-key.pem
+```
+
+Use these values in the ChatGPT MCP OAuth form:
+
+```text
+MCP URL: https://memory-mcp.mtdl.kr/mcp
+OAuth client ID: mtdl-memory-mcp
+Client secret: leave blank
+Token endpoint auth method: none
+Scopes: openid email profile rationale:read rationale:write
+Authorization URL: https://memory-mcp.mtdl.kr/oauth/authorize
+Token URL: https://memory-mcp.mtdl.kr/oauth/token
+Registration URL: leave blank
+Authorization server base: https://memory-mcp.mtdl.kr
+Resource: https://memory-mcp.mtdl.kr
+OpenID discovery: https://memory-mcp.mtdl.kr/.well-known/openid-configuration
+```
+
+OAuth discovery is served from:
+
+```text
+/.well-known/oauth-protected-resource
+/.well-known/oauth-authorization-server
+/.well-known/openid-configuration
+/oauth/jwks.json
+/oauth/userinfo
+```
+
 Direct TLS from the Node app is still available for local experiments, but it is not the recommended deployment path when Cloudflare Tunnel is in front:
 
 ```env

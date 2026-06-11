@@ -4,4 +4,5 @@ dist/
 .env.*
 !.env.example
 .certs/
+data/*.pem
 data/memory/rationales/

@@ -1,0 +1,141 @@
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { loadConfig } from "../src/config.js";
+import { OAuthAuthorizationServer } from "../src/mcp/oauth.js";
+
+describe("OAuthAuthorizationServer", () => {
+  it("publishes MCP OAuth and OpenID metadata", () => {
+    const oauthServer = createOAuthServer();
+
+    expect(oauthServer.getProtectedResourceMetadata()).toEqual({
+      resource: "https://memory-mcp.mtdl.kr",
+      authorization_servers: ["https://memory-mcp.mtdl.kr"],
+      scopes_supported: ["openid", "email", "profile", "rationale:read", "rationale:write"],
+      resource_documentation: "https://memory-mcp.mtdl.kr/"
+    });
+
+    expect(oauthServer.getOpenIdConfiguration()).toMatchObject({
+      issuer: "https://memory-mcp.mtdl.kr",
+      authorization_endpoint: "https://memory-mcp.mtdl.kr/oauth/authorize",
+      token_endpoint: "https://memory-mcp.mtdl.kr/oauth/token",
+      token_endpoint_auth_methods_supported: ["none"],
+      code_challenge_methods_supported: ["S256"],
+      userinfo_endpoint: "https://memory-mcp.mtdl.kr/oauth/userinfo"
+    });
+  });
+
+  it("exchanges an authorization code for a verifiable bearer token", () => {
+    const oauthServer = createOAuthServer();
+    const codeVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+    const authorizationParams = new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      scope: "openid email profile rationale:read rationale:write",
+      state: "state-1",
+      code_challenge: createPkceChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      resource: "https://memory-mcp.mtdl.kr",
+      login_code: "test-login-code"
+    });
+
+    const redirectUrl = oauthServer.authorize(authorizationParams);
+    const code = redirectUrl.searchParams.get("code");
+    if (!code) {
+      throw new Error("Authorization redirect did not include a code.");
+    }
+
+    const tokenResponse = oauthServer.exchangeToken(new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      client_id: "mtdl-memory-mcp",
+      code_verifier: codeVerifier,
+      resource: "https://memory-mcp.mtdl.kr"
+    }));
+
+    expect(tokenResponse.token_type).toBe("Bearer");
+    expect(tokenResponse.scope).toBe("openid email profile rationale:read rationale:write");
+    expect(typeof tokenResponse.id_token).toBe("string");
+
+    const accessToken = tokenResponse.access_token;
+    if (typeof accessToken !== "string") {
+      throw new Error("Token response did not include a string access token.");
+    }
+    expect(oauthServer.verifyBearerToken(accessToken)).toMatchObject({
+      subject: "mtdl",
+      email: "owner@example.com",
+      name: "Rationale Memory Owner",
+      scope: "openid email profile rationale:read rationale:write"
+    });
+  });
+
+  it("keeps bearer tokens verifiable across server instances when a signing key is configured", () => {
+    const keyPair = generateKeyPairSync("rsa", {
+      modulusLength: 2048
+    });
+    const signingPrivateKeyPem = keyPair.privateKey.export({
+      type: "pkcs8",
+      format: "pem"
+    }).toString();
+
+    const firstOAuthServer = createOAuthServer({
+      MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM: signingPrivateKeyPem
+    });
+    const secondOAuthServer = createOAuthServer({
+      MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM: signingPrivateKeyPem
+    });
+    const codeVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+
+    const redirectUrl = firstOAuthServer.authorize(new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      scope: "openid email profile rationale:read rationale:write",
+      code_challenge: createPkceChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      resource: "https://memory-mcp.mtdl.kr",
+      login_code: "test-login-code"
+    }));
+    const code = redirectUrl.searchParams.get("code");
+    if (!code) {
+      throw new Error("Authorization redirect did not include a code.");
+    }
+
+    const tokenResponse = firstOAuthServer.exchangeToken(new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      client_id: "mtdl-memory-mcp",
+      code_verifier: codeVerifier,
+      resource: "https://memory-mcp.mtdl.kr"
+    }));
+    const accessToken = tokenResponse.access_token;
+    if (typeof accessToken !== "string") {
+      throw new Error("Token response did not include a string access token.");
+    }
+
+    expect(secondOAuthServer.verifyBearerToken(accessToken)).toMatchObject({
+      subject: "mtdl",
+      email: "owner@example.com"
+    });
+  });
+});
+
+function createOAuthServer(overrides: NodeJS.ProcessEnv = {}) {
+  const config = loadConfig({
+    DATABASE_URL: "postgres://rationale:rationale@localhost:54329/rationale_memory",
+    MCP_OAUTH_ENABLED: "true",
+    MCP_PUBLIC_URL: "https://memory-mcp.mtdl.kr",
+    MCP_OAUTH_CLIENT_ID: "mtdl-memory-mcp",
+    MCP_OAUTH_REDIRECT_URI: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+    MCP_OAUTH_LOGIN_CODE: "test-login-code",
+    MCP_OAUTH_USER_EMAIL: "owner@example.com",
+    ...overrides
+  });
+  return new OAuthAuthorizationServer(config.mcp.oauth);
+}
+
+function createPkceChallenge(codeVerifier: string) {
+  return createHash("sha256").update(codeVerifier).digest().toString("base64url");
+}
