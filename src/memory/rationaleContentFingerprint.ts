@@ -3,6 +3,10 @@ import { recordCandidateInputSchema, type RecordCandidateInput, type RationaleEn
 
 export function fingerprintRationaleContent(input: RecordCandidateInput | RationaleEntry) {
   const content = "frontmatter" in input ? rationaleEntryToContentInput(input) : recordCandidateInputSchema.parse(input);
+  // Deduplication is intentionally based on reusable body content only. The same
+  // memory should converge even when captured from a different project, source,
+  // metadata context, or memory type; those fields can be reviewed or updated on
+  // the existing entry instead of creating another copy.
   const canonicalContent = {
     title: normalizeContentText(content.title),
     situation: normalizeOptionalContentText(content.situation),
