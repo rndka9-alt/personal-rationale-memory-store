@@ -13,8 +13,8 @@ const authorizationRequestSchema = z.object({
   redirect_uri: z.string().url(),
   scope: z.string().optional(),
   state: z.string().optional(),
-  code_challenge: z.string().min(43),
-  code_challenge_method: z.literal("S256"),
+  code_challenge: z.string().min(43).optional(),
+  code_challenge_method: z.literal("S256").optional(),
   resource: z.string().url().optional()
 });
 
@@ -23,7 +23,7 @@ const tokenRequestSchema = z.object({
   code: z.string().min(1),
   redirect_uri: z.string().url(),
   client_id: z.string(),
-  code_verifier: z.string().min(43),
+  code_verifier: z.string().min(43).optional(),
   resource: z.string().url().optional()
 });
 
@@ -159,7 +159,9 @@ export class OAuthAuthorizationServer {
       ["code_challenge", request.code_challenge],
       ["code_challenge_method", request.code_challenge_method],
       ["resource", request.resource ?? ""]
-    ].map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`);
+    ]
+      .filter((input): input is [string, string] => typeof input[1] === "string")
+      .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`);
 
     return `<!doctype html>
 <html lang="en">
@@ -240,7 +242,10 @@ export class OAuthAuthorizationServer {
     if (request.resource && request.resource !== this.resource) {
       throw new OAuthHttpError(400, "invalid_target", "Resource did not match this MCP server.");
     }
-    if (!verifyPkce(request.code_verifier, codeRecord.request.code_challenge)) {
+    if (codeRecord.request.code_challenge && !request.code_verifier) {
+      throw new OAuthHttpError(400, "invalid_grant", "PKCE code verifier is required.");
+    }
+    if (codeRecord.request.code_challenge && request.code_verifier && !verifyPkce(request.code_verifier, codeRecord.request.code_challenge)) {
       throw new OAuthHttpError(400, "invalid_grant", "PKCE verification failed.");
     }
 
@@ -332,6 +337,9 @@ export class OAuthAuthorizationServer {
     }
     if (request.resource && request.resource !== this.resource) {
       throw new OAuthHttpError(400, "invalid_target", "Resource did not match this MCP server.");
+    }
+    if (Boolean(request.code_challenge) !== Boolean(request.code_challenge_method)) {
+      throw new OAuthHttpError(400, "invalid_request", "PKCE code challenge and method must be provided together.");
     }
 
     this.resolveScope(request.scope);

@@ -70,6 +70,37 @@ describe("OAuthAuthorizationServer", () => {
     });
   });
 
+  it("accepts the ChatGPT authorization request shape without PKCE parameters", () => {
+    const oauthServer = createOAuthServer();
+    const authorizationParams = new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      scope: "openid email profile rationale:read rationale:write",
+      resource: "https://memory-mcp.mtdl.kr",
+      state: "oauth_s_6a2a1f5ff9b88191863311231bb163f1",
+      ui_locales: "ko-KR",
+      login_code: "test-login-code"
+    });
+
+    const redirectUrl = oauthServer.authorize(authorizationParams);
+    const code = redirectUrl.searchParams.get("code");
+    if (!code) {
+      throw new Error("Authorization redirect did not include a code.");
+    }
+
+    const tokenResponse = oauthServer.exchangeToken(new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      client_id: "mtdl-memory-mcp",
+      resource: "https://memory-mcp.mtdl.kr"
+    }));
+
+    expect(tokenResponse.token_type).toBe("Bearer");
+    expect(tokenResponse.scope).toBe("openid email profile rationale:read rationale:write");
+  });
+
   it("keeps bearer tokens verifiable across server instances when a signing key is configured", () => {
     const keyPair = generateKeyPairSync("rsa", {
       modulusLength: 2048
