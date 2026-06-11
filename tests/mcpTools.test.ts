@@ -7,6 +7,39 @@ const unusedServiceMethod = async () => {
 };
 
 describe("MCP write tool results", () => {
+  it("adds ChatGPT invocation status metadata to every tool", () => {
+    const services = createToolServices();
+    for (const toolDefinition of toolDefinitions(services)) {
+      const invoking = toolDefinition.metadata["openai/toolInvocation/invoking"];
+      const invoked = toolDefinition.metadata["openai/toolInvocation/invoked"];
+
+      expect(typeof invoking).toBe("string");
+      expect(typeof invoked).toBe("string");
+      expect(String(invoking).length).toBeLessThanOrEqual(64);
+      expect(String(invoked).length).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it("adds planning annotations and output schemas to every tool", () => {
+    const services = createToolServices();
+    const readOnlyTools = new Set([
+      "get_status",
+      "search_rationales",
+      "get_rationale",
+      "compose_context",
+      "continue_context"
+    ]);
+
+    for (const toolDefinition of toolDefinitions(services)) {
+      expect(toolDefinition.annotations).toEqual({
+        readOnlyHint: readOnlyTools.has(toolDefinition.name),
+        destructiveHint: false,
+        openWorldHint: false
+      });
+      expect(toolDefinition.outputSchema).not.toEqual({});
+    }
+  });
+
   it("returns compact success metadata for auto-captured rationales", async () => {
     const services = createToolServices();
     const result = await getTool(services, "auto_capture_rationale").handler({
@@ -223,6 +256,7 @@ function getTool(services: ToolServices, name: string): ToolDefinition {
 }
 
 function parseToolJson(result: Awaited<ReturnType<ToolDefinition["handler"]>>) {
+  expect(result.structuredContent).toBeDefined();
   const [firstContent] = result.content;
   if (!firstContent) {
     throw new Error("Tool result did not include content.");

@@ -31,11 +31,19 @@ export type ToolDefinition = {
   name: string;
   description: string;
   schema: z.ZodRawShape;
+  outputSchema: z.ZodRawShape;
+  annotations: {
+    readOnlyHint: boolean;
+    destructiveHint: boolean;
+    openWorldHint: boolean;
+  };
+  metadata: Record<string, unknown>;
   handler: (input: Record<string, unknown>) => Promise<ToolResult>;
 };
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
 };
 
 const sessionCandidateInputSchema = z.object({
@@ -60,18 +68,27 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       name: "get_status",
       description: "Return service, storage, database, and indexing status.",
       schema: {},
+      outputSchema: jsonOutputSchema,
+      annotations: readOnlyToolAnnotations,
+      metadata: toolInvocationMetadata("Checking memory status", "Status ready"),
       handler: async () => jsonToolResult(await services.statusService.status())
     },
     {
       name: "search_rationales",
       description: "Search rationale memories with lexical, vector, and metadata signals. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
       schema: searchInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: readOnlyToolAnnotations,
+      metadata: toolInvocationMetadata("Searching memories", "Search complete"),
       handler: async (input: unknown) => jsonToolResult(await services.rationaleService.searchWithDiagnostics(input))
     },
     {
       name: "get_rationale",
       description: "Read a rationale by id from canonical Markdown.",
       schema: { id: z.string().min(1) },
+      outputSchema: jsonOutputSchema,
+      annotations: readOnlyToolAnnotations,
+      metadata: toolInvocationMetadata("Reading rationale", "Rationale ready"),
       handler: async (input) => jsonToolResult(await services.rationaleService.getRationale(z.string().parse(input.id)))
     },
     {
@@ -87,9 +104,10 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         includeFullTopK: z.number().int().min(0).optional(),
         minScore: z.number().min(0).optional()
       },
-      handler: async (input) => ({
-        content: [{ type: "text", text: await services.contextComposer.compose(composeInputSchema.parse(input)) }]
-      })
+      outputSchema: textOutputSchema,
+      annotations: readOnlyToolAnnotations,
+      metadata: toolInvocationMetadata("Composing context", "Context ready"),
+      handler: async (input) => textToolResult(await services.contextComposer.compose(composeInputSchema.parse(input)))
     },
     {
       name: "continue_context",
@@ -99,15 +117,19 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         tokenBudget: z.number().int().positive().optional(),
         includeFullTopK: z.number().int().min(0).optional()
       },
-      handler: async (input) => ({
-        content: [{ type: "text", text: await services.contextComposer.continueContext(continueInputSchema.parse(input)) }]
-      })
+      outputSchema: textOutputSchema,
+      annotations: readOnlyToolAnnotations,
+      metadata: toolInvocationMetadata("Continuing context", "Context continued"),
+      handler: async (input) => textToolResult(await services.contextComposer.continueContext(continueInputSchema.parse(input)))
     },
     {
       name: "auto_capture_rationale",
       description:
         "Record relevant content into memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Memories can be referenced from other tasks and later conversations, so actively capture anything that seems useful later — decisions, reasoning, preferences, lessons learned. Set type to preference, convention, constraint, or known_failure for non-decision knowledge, or note for general observations and ideas (defaults to rationale). Notes stay searchable but are kept out of composed task context. Weak or duplicate captures are filtered out downstream; when in doubt, capture.",
       schema: autoCaptureRationaleInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("Capturing rationale", "Rationale captured"),
       handler: async (input: unknown) =>
         jsonToolResult(compactRationaleWriteResult(
           await services.rationaleService.autoCaptureRationale(autoCaptureRationaleInputSchema.parse(input))
@@ -117,6 +139,9 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       name: "record_refinement_opinion",
       description: "Attach a bounded unresolved refinement opinion or patch request to a rationale memory.",
       schema: recordRefinementOpinionInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("Recording opinion", "Opinion recorded"),
       handler: async (input: unknown) =>
         jsonToolResult(compactRefinementOpinionWriteResult(
           await services.rationaleService.recordRefinementOpinion(recordRefinementOpinionInputSchema.parse(input))
@@ -126,6 +151,9 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       name: "record_usage_feedback",
       description: "Record explicit feedback after a rationale memory was applied, helpful, unhelpful, or dismissed.",
       schema: recordUsageFeedbackInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("Recording feedback", "Feedback recorded"),
       handler: async (input: unknown) =>
         jsonToolResult(compactUsageFeedbackWriteResult(
           await services.rationaleService.recordUsageFeedback(recordUsageFeedbackInputSchema.parse(input))
@@ -138,6 +166,9 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         scope: z.enum(["all", "changed", "untagged"]).optional(),
         ids: z.array(z.string()).optional()
       },
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("Reindexing memory", "Reindex complete"),
       handler: async (input) => {
         const parsedInput = reindexInputSchema.parse(input);
         return jsonToolResult({
@@ -153,6 +184,9 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         sessionRef: z.string().min(1),
         candidates: z.array(sessionCandidateInputSchema)
       },
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("Ingesting candidates", "Candidates ingested"),
       handler: async (input) => {
         const parsedInput = ingestSessionInputSchema.parse(input);
         const results = [];
@@ -174,6 +208,26 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
 
   return definitions.map(withToolLogging);
 }
+
+const jsonOutputSchema = {
+  result: z.unknown()
+};
+
+const textOutputSchema = {
+  text: z.string()
+};
+
+const readOnlyToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  openWorldHint: false
+};
+
+const writeToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  openWorldHint: false
+};
 
 const composeInputSchema = z.object({
   task: z.string().min(1),
@@ -204,7 +258,22 @@ const ingestSessionInputSchema = z.object({
 
 function jsonToolResult(value: unknown): ToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }]
+    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    structuredContent: { result: value }
+  };
+}
+
+function textToolResult(text: string): ToolResult {
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: { text }
+  };
+}
+
+function toolInvocationMetadata(invoking: string, invoked: string) {
+  return {
+    "openai/toolInvocation/invoking": invoking,
+    "openai/toolInvocation/invoked": invoked
   };
 }
 

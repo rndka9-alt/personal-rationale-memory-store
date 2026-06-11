@@ -12,7 +12,17 @@ export type McpServices = ToolServices & ResourceServices & {
 
 export function configureMcpServer(server: McpServer, services: McpServices) {
   for (const definition of toolDefinitions(services)) {
-    server.tool(definition.name, definition.description, definition.schema, definition.handler);
+    server.registerTool(
+      definition.name,
+      {
+        description: definition.description,
+        inputSchema: definition.schema,
+        outputSchema: definition.outputSchema,
+        annotations: definition.annotations,
+        _meta: definition.metadata
+      },
+      definition.handler
+    );
   }
 
   registerResources(server, services);
