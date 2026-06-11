@@ -70,7 +70,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: {},
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
-      metadata: toolInvocationMetadata("Checking memory status", "Status ready"),
+      metadata: toolInvocationMetadata("메모장 찾아보는 중..", "찾았어요!"),
       handler: async () => jsonToolResult(await services.statusService.status())
     },
     {
@@ -79,7 +79,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: searchInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
-      metadata: toolInvocationMetadata("Searching memories", "Search complete"),
+      metadata: toolInvocationMetadata("괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"),
       handler: async (input: unknown) => jsonToolResult(await services.rationaleService.searchWithDiagnostics(input))
     },
     {
@@ -88,7 +88,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: { id: z.string().min(1) },
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
-      metadata: toolInvocationMetadata("Reading rationale", "Rationale ready"),
+      metadata: toolInvocationMetadata("특정 메모 확인하는 중..", "메모 확인 완료!"),
       handler: async (input) => jsonToolResult(await services.rationaleService.getRationale(z.string().parse(input.id)))
     },
     {
@@ -106,7 +106,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       },
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
-      metadata: toolInvocationMetadata("Composing context", "Context ready"),
+      metadata: toolInvocationMetadata("메모 훑어보는 중..", "메모 훑어보기 완료!"),
       handler: async (input) => textToolResult(await services.contextComposer.compose(composeInputSchema.parse(input)))
     },
     {
@@ -119,7 +119,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       },
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
-      metadata: toolInvocationMetadata("Continuing context", "Context continued"),
+      metadata: toolInvocationMetadata("계속해서 훑어보는 중..", "추가 확인 완료!"),
       handler: async (input) => textToolResult(await services.contextComposer.continueContext(continueInputSchema.parse(input)))
     },
     {
@@ -129,7 +129,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: autoCaptureRationaleInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("Capturing rationale", "Rationale captured"),
+      metadata: toolInvocationMetadata("메모 작성 중..", "메모 완료!"),
       handler: async (input: unknown) =>
         jsonToolResult(compactRationaleWriteResult(
           await services.rationaleService.autoCaptureRationale(autoCaptureRationaleInputSchema.parse(input))
@@ -141,7 +141,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: recordRefinementOpinionInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("Recording opinion", "Opinion recorded"),
+      metadata: toolInvocationMetadata("메모에 의견 붙이는 중..", "의견 붙이기 완료!"),
       handler: async (input: unknown) =>
         jsonToolResult(compactRefinementOpinionWriteResult(
           await services.rationaleService.recordRefinementOpinion(recordRefinementOpinionInputSchema.parse(input))
@@ -153,7 +153,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       schema: recordUsageFeedbackInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("Recording feedback", "Feedback recorded"),
+      metadata: toolInvocationMetadata("메모를 평가하는 중..", "평가 완료!"),
       handler: async (input: unknown) =>
         jsonToolResult(compactUsageFeedbackWriteResult(
           await services.rationaleService.recordUsageFeedback(recordUsageFeedbackInputSchema.parse(input))
@@ -168,7 +168,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       },
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("Reindexing memory", "Reindex complete"),
+      metadata: toolInvocationMetadata("메모 정리 중..", "정리 완료!"),
       handler: async (input) => {
         const parsedInput = reindexInputSchema.parse(input);
         return jsonToolResult({
@@ -186,7 +186,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       },
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("Ingesting candidates", "Candidates ingested"),
+      metadata: toolInvocationMetadata("메모 후보 모으는 중..", "후보 정리 완료!"),
       handler: async (input) => {
         const parsedInput = ingestSessionInputSchema.parse(input);
         const results = [];

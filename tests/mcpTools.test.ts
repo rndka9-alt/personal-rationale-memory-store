@@ -7,12 +7,28 @@ const unusedServiceMethod = async () => {
 };
 
 describe("MCP write tool results", () => {
-  it("adds ChatGPT invocation status metadata to every tool", () => {
+  it("adds customized ChatGPT invocation status metadata to every tool", () => {
     const services = createToolServices();
+    const expectedStatuses = new Map([
+      ["auto_capture_rationale", ["메모 작성 중..", "메모 완료!"]],
+      ["compose_context", ["메모 훑어보는 중..", "메모 훑어보기 완료!"]],
+      ["continue_context", ["계속해서 훑어보는 중..", "추가 확인 완료!"]],
+      ["get_rationale", ["특정 메모 확인하는 중..", "메모 확인 완료!"]],
+      ["get_status", ["메모장 찾아보는 중..", "찾았어요!"]],
+      ["ingest_session_candidates", ["메모 후보 모으는 중..", "후보 정리 완료!"]],
+      ["record_refinement_opinion", ["메모에 의견 붙이는 중..", "의견 붙이기 완료!"]],
+      ["record_usage_feedback", ["메모를 평가하는 중..", "평가 완료!"]],
+      ["reindex_memory", ["메모 정리 중..", "정리 완료!"]],
+      ["search_rationales", ["괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"]]
+    ]);
+
     for (const toolDefinition of toolDefinitions(services)) {
       const invoking = toolDefinition.metadata["openai/toolInvocation/invoking"];
       const invoked = toolDefinition.metadata["openai/toolInvocation/invoked"];
+      const expectedStatus = expectedStatuses.get(toolDefinition.name);
 
+      expect(expectedStatus).toBeDefined();
+      expect([invoking, invoked]).toEqual(expectedStatus);
       expect(typeof invoking).toBe("string");
       expect(typeof invoked).toBe("string");
       expect(String(invoking).length).toBeLessThanOrEqual(64);
