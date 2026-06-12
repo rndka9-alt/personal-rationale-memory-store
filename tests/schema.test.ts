@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   autoCaptureRationaleInputSchema,
+  composeNotesContextInputSchema,
   memoryUsageEventTypeSchema,
+  rateNoteInputSchema,
   recordRefinementOpinionInputSchema,
+  recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
   rationaleEntrySchema
 } from "../src/memory/schema.js";
@@ -128,5 +131,23 @@ describe("recordUsageFeedbackInputSchema", () => {
       entryId: "R2026-05-19-001",
       eventType: "composed"
     })).toThrow();
+  });
+});
+
+describe("note input schemas", () => {
+  it("accepts content-only notes and rejects blank or overlong content", () => {
+    const input = recordNoteInputSchema.parse({
+      content: "쭈인님은 노트 원문을 요약 없이 보관하길 원한다."
+    });
+
+    expect(input.content).toContain("요약 없이");
+    expect(() => recordNoteInputSchema.parse({ content: "   " })).toThrow();
+    expect(() => recordNoteInputSchema.parse({ content: "x".repeat(1001) })).toThrow();
+  });
+
+  it("accepts bounded note compose budgets and rating values", () => {
+    expect(composeNotesContextInputSchema.parse({ maxLength: 5000 }).maxLength).toBe(5000);
+    expect(rateNoteInputSchema.parse({ noteId: "N1", rating: "up" }).rating).toBe("up");
+    expect(() => rateNoteInputSchema.parse({ noteId: "N1", rating: "sideways" })).toThrow();
   });
 });

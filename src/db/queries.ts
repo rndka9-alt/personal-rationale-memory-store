@@ -12,6 +12,8 @@ import {
   type MemoryRefinementOpinionRecord,
   type MemorySearchFilters,
   type MemoryUsageEventType,
+  type NoteRating,
+  type NoteRecord,
   type ProjectContext
 } from "../memory/schema.js";
 
@@ -51,6 +53,11 @@ export type MemoryRefinementOpinionInsert = {
   sourceKind: string;
   sourceRef?: string;
   metadata: Record<string, unknown>;
+};
+
+export type NoteInsert = {
+  id: string;
+  content: string;
 };
 
 export type RationaleContentFingerprintClaim =
@@ -273,6 +280,93 @@ export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord)
   logInfo("DB upsert memory entry completed.", {
     entryId: entry.id
   });
+}
+
+export async function insertNote(pool: pg.Pool, note: NoteInsert) {
+  logInfo("DB insert note started.", {
+    noteId: note.id,
+    contentLength: note.content.length
+  });
+  const result = await pool.query(
+    `INSERT INTO notes (id, content)
+    VALUES ($1, $2)
+    RETURNING *`,
+    [note.id, note.content]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Note insert returned no row.");
+  }
+  logInfo("DB insert note completed.", {
+    noteId: note.id
+  });
+  return mapNoteRow(row);
+}
+
+export async function incrementNoteRating(pool: pg.Pool, noteId: string, rating: NoteRating) {
+  logInfo("DB increment note rating started.", {
+    noteId,
+    rating
+  });
+  const result = rating === "up"
+    ? await pool.query(
+      `UPDATE notes
+        SET upvotes = upvotes + 1,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [noteId]
+    )
+    : await pool.query(
+      `UPDATE notes
+        SET downvotes = downvotes + 1,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [noteId]
+    );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Note not found: ${noteId}`);
+  }
+  logInfo("DB increment note rating completed.", {
+    noteId,
+    rating
+  });
+  return mapNoteRow(row);
+}
+
+export async function archiveNoteRecord(pool: pg.Pool, noteId: string) {
+  logInfo("DB archive note started.", {
+    noteId
+  });
+  const result = await pool.query(
+    `UPDATE notes
+      SET archived = TRUE,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *`,
+    [noteId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Note not found: ${noteId}`);
+  }
+  logInfo("DB archive note completed.", {
+    noteId
+  });
+  return mapNoteRow(row);
+}
+
+export async function listActiveNotes(pool: pg.Pool) {
+  logInfo("DB list active notes started.");
+  const result = await pool.query(
+    "SELECT * FROM notes WHERE archived = FALSE ORDER BY created_at DESC"
+  );
+  logInfo("DB list active notes completed.", {
+    resultCount: result.rows.length
+  });
+  return result.rows.map(mapNoteRow);
 }
 
 export async function recordMemoryRefinementOpinion(
@@ -811,7 +905,8 @@ export async function getDatabaseStatus(pool: pg.Pool) {
       (SELECT COUNT(*)::int FROM ontology_terms) AS ontology_term_count,
       (SELECT COUNT(*)::int FROM ontology_proposals) AS ontology_proposal_count,
       (SELECT COUNT(*)::int FROM memory_usage_events) AS memory_usage_event_count,
-      (SELECT COUNT(*)::int FROM memory_refinement_opinions) AS memory_refinement_opinion_count`
+      (SELECT COUNT(*)::int FROM memory_refinement_opinions) AS memory_refinement_opinion_count,
+      (SELECT COUNT(*)::int FROM notes) AS note_count`
   );
   const row = result.rows[0];
   if (!row) {
@@ -824,10 +919,23 @@ export async function getDatabaseStatus(pool: pg.Pool) {
     ontologyTermCount: Number(row.ontology_term_count),
     ontologyProposalCount: Number(row.ontology_proposal_count),
     memoryUsageEventCount: Number(row.memory_usage_event_count),
-    memoryRefinementOpinionCount: Number(row.memory_refinement_opinion_count)
+    memoryRefinementOpinionCount: Number(row.memory_refinement_opinion_count),
+    noteCount: Number(row.note_count)
   };
   logInfo("DB status query completed.", status);
   return status;
+}
+
+function mapNoteRow(row: pg.QueryResultRow): NoteRecord {
+  return {
+    id: String(row.id),
+    content: String(row.content),
+    upvotes: Number(row.upvotes),
+    downvotes: Number(row.downvotes),
+    archived: Boolean(row.archived),
+    createdAt: readTimestamp(row.created_at, "created_at"),
+    updatedAt: readTimestamp(row.updated_at, "updated_at")
+  };
 }
 
 function mapMemoryRefinementOpinionRow(row: pg.QueryResultRow): MemoryRefinementOpinionRecord {

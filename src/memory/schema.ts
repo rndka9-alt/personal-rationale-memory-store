@@ -137,6 +137,30 @@ export const recordUsageFeedbackInputSchema = z.object({
   metadata: z.record(z.unknown()).optional()
 });
 
+export const noteContentSchema = z.string()
+  .min(1)
+  .max(1000)
+  .refine((value) => value.trim().length > 0, "Note content cannot be blank.");
+
+export const recordNoteInputSchema = z.object({
+  content: noteContentSchema
+});
+
+export const noteRatingSchema = z.enum(["up", "down"]);
+
+export const rateNoteInputSchema = z.object({
+  noteId: z.string().min(1),
+  rating: noteRatingSchema
+});
+
+export const archiveNoteInputSchema = z.object({
+  noteId: z.string().min(1)
+});
+
+export const composeNotesContextInputSchema = z.object({
+  maxLength: z.number().int().positive().max(20000).optional()
+});
+
 // Ranking-only signal: boosts matching-project entries without filtering or
 // penalizing other projects, so cross-project rationale stays discoverable.
 export const searchProjectFilterSchema = z.object({
@@ -174,6 +198,21 @@ export type RefinementOpinionType = z.infer<typeof refinementOpinionTypeSchema>;
 export type RefinementOpinionStatus = z.infer<typeof refinementOpinionStatusSchema>;
 export type RecordRefinementOpinionInput = z.infer<typeof recordRefinementOpinionInputSchema>;
 export type RecordUsageFeedbackInput = z.infer<typeof recordUsageFeedbackInputSchema>;
+export type RecordNoteInput = z.infer<typeof recordNoteInputSchema>;
+export type NoteRating = z.infer<typeof noteRatingSchema>;
+export type RateNoteInput = z.infer<typeof rateNoteInputSchema>;
+export type ArchiveNoteInput = z.infer<typeof archiveNoteInputSchema>;
+export type ComposeNotesContextInput = z.infer<typeof composeNotesContextInputSchema>;
+
+export type NoteRecord = {
+  id: string;
+  content: string;
+  upvotes: number;
+  downvotes: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type MemoryRefinementOpinionRecord = {
   id: string;

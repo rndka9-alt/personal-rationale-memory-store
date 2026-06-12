@@ -1,10 +1,15 @@
 import { z } from "zod";
 import type { ContextComposer } from "../memory/contextComposer.js";
+import type { NoteService } from "../memory/noteService.js";
 import type { RationaleService, RationaleWriteResult } from "../memory/rationaleService.js";
 import {
+  archiveNoteInputSchema,
   autoCaptureRationaleInputSchema,
+  composeNotesContextInputSchema,
   recordCandidateInputSchema,
+  rateNoteInputSchema,
   recordRefinementOpinionInputSchema,
+  recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
   searchInputSchema,
   searchProjectFilterSchema
@@ -24,6 +29,7 @@ export type ToolServices = {
     | "recordCandidate"
   >;
   contextComposer: Pick<ContextComposer, "compose" | "continueContext">;
+  noteService: Pick<NoteService, "recordNote" | "rateNote" | "archiveNote" | "composeNotesContext">;
   statusService: Pick<StatusService, "status">;
 };
 
@@ -121,6 +127,46 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("계속해서 훑어보는 중..", "추가 확인 완료!"),
       handler: async (input) => textToolResult(await services.contextComposer.continueContext(continueInputSchema.parse(input)))
+    },
+    {
+      name: "record_note",
+      description: "Record a plain note. The caller provides only content; server-managed metadata tracks id, timestamps, ratings, and archive state.",
+      schema: recordNoteInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("쪽지 적는 중..", "쪽지 적엇어요!"),
+      handler: async (input: unknown) =>
+        jsonToolResult(compactNoteResult(await services.noteService.recordNote(recordNoteInputSchema.parse(input))))
+    },
+    {
+      name: "rate_note",
+      description: "Add one upvote or downvote to a note. Ratings influence note composition without excluding downvoted notes outright.",
+      schema: rateNoteInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("쪽지 평가 중..", "쪽지 평가 완료!"),
+      handler: async (input: unknown) =>
+        jsonToolResult(compactNoteResult(await services.noteService.rateNote(rateNoteInputSchema.parse(input))))
+    },
+    {
+      name: "archive_note",
+      description: "Archive a note so it no longer appears in composed note context.",
+      schema: archiveNoteInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("쪽지 치우는 중..", "쪽지 치웟어요!"),
+      handler: async (input: unknown) =>
+        jsonToolResult(compactNoteResult(await services.noteService.archiveNote(archiveNoteInputSchema.parse(input))))
+    },
+    {
+      name: "compose_notes_context",
+      description: "Compose plain note context from original note text only. Notes are selected by weighted random first, then score ordering, within a character budget.",
+      schema: composeNotesContextInputSchema.shape,
+      outputSchema: textOutputSchema,
+      annotations: readOnlyToolAnnotations,
+      metadata: toolInvocationMetadata("쪽지 꺼내는 중..", "쪽지 꺼냇어요!"),
+      handler: async (input: unknown) =>
+        textToolResult(await services.noteService.composeNotesContext(composeNotesContextInputSchema.parse(input)))
     },
     {
       name: "auto_capture_rationale",
@@ -299,6 +345,18 @@ function compactRationaleWriteResult(result: RationaleWriteResult) {
   }
 
   return response;
+}
+
+function compactNoteResult(result: Awaited<ReturnType<NoteService["recordNote"]>>) {
+  return {
+    ok: true,
+    id: result.id,
+    upvotes: result.upvotes,
+    downvotes: result.downvotes,
+    archived: result.archived,
+    createdAt: result.createdAt,
+    updatedAt: result.updatedAt
+  };
 }
 
 function compactBulkRationaleWriteResult(results: RationaleWriteResult[]) {

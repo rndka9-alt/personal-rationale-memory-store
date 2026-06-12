@@ -249,6 +249,10 @@ Tools:
 - `get_rationale`
 - `compose_context`
 - `continue_context`
+- `record_note`
+- `rate_note`
+- `archive_note`
+- `compose_notes_context`
 - `auto_capture_rationale`
 - `record_refinement_opinion`
 - `record_usage_feedback`
@@ -328,6 +332,8 @@ Only `title` and `rationale` are required for capture. Each new candidate record
 Capture inputs accept an optional `type`: `rationale` (default), `known_failure`, `preference`, `convention`, `constraint`, or `note`. `principle` is reserved for promotion from accepted rationale and cannot be set at capture time. Non-decision types are not flagged for missing decision-shaped sections (constraints, decision, rejected alternatives, tradeoff) during candidate review, so preferences and conventions stay first-class memories without pretending to be decisions.
 
 `note` is the storage-first type for general observations and ideas. Notes remain fully searchable through `search_rationales`, but `compose_context` excludes them from task context packs by default so casual notes never compete with vetted rationale for the token budget. Pass `includeNotes: true` to compose with notes included. Search also accepts an `excludeTypes` filter for the same mechanism.
+
+Plain notes are also available through a lighter MCP surface. `record_note` accepts only `content` and the server manages ids, timestamps, upvotes, downvotes, and archive state. Note content is limited to 1000 characters. `compose_notes_context` returns original note text only, with no summarization or rewriting, and selects up to 5000 characters by filling roughly 60% of the budget with weighted random notes before filling the rest by `upvotes - downvotes` and newest-first tiebreaks. Downvotes reduce random exposure but do not ban a note; archived notes and notes over the per-note limit are excluded.
 
 Auto-captured unreviewed candidates remain searchable and rank purely on relevance and lifecycle boosts; they carry `candidate`/`unreviewed` lifecycle fields in search results so callers can weigh trust themselves, and the larger `accepted`/`reviewed` boosts keep human-accepted rationale ahead. Use the administrative review flow later to accept, keep as candidate, mark as needing revision, or deprecate entries.
 
