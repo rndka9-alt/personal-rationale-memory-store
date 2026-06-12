@@ -39,7 +39,8 @@ describe("OAuthAuthorizationServer", () => {
       login_code: "test-login-code"
     });
 
-    const redirectUrl = oauthServer.authorize(authorizationParams);
+    const authorizationResult = oauthServer.authorize(authorizationParams);
+    const redirectUrl = authorizationResult.redirectUrl;
     const code = redirectUrl.searchParams.get("code");
     if (!code) {
       throw new Error("Authorization redirect did not include a code.");
@@ -55,6 +56,7 @@ describe("OAuthAuthorizationServer", () => {
     }));
 
     expect(tokenResponse.token_type).toBe("Bearer");
+    expect(tokenResponse.expires_in).toBe(7 * 24 * 60 * 60);
     expect(tokenResponse.scope).toBe("openid email profile rationale:read rationale:write");
     expect(typeof tokenResponse.id_token).toBe("string");
 
@@ -83,7 +85,8 @@ describe("OAuthAuthorizationServer", () => {
       login_code: "test-login-code"
     });
 
-    const redirectUrl = oauthServer.authorize(authorizationParams);
+    const authorizationResult = oauthServer.authorize(authorizationParams);
+    const redirectUrl = authorizationResult.redirectUrl;
     const code = redirectUrl.searchParams.get("code");
     if (!code) {
       throw new Error("Authorization redirect did not include a code.");
@@ -99,6 +102,70 @@ describe("OAuthAuthorizationServer", () => {
 
     expect(tokenResponse.token_type).toBe("Bearer");
     expect(tokenResponse.scope).toBe("openid email profile rationale:read rationale:write");
+  });
+
+  it("sets a login session cookie that can authorize the next OAuth request", () => {
+    const oauthServer = createOAuthServer();
+    const firstAuthorizationResult = oauthServer.authorize(new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      scope: "openid email profile rationale:read rationale:write",
+      resource: "https://memory-mcp.mtdl.kr",
+      login_code: "test-login-code"
+    }));
+
+    expect(firstAuthorizationResult.sessionCookie).toContain("__Host-rationale_memory_oauth_session=");
+    expect(firstAuthorizationResult.sessionCookie).toContain("Max-Age=2592000");
+    expect(firstAuthorizationResult.sessionCookie).toContain("HttpOnly");
+    expect(firstAuthorizationResult.sessionCookie).toContain("Secure");
+    expect(firstAuthorizationResult.sessionCookie).toContain("SameSite=Lax");
+
+    const secondRedirectUrl = oauthServer.authorizeWithLoginSession(new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      scope: "openid email profile rationale:read rationale:write",
+      resource: "https://memory-mcp.mtdl.kr",
+      state: "state-from-cookie"
+    }), firstAuthorizationResult.sessionCookie);
+
+    if (!secondRedirectUrl) {
+      throw new Error("Login session cookie did not authorize the request.");
+    }
+
+    expect(secondRedirectUrl.searchParams.get("code")).toBeTruthy();
+    expect(secondRedirectUrl.searchParams.get("state")).toBe("state-from-cookie");
+  });
+
+  it("allows OAuth token and login session TTL overrides", () => {
+    const oauthServer = createOAuthServer({
+      MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: "120",
+      MCP_OAUTH_LOGIN_SESSION_TTL_SECONDS: "240"
+    });
+    const authorizationResult = oauthServer.authorize(new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      scope: "openid email profile rationale:read rationale:write",
+      resource: "https://memory-mcp.mtdl.kr",
+      login_code: "test-login-code"
+    }));
+    const code = authorizationResult.redirectUrl.searchParams.get("code");
+    if (!code) {
+      throw new Error("Authorization redirect did not include a code.");
+    }
+
+    const tokenResponse = oauthServer.exchangeToken(new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
+      client_id: "mtdl-memory-mcp",
+      resource: "https://memory-mcp.mtdl.kr"
+    }));
+
+    expect(tokenResponse.expires_in).toBe(120);
+    expect(authorizationResult.sessionCookie).toContain("Max-Age=240");
   });
 
   it("keeps bearer tokens verifiable across server instances when a signing key is configured", () => {
@@ -118,7 +185,7 @@ describe("OAuthAuthorizationServer", () => {
     });
     const codeVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
 
-    const redirectUrl = firstOAuthServer.authorize(new URLSearchParams({
+    const authorizationResult = firstOAuthServer.authorize(new URLSearchParams({
       response_type: "code",
       client_id: "mtdl-memory-mcp",
       redirect_uri: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
@@ -128,6 +195,7 @@ describe("OAuthAuthorizationServer", () => {
       resource: "https://memory-mcp.mtdl.kr",
       login_code: "test-login-code"
     }));
+    const redirectUrl = authorizationResult.redirectUrl;
     const code = redirectUrl.searchParams.get("code");
     if (!code) {
       throw new Error("Authorization redirect did not include a code.");

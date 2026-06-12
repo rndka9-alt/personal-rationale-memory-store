@@ -104,6 +104,8 @@ MCP_OAUTH_CLIENT_ID=mtdl-memory-mcp
 MCP_OAUTH_REDIRECT_URI=https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV
 MCP_OAUTH_LOGIN_CODE=choose-a-private-login-code
 MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH=/app/data/oauth-private-key.pem
+MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS=604800
+MCP_OAUTH_LOGIN_SESSION_TTL_SECONDS=2592000
 MCP_OAUTH_USER_SUBJECT=mtdl
 MCP_OAUTH_USER_EMAIL=you@example.com
 MCP_OAUTH_USER_NAME=Rationale Memory Owner
@@ -117,6 +119,8 @@ Generate the signing key once and keep it mounted across restarts:
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out data/oauth-private-key.pem
 chmod 600 data/oauth-private-key.pem
 ```
+
+`MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS` defaults to 604800 seconds (7 days). After a successful login-code authorization, the server also sets a signed HttpOnly login-session cookie for `MCP_OAUTH_LOGIN_SESSION_TTL_SECONDS` seconds so future OAuth authorization requests can continue without re-entering the login code.
 
 Use these values in the ChatGPT MCP OAuth form:
 

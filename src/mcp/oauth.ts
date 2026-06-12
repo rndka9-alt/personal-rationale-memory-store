@@ -44,6 +44,15 @@ const accessTokenPayloadSchema = z.object({
   resource: z.string()
 });
 
+const loginSessionPayloadSchema = z.object({
+  iss: z.string(),
+  sub: z.string(),
+  aud: z.string(),
+  exp: z.number().int(),
+  iat: z.number().int(),
+  token_use: z.literal("login_session")
+});
+
 type AuthorizationRequest = z.infer<typeof authorizationRequestSchema>;
 
 type AuthorizationCodeRecord = {
@@ -59,6 +68,11 @@ type VerifiedToken = {
   scope: string;
 };
 
+type AuthorizationResult = {
+  redirectUrl: URL;
+  sessionCookie: string;
+};
+
 type RsaPublicJwk = {
   kty: "RSA";
   n: string;
@@ -66,7 +80,7 @@ type RsaPublicJwk = {
 };
 
 const authorizationCodeTtlMilliseconds = 5 * 60 * 1000;
-const accessTokenTtlSeconds = 60 * 60;
+const loginSessionCookieName = "__Host-rationale_memory_oauth_session";
 
 export function createOAuthAuthorizationServer(config: OAuthConfig) {
   if (!config.enabled) {
@@ -191,12 +205,27 @@ export class OAuthAuthorizationServer {
 </html>`;
   }
 
-  authorize(searchParams: URLSearchParams) {
+  authorize(searchParams: URLSearchParams): AuthorizationResult {
     const loginCode = searchParams.get("login_code");
     if (loginCode === null || !secureEquals(loginCode, requireConfiguredValue(this.config.loginCode, "MCP_OAUTH_LOGIN_CODE"))) {
       throw new OAuthHttpError(401, "invalid_login", "Invalid login code.");
     }
 
+    return {
+      redirectUrl: this.createAuthorizationRedirect(searchParams),
+      sessionCookie: this.createLoginSessionCookie()
+    };
+  }
+
+  authorizeWithLoginSession(searchParams: URLSearchParams, cookieHeader: string | undefined) {
+    const loginSessionToken = readCookie(cookieHeader, loginSessionCookieName);
+    if (!loginSessionToken || !this.verifyLoginSessionToken(loginSessionToken)) {
+      return undefined;
+    }
+    return this.createAuthorizationRedirect(searchParams);
+  }
+
+  private createAuthorizationRedirect(searchParams: URLSearchParams) {
     const request = this.parseAuthorizationRequest(searchParams);
     const code = base64UrlEncode(randomBytes(32));
     this.authorizationCodes.set(code, {
@@ -253,7 +282,7 @@ export class OAuthAuthorizationServer {
     const response: Record<string, string | number> = {
       access_token: accessToken,
       token_type: "Bearer",
-      expires_in: accessTokenTtlSeconds,
+      expires_in: this.config.accessTokenTtlSeconds,
       scope: codeRecord.scope
     };
 
@@ -368,7 +397,7 @@ export class OAuthAuthorizationServer {
         iss: this.issuer,
         sub: this.config.userSubject,
         aud: audience,
-        exp: nowSeconds + accessTokenTtlSeconds,
+        exp: nowSeconds + this.config.accessTokenTtlSeconds,
         iat: nowSeconds,
         scope,
         token_use: tokenUse,
@@ -378,6 +407,53 @@ export class OAuthAuthorizationServer {
       },
       this.privateKey
     );
+  }
+
+  private createLoginSessionCookie() {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const token = signJwt(
+      {
+        alg: "RS256",
+        typ: "JWT",
+        kid: this.keyId
+      },
+      {
+        iss: this.issuer,
+        sub: this.config.userSubject,
+        aud: this.issuer,
+        exp: nowSeconds + this.config.loginSessionTtlSeconds,
+        iat: nowSeconds,
+        token_use: "login_session"
+      },
+      this.privateKey
+    );
+    return [
+      `${loginSessionCookieName}=${token}`,
+      `Max-Age=${this.config.loginSessionTtlSeconds}`,
+      "Path=/",
+      "HttpOnly",
+      "Secure",
+      "SameSite=Lax"
+    ].join("; ");
+  }
+
+  private verifyLoginSessionToken(token: string) {
+    const parsedToken = this.parseAndVerifyToken(token);
+    if (!parsedToken) {
+      return false;
+    }
+
+    const parsedPayload = loginSessionPayloadSchema.safeParse(parsedToken.payload);
+    if (!parsedPayload.success) {
+      return false;
+    }
+
+    const payload = parsedPayload.data;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    return payload.iss === this.issuer
+      && payload.sub === this.config.userSubject
+      && payload.aud === this.issuer
+      && payload.exp > nowSeconds;
   }
 
   private parseAndVerifyToken(token: string) {
@@ -448,6 +524,13 @@ export async function handleOAuthRequest(
   }
   if (request.method === "GET" && url.pathname === "/oauth/authorize") {
     try {
+      const redirectUrl = oauthServer.authorizeWithLoginSession(url.searchParams, request.headers.cookie);
+      if (redirectUrl) {
+        response.statusCode = 302;
+        response.setHeader("Location", redirectUrl.toString());
+        response.end();
+        return true;
+      }
       writeHtmlResponse(response, 200, oauthServer.renderAuthorizationForm(url.searchParams));
     } catch (error) {
       writeOAuthError(response, error);
@@ -456,9 +539,10 @@ export async function handleOAuthRequest(
   }
   if (request.method === "POST" && url.pathname === "/oauth/authorize") {
     try {
-      const redirectUrl = oauthServer.authorize(await readFormBody(request));
+      const authorizationResult = oauthServer.authorize(await readFormBody(request));
       response.statusCode = 302;
-      response.setHeader("Location", redirectUrl.toString());
+      response.setHeader("Location", authorizationResult.redirectUrl.toString());
+      response.setHeader("Set-Cookie", authorizationResult.sessionCookie);
       response.end();
     } catch (error) {
       writeOAuthError(response, error);
@@ -579,6 +663,20 @@ function readParams(searchParams: URLSearchParams, names: string[]) {
     }
   }
   return result;
+}
+
+function readCookie(cookieHeader: string | undefined, name: string) {
+  if (!cookieHeader) {
+    return undefined;
+  }
+
+  for (const cookiePart of cookieHeader.split(";")) {
+    const [cookieName, ...cookieValueParts] = cookiePart.trim().split("=");
+    if (cookieName === name) {
+      return cookieValueParts.join("=");
+    }
+  }
+  return undefined;
 }
 
 function parseBase64UrlJson(value: string) {
