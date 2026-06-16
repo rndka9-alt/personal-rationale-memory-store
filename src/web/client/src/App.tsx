@@ -8,6 +8,12 @@ import {
   submitReviewAction,
   type ReviewQueueFilters
 } from "./api/reviewQueue";
+import {
+  archiveNote,
+  fetchNotes,
+  restoreNote
+} from "./api/notes";
+import type { NoteRecord } from "./types/note";
 import type {
   ProjectContext,
   RefinementOpinion,
@@ -61,6 +67,7 @@ const queueSignalFilters = [
 type QueueSortMode = "priority" | "last_used" | "opinions" | "positive_feedback" | "negative_feedback" | "uses";
 type QueueSignalFilter = "all" | "repair_attention" | "with_opinions" | "with_negative_feedback" | "with_positive_feedback" | "recently_used";
 type PatchInputMode = "fields" | "json";
+type MainView = "review" | "notes";
 type PatchFieldValues = {
   title: string;
   situation: string;
@@ -93,6 +100,8 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [operationMessage, setOperationMessage] = useState<string | undefined>();
+  const [mainView, setMainView] = useState<MainView>("review");
+  const [includeArchivedNotes, setIncludeArchivedNotes] = useState(false);
 
   const filters: ReviewQueueFilters = useMemo(() => ({
     captureKind: captureKind.length > 0 ? captureKind : undefined,
@@ -102,6 +111,12 @@ export function App() {
   const queueQuery = useQuery({
     queryKey: ["review-queue", filters],
     queryFn: () => fetchReviewQueue(filters)
+  });
+
+  const notesQuery = useQuery({
+    queryKey: ["notes", includeArchivedNotes],
+    queryFn: () => fetchNotes(includeArchivedNotes),
+    enabled: mainView === "notes"
   });
 
   const queueItems = queueQuery.data ?? [];
@@ -200,109 +215,235 @@ export function App() {
     }
   });
 
+  const archiveNoteMutation = useMutation({
+    mutationFn: archiveNote,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["notes"] });
+    }
+  });
+
+  const restoreNoteMutation = useMutation({
+    mutationFn: restoreNote,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["notes"] });
+    }
+  });
+
   return (
     <main className="min-h-screen bg-surface-page text-ink-base">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 py-5 lg:px-8">
         <header className="flex flex-col gap-5 border-b border-line-base pb-5 md:flex-row md:items-end md:justify-between">
-          <div>
+          <div className="space-y-4">
             <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Rationale Memory Store</p>
-            <h1 className="mt-2 text-2xl font-semibold text-ink-strong">Review Queue</h1>
+            <h1 className="text-2xl font-semibold text-ink-strong">{mainView === "review" ? "Review Queue" : "Notes"}</h1>
+            <ViewSwitch value={mainView} onChange={setMainView} />
           </div>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
-              <label className="text-sm">
-                <span className="mb-1 block text-xs font-medium text-ink-muted">State</span>
-                <select
-                  className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-                  value={reviewState}
-                  onChange={(event) => setReviewState(event.target.value)}
-                >
-                  {reviewStates.map((state) => (
-                    <option key={state.value} value={state.value}>{state.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm">
-                <span className="mb-1 block text-xs font-medium text-ink-muted">Source</span>
-                <select
-                  className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-                  value={captureKind}
-                  onChange={(event) => setCaptureKind(event.target.value)}
-                >
-                  {captureKinds.map((kind) => (
-                    <option key={kind.value} value={kind.value}>{kind.label}</option>
-                  ))}
-                </select>
-              </label>
+          {mainView === "review" ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
+                <label className="text-sm">
+                  <span className="mb-1 block text-xs font-medium text-ink-muted">State</span>
+                  <select
+                    className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+                    value={reviewState}
+                    onChange={(event) => setReviewState(event.target.value)}
+                  >
+                    {reviewStates.map((state) => (
+                      <option key={state.value} value={state.value}>{state.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block text-xs font-medium text-ink-muted">Source</span>
+                  <select
+                    className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+                    value={captureKind}
+                    onChange={(event) => setCaptureKind(event.target.value)}
+                  >
+                    {captureKinds.map((kind) => (
+                      <option key={kind.value} value={kind.value}>{kind.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <QuickViewControls
+                onInbox={() => {
+                  setReviewState("unreviewed");
+                  setQueueSignalFilter("all");
+                  setQueueSortMode("priority");
+                }}
+                onRepair={() => {
+                  setReviewState("all");
+                  setQueueSignalFilter("repair_attention");
+                  setQueueSortMode("priority");
+                }}
+                onPromotion={() => {
+                  setReviewState("reviewed");
+                  setQueueSignalFilter("all");
+                  setQueueSortMode("positive_feedback");
+                }}
+              />
             </div>
-            <QuickViewControls
-              onInbox={() => {
-                setReviewState("unreviewed");
-                setQueueSignalFilter("all");
-                setQueueSortMode("priority");
-              }}
-              onRepair={() => {
-                setReviewState("all");
-                setQueueSignalFilter("repair_attention");
-                setQueueSortMode("priority");
-              }}
-              onPromotion={() => {
-                setReviewState("reviewed");
-                setQueueSignalFilter("all");
-                setQueueSortMode("positive_feedback");
-              }}
-            />
-          </div>
+          ) : (
+            <label className="flex items-center gap-2 text-sm font-medium text-ink-base">
+              <input
+                type="checkbox"
+                className="rounded border-line-base text-action-base focus:ring-action-base"
+                checked={includeArchivedNotes}
+                onChange={(event) => setIncludeArchivedNotes(event.target.checked)}
+              />
+              Include archived
+            </label>
+          )}
         </header>
 
-        <section className="grid min-h-0 flex-1 gap-6 py-6 lg:grid-cols-[380px_minmax(0,1fr)]">
-          <QueueList
-            items={items}
-            selectedId={selectedId}
-            isLoading={queueQuery.isLoading}
-            error={queueQuery.error}
-            sortMode={queueSortMode}
-            signalFilter={queueSignalFilter}
-            selectedIds={selectedIds}
-            isBulkMutating={bulkReviewMutation.isPending}
-            bulkError={bulkReviewMutation.error}
-            onSortModeChange={setQueueSortMode}
-            onSignalFilterChange={setQueueSignalFilter}
-            onSelect={setSelectedId}
-            onToggleSelection={(id) => setSelectedIds((currentIds) => toggleSelectedId(currentIds, id))}
-            onSelectVisible={() => setSelectedIds(items.map((item) => item.id))}
-            onClearSelection={() => setSelectedIds([])}
-            onBulkAction={(action) => {
-              if (selectedIds.length === 0) {
-                throw new Error("No selected items.");
-              }
-              bulkReviewMutation.mutate({ ids: selectedIds, action });
-            }}
+        {mainView === "review" ? (
+          <section className="grid min-h-0 flex-1 gap-6 py-6 lg:grid-cols-[380px_minmax(0,1fr)]">
+            <QueueList
+              items={items}
+              selectedId={selectedId}
+              isLoading={queueQuery.isLoading}
+              error={queueQuery.error}
+              sortMode={queueSortMode}
+              signalFilter={queueSignalFilter}
+              selectedIds={selectedIds}
+              isBulkMutating={bulkReviewMutation.isPending}
+              bulkError={bulkReviewMutation.error}
+              onSortModeChange={setQueueSortMode}
+              onSignalFilterChange={setQueueSignalFilter}
+              onSelect={setSelectedId}
+              onToggleSelection={(id) => setSelectedIds((currentIds) => toggleSelectedId(currentIds, id))}
+              onSelectVisible={() => setSelectedIds(items.map((item) => item.id))}
+              onClearSelection={() => setSelectedIds([])}
+              onBulkAction={(action) => {
+                if (selectedIds.length === 0) {
+                  throw new Error("No selected items.");
+                }
+                bulkReviewMutation.mutate({ ids: selectedIds, action });
+              }}
+            />
+            <DetailPanel
+              item={detailQuery.data}
+              isLoading={detailQuery.isLoading}
+              error={detailQuery.error}
+              notes={notes}
+              operationMessage={operationMessage}
+              actionError={reviewMutation.error}
+              onNotesChange={setNotes}
+              onAction={(action) => {
+                if (!selectedId) {
+                  throw new Error("No selected item.");
+                }
+                reviewMutation.mutate({ id: selectedId, action });
+              }}
+              isMutating={reviewMutation.isPending}
+              onRefinementOpinionAction={(input) => refinementOpinionMutation.mutate(input)}
+              isRefinementOpinionMutating={refinementOpinionMutation.isPending}
+              onCreateRefinementOpinion={(input) => createRefinementOpinionMutation.mutateAsync(input)}
+              isCreatingRefinementOpinion={createRefinementOpinionMutation.isPending}
+              createRefinementOpinionError={createRefinementOpinionMutation.error}
+            />
+          </section>
+        ) : (
+          <NotesView
+            notes={notesQuery.data ?? []}
+            isLoading={notesQuery.isLoading}
+            error={notesQuery.error}
+            actionError={archiveNoteMutation.error ?? restoreNoteMutation.error}
+            isMutating={archiveNoteMutation.isPending || restoreNoteMutation.isPending}
+            onArchive={(id) => archiveNoteMutation.mutate(id)}
+            onRestore={(id) => restoreNoteMutation.mutate(id)}
           />
-          <DetailPanel
-            item={detailQuery.data}
-            isLoading={detailQuery.isLoading}
-            error={detailQuery.error}
-            notes={notes}
-            operationMessage={operationMessage}
-            actionError={reviewMutation.error}
-            onNotesChange={setNotes}
-            onAction={(action) => {
-              if (!selectedId) {
-                throw new Error("No selected item.");
-              }
-              reviewMutation.mutate({ id: selectedId, action });
-            }}
-            isMutating={reviewMutation.isPending}
-            onRefinementOpinionAction={(input) => refinementOpinionMutation.mutate(input)}
-            isRefinementOpinionMutating={refinementOpinionMutation.isPending}
-            onCreateRefinementOpinion={(input) => createRefinementOpinionMutation.mutateAsync(input)}
-            isCreatingRefinementOpinion={createRefinementOpinionMutation.isPending}
-            createRefinementOpinionError={createRefinementOpinionMutation.error}
-          />
-        </section>
+        )}
       </div>
     </main>
+  );
+}
+
+function ViewSwitch(props: {
+  value: MainView;
+  onChange: (value: MainView) => void;
+}) {
+  return (
+    <div className="inline-grid grid-cols-2 rounded-md border border-line-base bg-surface-panel p-1">
+      <button
+        type="button"
+        className={viewSwitchButtonClassName(props.value === "review")}
+        onClick={() => props.onChange("review")}
+      >
+        Review
+      </button>
+      <button
+        type="button"
+        className={viewSwitchButtonClassName(props.value === "notes")}
+        onClick={() => props.onChange("notes")}
+      >
+        Notes
+      </button>
+    </div>
+  );
+}
+
+function NotesView(props: {
+  notes: NoteRecord[];
+  isLoading: boolean;
+  error: Error | null;
+  actionError: Error | null;
+  isMutating: boolean;
+  onArchive: (id: string) => void;
+  onRestore: (id: string) => void;
+}) {
+  const activeCount = props.notes.filter((note) => !note.archived).length;
+  const archivedCount = props.notes.length - activeCount;
+
+  return (
+    <section className="min-h-0 flex-1 py-6">
+      <div className="mb-4 flex flex-col gap-3 border-b border-line-base pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-ink-strong">Stored notes</h2>
+          <p className="mt-1 text-xs text-ink-muted">{activeCount} active / {archivedCount} archived</p>
+        </div>
+        <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">{props.notes.length}</span>
+      </div>
+
+      {props.actionError ? <p className="mb-4 text-sm text-danger-base">{props.actionError.message}</p> : null}
+
+      {props.isLoading ? (
+        <p className="text-sm text-ink-muted">Loading notes...</p>
+      ) : props.error ? (
+        <p className="text-sm text-danger-base">{props.error.message}</p>
+      ) : props.notes.length === 0 ? (
+        <div className="border-y border-line-base py-8 text-sm text-ink-muted">No notes match this view.</div>
+      ) : (
+        <div className="divide-y divide-line-base border-y border-line-base">
+          {props.notes.map((note) => (
+            <article key={note.id} className="grid gap-4 py-4 md:grid-cols-[minmax(0,1fr)_160px]">
+              <div className="min-w-0">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <StatusPill value={note.archived ? "archived" : "active"} />
+                  <MetadataPill value={`score ${note.upvotes - note.downvotes}`} />
+                  <MetadataPill value={`up ${note.upvotes}`} />
+                  <MetadataPill value={`down ${note.downvotes}`} />
+                </div>
+                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-ink-base">{note.content}</p>
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint">
+                  <span>{note.id}</span>
+                  <span>Created {formatRelativeDate(note.createdAt)}</span>
+                  <span>Updated {formatRelativeDate(note.updatedAt)}</span>
+                </div>
+              </div>
+              <div className="flex items-start md:justify-end">
+                {note.archived ? (
+                  <SmallControlButton disabled={props.isMutating} onClick={() => props.onRestore(note.id)}>Restore</SmallControlButton>
+                ) : (
+                  <SmallControlButton danger disabled={props.isMutating} onClick={() => props.onArchive(note.id)}>Archive</SmallControlButton>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1026,10 +1167,13 @@ function MetadataDetails(props: { metadata: Record<string, unknown> }) {
 
 function StatusPill(props: { value: string }) {
   const className = props.value === "reviewed"
+    || props.value === "active"
     ? namedStatusColor.reviewed
     : props.value === "needs_revision"
       ? namedStatusColor.needs_revision
-      : namedStatusColor.unreviewed;
+      : props.value === "archived" || props.value === "deprecated"
+        ? namedStatusColor.deprecated
+        : namedStatusColor.unreviewed;
 
   return <span className={`rounded-full px-2 py-1 text-xs font-medium ${className}`}>{props.value}</span>;
 }
@@ -1267,6 +1411,13 @@ function patchModeButtonClassName(isActive: boolean) {
     ? "border-action-base bg-action-faint text-action-base"
     : "border-line-strong bg-surface-panel text-ink-base hover:border-action-base hover:bg-action-faint hover:text-action-base";
   return `h-9 rounded-md border text-sm font-medium transition-colors ${activeClass}`;
+}
+
+function viewSwitchButtonClassName(isActive: boolean) {
+  const activeClass = isActive
+    ? "bg-action-faint text-action-base"
+    : "text-ink-muted hover:bg-surface-subtle hover:text-ink-base";
+  return `h-8 rounded px-3 text-xs font-medium transition-colors ${activeClass}`;
 }
 
 function formatProjectLabel(project: ProjectContext) {

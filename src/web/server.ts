@@ -7,6 +7,7 @@ import { runMigrations } from "../db/migrations.js";
 import { createEmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "../memory/fileStore.js";
 import { IndexingService } from "../memory/indexingService.js";
+import { NoteService } from "../memory/noteService.js";
 import { RationaleService } from "../memory/rationaleService.js";
 import { logError, logInfo } from "../diagnostics/index.js";
 
@@ -16,6 +17,7 @@ const fileStore = new MemoryFileStore(config.dataDirectory);
 const embeddingProvider = createEmbeddingProvider(config);
 const indexingService = new IndexingService(pool, fileStore, embeddingProvider, config);
 const rationaleService = new RationaleService(pool, fileStore, indexingService, embeddingProvider, config);
+const noteService = new NoteService(pool);
 const clientDirectory = path.resolve(process.cwd(), "dist/web/client");
 
 await runMigrations(pool);
@@ -82,6 +84,27 @@ async function routeApiRequest(
     const reviewState = reviewStateParam === "all" ? undefined : reviewStateParam ?? "unreviewed";
     const items = await rationaleService.listReviewQueue(captureKind, reviewState);
     writeJson(response, 200, { items });
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/notes") {
+    const includeArchived = readBooleanParam(url.searchParams.get("includeArchived"));
+    const notes = await noteService.listNotes(includeArchived);
+    writeJson(response, 200, { notes });
+    return;
+  }
+
+  const archiveNoteMatch = matchNoteArchivePath(url.pathname);
+  if (archiveNoteMatch && method === "POST") {
+    const note = await noteService.archiveNote({ noteId: archiveNoteMatch.id });
+    writeJson(response, 200, { note });
+    return;
+  }
+
+  const restoreNoteMatch = matchNoteRestorePath(url.pathname);
+  if (restoreNoteMatch && method === "POST") {
+    const note = await noteService.restoreNote({ noteId: restoreNoteMatch.id });
+    writeJson(response, 200, { note });
     return;
   }
 
@@ -200,6 +223,18 @@ function matchReviewQueueRefinementOpinionsPath(pathname: string) {
   return id ? { id: decodeURIComponent(id) } : undefined;
 }
 
+function matchNoteArchivePath(pathname: string) {
+  const match = /^\/api\/notes\/([^/]+)\/archive$/.exec(pathname);
+  const id = match?.[1];
+  return id ? { id: decodeURIComponent(id) } : undefined;
+}
+
+function matchNoteRestorePath(pathname: string) {
+  const match = /^\/api\/notes\/([^/]+)\/restore$/.exec(pathname);
+  const id = match?.[1];
+  return id ? { id: decodeURIComponent(id) } : undefined;
+}
+
 function matchRefinementOpinionActionPath(pathname: string) {
   const match = /^\/api\/refinement-opinions\/([^/]+)\/action$/.exec(pathname);
   const id = match?.[1];
@@ -216,6 +251,16 @@ function isAuthorized(request: IncomingMessage) {
 
 function readOptionalString(value: string | null) {
   return value && value.length > 0 ? value : undefined;
+}
+
+function readBooleanParam(value: string | null) {
+  if (value === null || value.length === 0 || value === "false") {
+    return false;
+  }
+  if (value === "true") {
+    return true;
+  }
+  throw new Error(`Invalid boolean query parameter: ${value}`);
 }
 
 async function readJsonBody(request: IncomingMessage) {

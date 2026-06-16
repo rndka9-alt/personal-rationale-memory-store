@@ -358,12 +358,48 @@ export async function archiveNoteRecord(pool: pg.Pool, noteId: string) {
   return mapNoteRow(row);
 }
 
+export async function restoreNoteRecord(pool: pg.Pool, noteId: string) {
+  logInfo("DB restore note started.", {
+    noteId
+  });
+  const result = await pool.query(
+    `UPDATE notes
+      SET archived = FALSE,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *`,
+    [noteId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Note not found: ${noteId}`);
+  }
+  logInfo("DB restore note completed.", {
+    noteId
+  });
+  return mapNoteRow(row);
+}
+
 export async function listActiveNotes(pool: pg.Pool) {
   logInfo("DB list active notes started.");
   const result = await pool.query(
     "SELECT * FROM notes WHERE archived = FALSE ORDER BY created_at DESC"
   );
   logInfo("DB list active notes completed.", {
+    resultCount: result.rows.length
+  });
+  return result.rows.map(mapNoteRow);
+}
+
+export async function listNotes(pool: pg.Pool, includeArchived: boolean) {
+  logInfo("DB list notes started.", {
+    includeArchived
+  });
+  const result = includeArchived
+    ? await pool.query("SELECT * FROM notes ORDER BY archived ASC, created_at DESC")
+    : await pool.query("SELECT * FROM notes WHERE archived = FALSE ORDER BY created_at DESC");
+  logInfo("DB list notes completed.", {
+    includeArchived,
     resultCount: result.rows.length
   });
   return result.rows.map(mapNoteRow);

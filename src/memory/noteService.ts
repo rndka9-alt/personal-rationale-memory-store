@@ -3,7 +3,9 @@ import {
   archiveNoteRecord,
   incrementNoteRating,
   insertNote,
-  listActiveNotes
+  listActiveNotes,
+  listNotes as listNoteRecords,
+  restoreNoteRecord
 } from "../db/queries.js";
 import { logInfo } from "../diagnostics/index.js";
 import {
@@ -68,6 +70,15 @@ export class NoteService {
   async archiveNote(input: unknown) {
     const validatedInput = archiveNoteInputSchema.parse(input);
     return archiveNoteRecord(this.pool, validatedInput.noteId);
+  }
+
+  async restoreNote(input: unknown) {
+    const validatedInput = archiveNoteInputSchema.parse(input);
+    return restoreNoteRecord(this.pool, validatedInput.noteId);
+  }
+
+  async listNotes(includeArchived = false) {
+    return listNoteRecords(this.pool, includeArchived);
   }
 
   async composeNotesContext(input: ComposeNotesContextInput = {}) {
