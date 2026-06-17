@@ -98,7 +98,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "record_note",
-      description: "Record a lightweight personal note from content only. Use this freely for casual thoughts, preferences, impressions, memories, small context, and anything worth preserving or rediscovering later; notes are separate from rationale memories.",
+      description: "Record a lightweight personal note from content only. Use this freely for casual thoughts, preferences, impressions, memories, small context, and anything worth preserving or rediscovering later; notes are separate from rationale memories. If a note may be inaccurate, ambiguous, or worth correcting later, mention it to the user so they can revise or remove it.",
       schema: recordNoteInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -129,7 +129,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record relevant rationale memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Rationale memories can be referenced from other tasks and later conversations, so actively capture reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use record_note for casual thoughts, personal memories, and lightweight notes. Weak or duplicate captures are filtered out downstream; when in doubt, capture.",
+        "Record relevant rationale memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Rationale memories can be referenced from other tasks and later conversations, so actively capture reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use record_note for casual thoughts, personal memories, and lightweight notes. Weak or duplicate captures are filtered out downstream; when in doubt, capture. If a captured rationale memory may be inaccurate, outdated, or poorly scoped, mention it to the user so they can review and correct it.",
       schema: autoCaptureRationaleInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
