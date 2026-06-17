@@ -8,16 +8,15 @@ import type { MemoryEntryRecord, MemoryRefinementOpinionRecord, SearchProjectFil
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
 const refinementOpinionLimitPerEntry = 3;
-// Note memories are storage-first: they stay searchable on demand, but they do not
-// compete for the composed task-context token budget unless explicitly requested.
-const composeExcludedTypes = ["note"];
+// Historical note-typed memory entries predate the separate plain note store.
+// Keep them out of rationale context so notes and rationale memories stay distinct.
+const legacyComposeExcludedTypes = ["note"];
 
 export type ComposeContextInput = {
   task: string;
   explicitMode?: string;
   explicitDomains?: string[];
   project?: SearchProjectFilter;
-  includeNotes?: boolean;
   tokenBudget?: number;
   includeFullTopK?: number;
   minScore?: number;
@@ -69,7 +68,7 @@ export class ContextComposer {
       domains: input.explicitDomains,
       modes: input.explicitMode ? [input.explicitMode] : undefined,
       project: input.project,
-      excludeTypes: input.includeNotes ? undefined : composeExcludedTypes,
+      excludeTypes: legacyComposeExcludedTypes,
       limit: 50,
       includeDeprecated: false
     }, "compose");

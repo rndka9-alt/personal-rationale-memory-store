@@ -73,15 +73,12 @@ export const rationaleEntrySchema = z.object({
 
 // Principle is excluded on purpose: principles are created only by promoting
 // accepted rationale, so capture inputs cannot mint them directly.
-// Note is storage-first: searchable on demand but kept out of composed task
-// context by default, so casual observations cannot crowd out vetted rationale.
 export const capturedMemoryTypeSchema = z.enum([
   "rationale",
   "known_failure",
   "preference",
   "convention",
-  "constraint",
-  "note"
+  "constraint"
 ]);
 
 export const recordCandidateInputSchema = z.object({

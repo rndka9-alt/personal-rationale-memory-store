@@ -68,13 +68,12 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Note-type memories are excluded by default; set includeNotes to pull them in.",
+      description: "Compose bounded prompt-ready rationale context for a task. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
       schema: {
         task: z.string().min(1),
         explicitMode: z.string().optional(),
         explicitDomains: z.array(z.string()).optional(),
         project: searchProjectFilterSchema.optional(),
-        includeNotes: z.boolean().optional(),
         tokenBudget: z.number().int().positive().optional(),
         includeFullTopK: z.number().int().min(0).optional(),
         minScore: z.number().min(0).optional()
@@ -99,7 +98,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "record_note",
-      description: "Record a lightweight plain note from content only. Use this freely for quick searchable memory: rough observations, reminders, snippets, open questions, context breadcrumbs, or anything useful later that is too small or informal for rationale memory.",
+      description: "Record a lightweight personal note from content only. Use this freely for casual thoughts, preferences, impressions, memories, small context, and anything worth preserving or rediscovering later; notes are separate from rationale memories.",
       schema: recordNoteInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -130,7 +129,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record relevant content into memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Memories can be referenced from other tasks and later conversations, so actively capture anything that seems useful later — decisions, reasoning, preferences, lessons learned. Set type to preference, convention, constraint, or known_failure for non-decision knowledge, or note for general observations and ideas (defaults to rationale). Notes stay searchable but are kept out of composed task context. Weak or duplicate captures are filtered out downstream; when in doubt, capture.",
+        "Record relevant rationale memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Rationale memories can be referenced from other tasks and later conversations, so actively capture reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use record_note for casual thoughts, personal memories, and lightweight notes. Weak or duplicate captures are filtered out downstream; when in doubt, capture.",
       schema: autoCaptureRationaleInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -194,7 +193,6 @@ const composeInputSchema = z.object({
   explicitMode: z.string().optional(),
   explicitDomains: z.array(z.string()).optional(),
   project: searchProjectFilterSchema.optional(),
-  includeNotes: z.boolean().optional(),
   tokenBudget: z.number().int().positive().optional(),
   includeFullTopK: z.number().int().min(0).optional(),
   minScore: z.number().min(0).optional()

@@ -325,11 +325,11 @@ capture_reason: ...
 
 Only `title` and `rationale` are required for capture. Each new candidate records a `capture_tier` in its metadata: `full` when both `reuseWhen` and `avoidWhen` are present, `quick` otherwise. The tier never affects search ranking; it marks entries whose boundary sections still need backfill during review or batch enrichment.
 
-Capture inputs accept an optional `type`: `rationale` (default), `known_failure`, `preference`, `convention`, `constraint`, or `note`. `principle` is reserved for promotion from accepted rationale and cannot be set at capture time. Non-decision types are not flagged for missing decision-shaped sections (constraints, decision, rejected alternatives, tradeoff) during candidate review, so preferences and conventions stay first-class memories without pretending to be decisions.
+Capture inputs accept an optional `type`: `rationale` (default), `known_failure`, `preference`, `convention`, or `constraint`. `principle` is reserved for promotion from accepted rationale and cannot be set at capture time. Non-decision types are not flagged for missing decision-shaped sections (constraints, decision, rejected alternatives, tradeoff) during candidate review, so preferences and conventions stay first-class memories without pretending to be decisions.
 
-`note` is the storage-first type for general observations and ideas. Notes remain fully searchable through `search_rationales`, but `compose_context` excludes them from task context packs by default so casual notes never compete with vetted rationale for the token budget. Pass `includeNotes: true` to compose with notes included. Search also accepts an `excludeTypes` filter for the same mechanism.
+Rationale memories and plain notes are separate concepts. Rationale memories are structured, reusable task context: decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use `compose_context` to retrieve rationale memory for the current task.
 
-Plain notes are also available through a lighter MCP surface. `record_note` accepts only `content` and is intended for quick searchable memory: rough observations, reminders, snippets, open questions, context breadcrumbs, or anything useful later that is too small or informal for rationale memory. Note content is limited to 1000 characters. `compose_notes_context` returns original note text only, with no summarization or rewriting, and selects up to 5000 characters by filling roughly 60% of the budget with weighted random notes before filling the rest by `upvotes - downvotes` and newest-first tiebreaks. Downvotes reduce random exposure but do not ban a note; archived notes and notes over the per-note limit are excluded.
+Plain notes are lightweight personal records, not rationale memory. `record_note` accepts only `content` and is intended for casual thoughts, preferences, impressions, memories, small context, and anything worth preserving or rediscovering later. Note content is limited to 1000 characters. `compose_notes_context` returns original note text only, with no summarization or rewriting, and selects up to 5000 characters by filling roughly 60% of the budget with weighted random notes before filling the rest by `upvotes - downvotes` and newest-first tiebreaks. Downvotes reduce random exposure but do not ban a note; archived notes and notes over the per-note limit are excluded.
 
 Auto-captured unreviewed candidates remain searchable and rank purely on relevance and lifecycle boosts; they carry `candidate`/`unreviewed` lifecycle fields in search results so callers can weigh trust themselves, and the larger `accepted`/`reviewed` boosts keep human-accepted rationale ahead. Use the administrative review flow later to accept, keep as candidate, mark as needing revision, or deprecate entries.
 
@@ -338,10 +338,11 @@ The internal review output is Markdown and highlights missing sections, strength
 Recommended LLM guidance:
 
 ```text
-Record relevant content into memory with auto_capture_rationale.
+Record relevant rationale memory with auto_capture_rationale.
 Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them.
-Memories can be referenced from other tasks and later conversations, so actively capture
-anything that seems useful later — decisions, reasoning, preferences, lessons learned.
+Rationale memories can be referenced from other tasks and later conversations, so actively capture
+reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned.
+Use record_note for casual thoughts, personal memories, and lightweight notes.
 Weak or duplicate captures are filtered out downstream; when in doubt, capture.
 ```
 

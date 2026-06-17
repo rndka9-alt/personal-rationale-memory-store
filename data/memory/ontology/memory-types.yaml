@@ -17,6 +17,3 @@ terms:
   - id: memory-type-constraint
     name: constraint
     description: An external constraint that bounds which solutions are viable.
-  - id: memory-type-note
-    name: note
-    description: A general observation or idea; searchable on demand but excluded from composed task context by default.
