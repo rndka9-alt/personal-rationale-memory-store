@@ -7,22 +7,35 @@ const unusedServiceMethod = async () => {
 };
 
 describe("MCP write tool results", () => {
+  it("exposes the intended compact MCP tool set", () => {
+    const services = createToolServices();
+
+    expect(toolDefinitions(services).map((toolDefinition) => toolDefinition.name)).toEqual([
+      "search_rationales",
+      "get_rationale",
+      "compose_context",
+      "continue_context",
+      "record_note",
+      "rate_note",
+      "compose_notes_context",
+      "auto_capture_rationale",
+      "record_refinement_opinion",
+      "record_usage_feedback"
+    ]);
+  });
+
   it("adds customized ChatGPT invocation status metadata to every tool", () => {
     const services = createToolServices();
     const expectedStatuses = new Map([
       ["auto_capture_rationale", ["메모 작성 중..", "메모 완료!"]],
-      ["archive_note", ["쪽지 치우는 중..", "쪽지 치웟어요!"]],
       ["compose_context", ["메모 훑어보는 중..", "메모 훑어보기 완료!"]],
       ["compose_notes_context", ["쪽지 꺼내는 중..", "쪽지 꺼냇어요!"]],
       ["continue_context", ["계속해서 훑어보는 중..", "추가 확인 완료!"]],
       ["get_rationale", ["특정 메모 확인하는 중..", "메모 확인 완료!"]],
-      ["get_status", ["메모장 찾아보는 중..", "찾았어요!"]],
-      ["ingest_session_candidates", ["메모 후보 모으는 중..", "후보 정리 완료!"]],
       ["rate_note", ["쪽지 평가 중..", "쪽지 평가 완료!"]],
       ["record_refinement_opinion", ["메모에 의견 붙이는 중..", "의견 붙이기 완료!"]],
       ["record_note", ["쪽지 적는 중..", "쪽지 적엇어요!"]],
       ["record_usage_feedback", ["메모를 평가하는 중..", "평가 완료!"]],
-      ["reindex_memory", ["메모 정리 중..", "정리 완료!"]],
       ["search_rationales", ["괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"]]
     ]);
 
@@ -43,7 +56,6 @@ describe("MCP write tool results", () => {
   it("adds planning annotations and output schemas to every tool", () => {
     const services = createToolServices();
     const readOnlyTools = new Set([
-      "get_status",
       "search_rationales",
       "get_rationale",
       "compose_context",
@@ -132,32 +144,6 @@ describe("MCP write tool results", () => {
     expect(payload).not.toHaveProperty("suggestedPatch");
   });
 
-  it("returns count and ids for bulk session ingestion", async () => {
-    const services = createToolServices();
-    const result = await getTool(services, "ingest_session_candidates").handler({
-      sessionRef: "session-1",
-      candidates: [
-        {
-          title: "First rationale",
-          rationale: "The first candidate has enough reusable context."
-        },
-        {
-          title: "Second rationale",
-          rationale: "The second candidate has enough reusable context."
-        }
-      ]
-    });
-
-    const payload = parseToolJson(result);
-
-    expect(payload).toEqual({
-      ok: true,
-      count: 2,
-      ids: ["R20260604T000000000Z-bulk-1", "R20260604T000000000Z-bulk-2"]
-    });
-    expect(payload).not.toHaveProperty("entries");
-  });
-
   it("returns compact success metadata for notes", async () => {
     const services = createToolServices();
     const result = await getTool(services, "record_note").handler({
@@ -177,40 +163,10 @@ describe("MCP write tool results", () => {
     });
     expect(payload).not.toHaveProperty("content");
   });
-
-  it("includes duplicate ids for bulk session ingestion", async () => {
-    const services = createToolServices();
-    services.rationaleService.recordCandidate = async () => ({
-      id: "R20260604T000000000Z-existing",
-      canonicalPath: "/memory/R20260604T000000000Z-existing.md",
-      status: "duplicate",
-      existingId: "R20260604T000000000Z-existing"
-    });
-
-    const result = await getTool(services, "ingest_session_candidates").handler({
-      sessionRef: "session-1",
-      candidates: [
-        {
-          title: "Existing rationale",
-          rationale: "Duplicate content should point back to the existing rationale."
-        }
-      ]
-    });
-
-    const payload = parseToolJson(result);
-
-    expect(payload).toEqual({
-      ok: true,
-      count: 1,
-      ids: ["R20260604T000000000Z-existing"],
-      duplicateIds: ["R20260604T000000000Z-existing"]
-    });
-  });
 });
 
 function createToolServices(): ToolServices {
   const recordedEntry = createRationaleEntry("R20260604T000000000Z-compact", "Keep write responses compact");
-  let recordCandidateCount = 0;
 
   return {
     rationaleService: {
@@ -240,17 +196,7 @@ function createToolServices(): ToolServices {
         eventType: "user_helpful",
         useCount: 1,
         lastUsedAt: "2026-06-04T00:00:00.000Z"
-      }),
-      reindexMemory: async () => 3,
-      recordCandidate: async () => {
-        recordCandidateCount += 1;
-        const id = `R20260604T000000000Z-bulk-${recordCandidateCount}`;
-        return {
-          id,
-          canonicalPath: `/memory/${id}.md`,
-          entry: createRationaleEntry(id, `Bulk rationale ${recordCandidateCount}`)
-        };
-      }
+      })
     },
     contextComposer: {
       compose: unusedServiceMethod,
@@ -263,15 +209,7 @@ function createToolServices(): ToolServices {
         upvotes: 1,
         updatedAt: "2026-06-04T00:01:00.000Z"
       }),
-      archiveNote: async () => ({
-        ...createNoteRecord(),
-        archived: true,
-        updatedAt: "2026-06-04T00:01:00.000Z"
-      }),
       composeNotesContext: async () => "## Notes\n- Compact note context."
-    },
-    statusService: {
-      status: unusedServiceMethod
     }
   };
 }

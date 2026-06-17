@@ -54,7 +54,7 @@ Canonical Markdown/YAML memories remain under `./data:/app/data` as a host bind 
 Files are the canonical source of truth, but they are not watched automatically. If a human or an LLM-assisted workflow edits a Markdown file directly, run:
 
 ```text
-reindex_memory({ "scope": "changed" })
+npm run cli -- reindex changed
 ```
 
 Changed reindex compares canonical file hashes with the last indexed hash and updates only stale entries. This keeps file review explicit instead of silently mutating the index in the background.
@@ -244,20 +244,16 @@ Query embeddings use `input_type=query`. Indexed document/chunk embeddings use `
 
 Tools:
 
-- `get_status`
 - `search_rationales`
 - `get_rationale`
 - `compose_context`
 - `continue_context`
 - `record_note`
 - `rate_note`
-- `archive_note`
 - `compose_notes_context`
 - `auto_capture_rationale`
 - `record_refinement_opinion`
 - `record_usage_feedback`
-- `ingest_session_candidates`
-- `reindex_memory`
 
 Resources:
 
@@ -286,7 +282,7 @@ Canonical rationale files use YAML frontmatter plus Markdown sections:
 - project context
 - source metadata
 
-Postgres stores queryable metadata and pgvector embeddings. Files remain the canonical source of truth, so `reindex_memory` can rebuild the DB index from `data/memory/rationales`.
+Postgres stores queryable metadata and pgvector embeddings. Files remain the canonical source of truth, so the CLI reindex command can rebuild the DB index from `data/memory/rationales`.
 
 Lifecycle is represented by explicit frontmatter fields:
 
@@ -300,7 +296,7 @@ Search uses a hybrid ranking pass over vector results, lexical results, metadata
 
 Every `search_rationales` and `compose_context` retrieval records a query event (source kind, query, result count, top score, warning kinds, caller project name) in `retrieval_query_events`. Zero-hit queries surface through `/status` under `retrieval` as a backlog of memories that were needed but never captured, including a per-project zero-hit breakdown so capture gaps are visible per repository; a null project means the caller did not pass one. Query events are observability-only and never affect ranking.
 
-New candidate memories infer missing `domains`, `intents`, and `modes` from their rationale content while preserving any explicit metadata tags supplied by the caller. Use `reindex_memory({ "scope": "untagged" })` or `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
+New candidate memories infer missing `domains`, `intents`, and `modes` from their rationale content while preserving any explicit metadata tags supplied by the caller. Use `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
 
 Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs. `search_rationales` and `compose_context` accept an optional `project` argument; when the caller passes the active project, entries whose `project.name` or `project.repo` matches receive a `project-match` ranking boost. Project context is never used as a penalty: memories from other projects keep their relevance-based ranking so cross-project rationale stays discoverable.
 
@@ -333,7 +329,7 @@ Capture inputs accept an optional `type`: `rationale` (default), `known_failure`
 
 `note` is the storage-first type for general observations and ideas. Notes remain fully searchable through `search_rationales`, but `compose_context` excludes them from task context packs by default so casual notes never compete with vetted rationale for the token budget. Pass `includeNotes: true` to compose with notes included. Search also accepts an `excludeTypes` filter for the same mechanism.
 
-Plain notes are also available through a lighter MCP surface. `record_note` accepts only `content` and the server manages ids, timestamps, upvotes, downvotes, and archive state. Note content is limited to 1000 characters. `compose_notes_context` returns original note text only, with no summarization or rewriting, and selects up to 5000 characters by filling roughly 60% of the budget with weighted random notes before filling the rest by `upvotes - downvotes` and newest-first tiebreaks. Downvotes reduce random exposure but do not ban a note; archived notes and notes over the per-note limit are excluded.
+Plain notes are also available through a lighter MCP surface. `record_note` accepts only `content` and is intended for quick searchable memory: rough observations, reminders, snippets, open questions, context breadcrumbs, or anything useful later that is too small or informal for rationale memory. Note content is limited to 1000 characters. `compose_notes_context` returns original note text only, with no summarization or rewriting, and selects up to 5000 characters by filling roughly 60% of the budget with weighted random notes before filling the rest by `upvotes - downvotes` and newest-first tiebreaks. Downvotes reduce random exposure but do not ban a note; archived notes and notes over the per-note limit are excluded.
 
 Auto-captured unreviewed candidates remain searchable and rank purely on relevance and lifecycle boosts; they carry `candidate`/`unreviewed` lifecycle fields in search results so callers can weigh trust themselves, and the larger `accepted`/`reviewed` boosts keep human-accepted rationale ahead. Use the administrative review flow later to accept, keep as candidate, mark as needing revision, or deprecate entries.
 

@@ -3,10 +3,8 @@ import type { ContextComposer } from "../memory/contextComposer.js";
 import type { NoteService } from "../memory/noteService.js";
 import type { RationaleService, RationaleWriteResult } from "../memory/rationaleService.js";
 import {
-  archiveNoteInputSchema,
   autoCaptureRationaleInputSchema,
   composeNotesContextInputSchema,
-  recordCandidateInputSchema,
   rateNoteInputSchema,
   recordRefinementOpinionInputSchema,
   recordNoteInputSchema,
@@ -15,7 +13,6 @@ import {
   searchProjectFilterSchema
 } from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
-import type { StatusService } from "../diagnostics/statusService.js";
 
 export type ToolServices = {
   rationaleService: Pick<
@@ -25,12 +22,9 @@ export type ToolServices = {
     | "autoCaptureRationale"
     | "recordRefinementOpinion"
     | "recordUsageFeedback"
-    | "reindexMemory"
-    | "recordCandidate"
   >;
   contextComposer: Pick<ContextComposer, "compose" | "continueContext">;
-  noteService: Pick<NoteService, "recordNote" | "rateNote" | "archiveNote" | "composeNotesContext">;
-  statusService: Pick<StatusService, "status">;
+  noteService: Pick<NoteService, "recordNote" | "rateNote" | "composeNotesContext">;
 };
 
 export type ToolDefinition = {
@@ -52,33 +46,8 @@ type ToolResult = {
   structuredContent?: Record<string, unknown>;
 };
 
-const sessionCandidateInputSchema = z.object({
-  title: recordCandidateInputSchema.shape.title,
-  type: recordCandidateInputSchema.shape.type,
-  situation: recordCandidateInputSchema.shape.situation,
-  goal: recordCandidateInputSchema.shape.goal,
-  constraints: recordCandidateInputSchema.shape.constraints,
-  decision: recordCandidateInputSchema.shape.decision,
-  rationale: recordCandidateInputSchema.shape.rationale,
-  rejectedAlternatives: recordCandidateInputSchema.shape.rejectedAlternatives,
-  tradeoff: recordCandidateInputSchema.shape.tradeoff,
-  reuseWhen: recordCandidateInputSchema.shape.reuseWhen,
-  avoidWhen: recordCandidateInputSchema.shape.avoidWhen,
-  project: recordCandidateInputSchema.shape.project,
-  metadata: recordCandidateInputSchema.shape.metadata
-});
-
 export function toolDefinitions(services: ToolServices): ToolDefinition[] {
   const definitions: ToolDefinition[] = [
-    {
-      name: "get_status",
-      description: "Return service, storage, database, and indexing status.",
-      schema: {},
-      outputSchema: jsonOutputSchema,
-      annotations: readOnlyToolAnnotations,
-      metadata: toolInvocationMetadata("메모장 찾아보는 중..", "찾았어요!"),
-      handler: async () => jsonToolResult(await services.statusService.status())
-    },
     {
       name: "search_rationales",
       description: "Search rationale memories with lexical, vector, and metadata signals. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
@@ -130,7 +99,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "record_note",
-      description: "Record a plain note. The caller provides only content; server-managed metadata tracks id, timestamps, ratings, and archive state.",
+      description: "Record a lightweight plain note from content only. Use this freely for quick searchable memory: rough observations, reminders, snippets, open questions, context breadcrumbs, or anything useful later that is too small or informal for rationale memory.",
       schema: recordNoteInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -147,16 +116,6 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       metadata: toolInvocationMetadata("쪽지 평가 중..", "쪽지 평가 완료!"),
       handler: async (input: unknown) =>
         jsonToolResult(compactNoteResult(await services.noteService.rateNote(rateNoteInputSchema.parse(input))))
-    },
-    {
-      name: "archive_note",
-      description: "Archive a note so it no longer appears in composed note context.",
-      schema: archiveNoteInputSchema.shape,
-      outputSchema: jsonOutputSchema,
-      annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("쪽지 치우는 중..", "쪽지 치웟어요!"),
-      handler: async (input: unknown) =>
-        jsonToolResult(compactNoteResult(await services.noteService.archiveNote(archiveNoteInputSchema.parse(input))))
     },
     {
       name: "compose_notes_context",
@@ -204,51 +163,6 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         jsonToolResult(compactUsageFeedbackWriteResult(
           await services.rationaleService.recordUsageFeedback(recordUsageFeedbackInputSchema.parse(input))
         ))
-    },
-    {
-      name: "reindex_memory",
-      description: "Rebuild the DB index from canonical Markdown files.",
-      schema: {
-        scope: z.enum(["all", "changed", "untagged"]).optional(),
-        ids: z.array(z.string()).optional()
-      },
-      outputSchema: jsonOutputSchema,
-      annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("메모 정리 중..", "정리 완료!"),
-      handler: async (input) => {
-        const parsedInput = reindexInputSchema.parse(input);
-        return jsonToolResult({
-          ok: true,
-          indexed: await services.rationaleService.reindexMemory(parsedInput.scope, parsedInput.ids)
-        });
-      }
-    },
-    {
-      name: "ingest_session_candidates",
-      description: "Record multiple rationale candidates from a session.",
-      schema: {
-        sessionRef: z.string().min(1),
-        candidates: z.array(sessionCandidateInputSchema)
-      },
-      outputSchema: jsonOutputSchema,
-      annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("메모 후보 모으는 중..", "후보 정리 완료!"),
-      handler: async (input) => {
-        const parsedInput = ingestSessionInputSchema.parse(input);
-        const results = [];
-        for (const candidate of parsedInput.candidates) {
-          results.push(await services.rationaleService.recordCandidate({
-            ...candidate,
-            source: { kind: "session", ref: parsedInput.sessionRef },
-            metadata: {
-              ...candidate.metadata,
-              capture_kind: "session",
-              session_ref: parsedInput.sessionRef
-            }
-          }));
-        }
-        return jsonToolResult(compactBulkRationaleWriteResult(results));
-      }
     }
   ];
 
@@ -290,16 +204,6 @@ const continueInputSchema = z.object({
   cursor: z.string().min(1),
   tokenBudget: z.number().int().positive().optional(),
   includeFullTopK: z.number().int().min(0).optional()
-});
-
-const reindexInputSchema = z.object({
-  scope: z.enum(["all", "changed", "untagged"]).optional(),
-  ids: z.array(z.string()).optional()
-});
-
-const ingestSessionInputSchema = z.object({
-  sessionRef: z.string().min(1),
-  candidates: z.array(sessionCandidateInputSchema)
 });
 
 function jsonToolResult(value: unknown): ToolResult {
@@ -357,37 +261,6 @@ function compactNoteResult(result: Awaited<ReturnType<NoteService["recordNote"]>
     createdAt: result.createdAt,
     updatedAt: result.updatedAt
   };
-}
-
-function compactBulkRationaleWriteResult(results: RationaleWriteResult[]) {
-  const duplicateIds = results
-    .filter((result) => result.status === "duplicate")
-    .map((result) => result.id);
-  const processingIds = results
-    .filter((result) => result.status === "processing")
-    .map((result) => result.id);
-
-  const response: {
-    ok: true;
-    count: number;
-    ids: string[];
-    duplicateIds?: string[];
-    processingIds?: string[];
-  } = {
-    ok: true,
-    count: results.length,
-    ids: results.map((result) => result.id)
-  };
-
-  if (duplicateIds.length > 0) {
-    response.duplicateIds = duplicateIds;
-  }
-
-  if (processingIds.length > 0) {
-    response.processingIds = processingIds;
-  }
-
-  return response;
 }
 
 function compactRefinementOpinionWriteResult(result: { id: string; entryId: string; status: string }) {
