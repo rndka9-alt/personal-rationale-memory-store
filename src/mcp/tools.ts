@@ -98,7 +98,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "record_note",
-      description: "Record a lightweight personal note from content only. Use this freely for casual thoughts, preferences, impressions, memories, small context, and anything worth preserving or rediscovering later; notes are separate from rationale memories. If a note may be inaccurate, ambiguous, or worth correcting later, mention it to the user so they can revise or remove it.",
+      description: "Record a lightweight personal note. Use content for the note itself, with optional topic and sourceConversation for a small excerpt of the conversation that led to the note. Notes are separate from rationale memories. If a note may be inaccurate, ambiguous, or worth correcting later, mention it to the user so they can revise or remove it.",
       schema: recordNoteInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,

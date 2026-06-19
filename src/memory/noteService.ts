@@ -53,7 +53,9 @@ export class NoteService {
     const validatedInput = recordNoteInputSchema.parse(input);
     const note = await insertNote(this.pool, {
       id: createNoteId(),
-      content: validatedInput.content
+      content: validatedInput.content,
+      topic: validatedInput.topic,
+      sourceConversation: validatedInput.sourceConversation
     });
     logInfo("Note recorded.", {
       noteId: note.id,

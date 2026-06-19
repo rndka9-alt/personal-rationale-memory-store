@@ -47,12 +47,25 @@ function parseNoteRecord(value: unknown): NoteRecord {
   return {
     id: readRequiredString(value, "id"),
     content: readRequiredString(value, "content"),
+    topic: readOptionalString(value, "topic"),
+    sourceConversation: readOptionalSourceConversation(value, "sourceConversation"),
     upvotes: readNumber(value, "upvotes"),
     downvotes: readNumber(value, "downvotes"),
     archived: readBoolean(value, "archived"),
     createdAt: readRequiredString(value, "createdAt"),
     updatedAt: readRequiredString(value, "updatedAt")
   };
+}
+
+function readOptionalString(value: Record<string, unknown>, key: string) {
+  const propertyValue = value[key];
+  if (typeof propertyValue === "undefined") {
+    return undefined;
+  }
+  if (typeof propertyValue !== "string") {
+    throw new Error(`Expected ${key} to be a string.`);
+  }
+  return propertyValue;
 }
 
 function readRequiredString(value: Record<string, unknown>, key: string) {
@@ -75,6 +88,36 @@ function readBoolean(value: Record<string, unknown>, key: string) {
   const propertyValue = value[key];
   if (typeof propertyValue !== "boolean") {
     throw new Error(`Expected ${key} to be a boolean.`);
+  }
+  return propertyValue;
+}
+
+function readOptionalSourceConversation(value: Record<string, unknown>, key: string): NoteRecord["sourceConversation"] {
+  const propertyValue = value[key];
+  if (typeof propertyValue === "undefined") {
+    return undefined;
+  }
+  if (!isRecord(propertyValue) || !Array.isArray(propertyValue.messages)) {
+    throw new Error(`Expected ${key} to contain messages.`);
+  }
+  return {
+    messages: propertyValue.messages.map(parseSourceConversationMessage)
+  };
+}
+
+function parseSourceConversationMessage(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error("Invalid source conversation message.");
+  }
+  const role = readSourceConversationRole(value, "role");
+  const text = readRequiredString(value, "text");
+  return { role, text };
+}
+
+function readSourceConversationRole(value: Record<string, unknown>, key: string) {
+  const propertyValue = value[key];
+  if (propertyValue !== "user" && propertyValue !== "assistant") {
+    throw new Error(`Expected ${key} to be a source conversation role.`);
   }
   return propertyValue;
 }

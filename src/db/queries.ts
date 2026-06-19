@@ -14,6 +14,7 @@ import {
   type MemoryUsageEventType,
   type NoteRating,
   type NoteRecord,
+  noteSourceConversationSchema,
   type ProjectContext
 } from "../memory/schema.js";
 
@@ -58,6 +59,8 @@ export type MemoryRefinementOpinionInsert = {
 export type NoteInsert = {
   id: string;
   content: string;
+  topic?: string;
+  sourceConversation?: NoteRecord["sourceConversation"];
 };
 
 export type RationaleContentFingerprintClaim =
@@ -288,10 +291,10 @@ export async function insertNote(pool: pg.Pool, note: NoteInsert) {
     contentLength: note.content.length
   });
   const result = await pool.query(
-    `INSERT INTO notes (id, content)
-    VALUES ($1, $2)
+    `INSERT INTO notes (id, content, topic, source_conversation)
+    VALUES ($1, $2, $3, $4)
     RETURNING *`,
-    [note.id, note.content]
+    [note.id, note.content, note.topic, note.sourceConversation]
   );
   const row = result.rows[0];
   if (!row) {
@@ -966,6 +969,8 @@ function mapNoteRow(row: pg.QueryResultRow): NoteRecord {
   return {
     id: String(row.id),
     content: String(row.content),
+    topic: readOptionalString(row.topic, "topic"),
+    sourceConversation: readOptionalNoteSourceConversation(row.source_conversation),
     upvotes: Number(row.upvotes),
     downvotes: Number(row.downvotes),
     archived: Boolean(row.archived),
@@ -1236,6 +1241,23 @@ function readOptionalRecord(value: unknown, columnName: string) {
     return undefined;
   }
   return readRecord(value, columnName);
+}
+
+function readOptionalString(value: unknown, columnName: string) {
+  if (value === null || typeof value === "undefined") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`Expected ${columnName} to be a string.`);
+  }
+  return value;
+}
+
+function readOptionalNoteSourceConversation(value: unknown) {
+  if (value === null || typeof value === "undefined") {
+    return undefined;
+  }
+  return noteSourceConversationSchema.parse(value);
 }
 
 function readTimestamp(value: unknown, columnName: string) {

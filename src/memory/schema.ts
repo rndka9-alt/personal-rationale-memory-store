@@ -139,8 +139,24 @@ export const noteContentSchema = z.string()
   .max(1000)
   .refine((value) => value.trim().length > 0, "Note content cannot be blank.");
 
+export const noteSourceConversationRoleSchema = z.enum(["user", "assistant"]);
+
+export const noteSourceConversationMessageSchema = z.object({
+  role: noteSourceConversationRoleSchema,
+  text: z.string()
+    .min(1)
+    .max(1500)
+    .refine((value) => value.trim().length > 0, "Source conversation text cannot be blank.")
+});
+
+export const noteSourceConversationSchema = z.object({
+  messages: z.array(noteSourceConversationMessageSchema).min(1).max(4)
+});
+
 export const recordNoteInputSchema = z.object({
-  content: noteContentSchema
+  content: noteContentSchema,
+  topic: z.string().min(1).max(120).optional(),
+  sourceConversation: noteSourceConversationSchema.optional()
 });
 
 export const noteRatingSchema = z.enum(["up", "down"]);
@@ -195,6 +211,7 @@ export type RefinementOpinionType = z.infer<typeof refinementOpinionTypeSchema>;
 export type RefinementOpinionStatus = z.infer<typeof refinementOpinionStatusSchema>;
 export type RecordRefinementOpinionInput = z.infer<typeof recordRefinementOpinionInputSchema>;
 export type RecordUsageFeedbackInput = z.infer<typeof recordUsageFeedbackInputSchema>;
+export type NoteSourceConversation = z.infer<typeof noteSourceConversationSchema>;
 export type RecordNoteInput = z.infer<typeof recordNoteInputSchema>;
 export type NoteRating = z.infer<typeof noteRatingSchema>;
 export type RateNoteInput = z.infer<typeof rateNoteInputSchema>;
@@ -204,6 +221,8 @@ export type ComposeNotesContextInput = z.infer<typeof composeNotesContextInputSc
 export type NoteRecord = {
   id: string;
   content: string;
+  topic?: string;
+  sourceConversation?: NoteSourceConversation;
   upvotes: number;
   downvotes: number;
   archived: boolean;

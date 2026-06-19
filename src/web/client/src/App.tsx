@@ -426,6 +426,7 @@ function NotesView(props: {
                   <MetadataPill value={`down ${note.downvotes}`} />
                 </div>
                 <p className="whitespace-pre-wrap break-words text-sm leading-6 text-ink-base">{note.content}</p>
+                <NoteSourceContext note={note} />
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint">
                   <span>{note.id}</span>
                   <span>Created {formatRelativeDate(note.createdAt)}</span>
@@ -444,6 +445,36 @@ function NotesView(props: {
         </div>
       )}
     </section>
+  );
+}
+
+function NoteSourceContext(props: { note: NoteRecord }) {
+  if (!props.note.topic && !props.note.sourceConversation) {
+    return null;
+  }
+
+  return (
+    <details className="mt-3 border-l border-line-base pl-3 text-xs text-ink-muted">
+      <summary className="cursor-pointer select-none text-ink-muted">Source context</summary>
+      <div className="mt-2 space-y-2">
+        {props.note.topic ? (
+          <p>
+            <span className="font-medium text-ink-strong">Topic</span>
+            <span className="ml-2">{props.note.topic}</span>
+          </p>
+        ) : null}
+        {props.note.sourceConversation ? (
+          <div className="space-y-2">
+            {props.note.sourceConversation.messages.map((message, index) => (
+              <div key={`${message.role}-${index}`}>
+                <span className="font-medium text-ink-strong">{message.role}</span>
+                <p className="mt-1 whitespace-pre-wrap break-words leading-5">{message.text}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

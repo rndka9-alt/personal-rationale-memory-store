@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toolDefinitions, type ToolDefinition, type ToolServices } from "../src/mcp/tools.js";
-import type { RationaleEntry } from "../src/memory/schema.js";
+import type { NoteRecord, RationaleEntry } from "../src/memory/schema.js";
 
 const unusedServiceMethod = async () => {
   throw new Error("Unexpected service method call.");
@@ -162,6 +162,8 @@ describe("MCP write tool results", () => {
       updatedAt: "2026-06-04T00:00:00.000Z"
     });
     expect(payload).not.toHaveProperty("content");
+    expect(payload).not.toHaveProperty("topic");
+    expect(payload).not.toHaveProperty("sourceConversation");
   });
 });
 
@@ -240,10 +242,17 @@ function createRationaleEntry(id: string, title: string): RationaleEntry {
   };
 }
 
-function createNoteRecord() {
+function createNoteRecord(): NoteRecord {
   return {
     id: "N20260604T000000000Z-compact",
     content: "Full note body should not be returned by write tools.",
+    topic: "Hidden note source context",
+    sourceConversation: {
+      messages: [
+        { role: "user", text: "This should not be returned." },
+        { role: "assistant", text: "Keep write responses compact." }
+      ]
+    },
     upvotes: 0,
     downvotes: 0,
     archived: false,

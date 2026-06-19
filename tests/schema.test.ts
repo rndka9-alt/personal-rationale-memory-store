@@ -135,14 +135,27 @@ describe("recordUsageFeedbackInputSchema", () => {
 });
 
 describe("note input schemas", () => {
-  it("accepts content-only notes and rejects blank or overlong content", () => {
+  it("accepts notes with optional source context and rejects blank or overlong content", () => {
     const input = recordNoteInputSchema.parse({
-      content: "쭈인님은 노트 원문을 요약 없이 보관하길 원한다."
+      content: "쭈인님은 노트 원문을 요약 없이 보관하길 원한다.",
+      topic: "노트 provenance 설계",
+      sourceConversation: {
+        messages: [
+          { role: "user", text: "노트가 꽤 재밌게 저장되더라구..." },
+          { role: "assistant", text: "그때 분위기를 보는 쪽이 좋겟어요." }
+        ]
+      }
     });
 
     expect(input.content).toContain("요약 없이");
+    expect(input.topic).toBe("노트 provenance 설계");
+    expect(input.sourceConversation?.messages[0]?.role).toBe("user");
     expect(() => recordNoteInputSchema.parse({ content: "   " })).toThrow();
     expect(() => recordNoteInputSchema.parse({ content: "x".repeat(1001) })).toThrow();
+    expect(() => recordNoteInputSchema.parse({
+      content: "invalid role",
+      sourceConversation: { messages: [{ role: "system", text: "hidden" }] }
+    })).toThrow();
   });
 
   it("accepts bounded note compose budgets and rating values", () => {
