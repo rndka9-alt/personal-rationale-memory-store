@@ -229,59 +229,41 @@ function compactRationaleWriteResult(result: RationaleWriteResult) {
   const response: {
     ok: true;
     id: string;
-    canonicalPath: string;
     status?: RationaleWriteResult["status"];
-    existingId?: string;
   } = {
     ok: true,
-    id: result.id,
-    canonicalPath: result.canonicalPath
+    id: result.id
   };
 
   if (result.status) {
     response.status = result.status;
   }
 
-  if (result.existingId) {
-    response.existingId = result.existingId;
-  }
-
   return response;
 }
 
-function compactNoteResult(result: Awaited<ReturnType<NoteService["recordNote"]>>) {
+function compactNoteResult(result: { id: string }) {
   return {
     ok: true,
-    id: result.id,
-    upvotes: result.upvotes,
-    downvotes: result.downvotes,
-    archived: result.archived,
-    createdAt: result.createdAt,
-    updatedAt: result.updatedAt
+    id: result.id
   };
 }
 
-function compactRefinementOpinionWriteResult(result: { id: string; entryId: string; status: string }) {
+function compactRefinementOpinionWriteResult(result: { id: string }) {
   return {
     ok: true,
-    id: result.id,
-    entryId: result.entryId,
-    status: result.status
+    id: result.id
   };
 }
 
 function compactUsageFeedbackWriteResult(result: {
   entryId: string;
   eventType: string;
-  useCount: number;
-  lastUsedAt?: string;
 }) {
   return {
     ok: true,
     entryId: result.entryId,
-    eventType: result.eventType,
-    useCount: result.useCount,
-    lastUsedAt: result.lastUsedAt
+    eventType: result.eventType
   };
 }
 

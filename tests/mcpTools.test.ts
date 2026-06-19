@@ -87,9 +87,9 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      id: "R20260604T000000000Z-compact",
-      canonicalPath: "/memory/R20260604T000000000Z-compact.md"
+      id: "R20260604T000000000Z-compact"
     });
+    expect(payload).not.toHaveProperty("canonicalPath");
     expect(payload).not.toHaveProperty("entry");
   });
 
@@ -115,10 +115,10 @@ describe("MCP write tool results", () => {
     expect(payload).toEqual({
       ok: true,
       id: "R20260604T000000000Z-existing",
-      canonicalPath: "/memory/R20260604T000000000Z-existing.md",
-      status: "duplicate",
-      existingId: "R20260604T000000000Z-existing"
+      status: "duplicate"
     });
+    expect(payload).not.toHaveProperty("canonicalPath");
+    expect(payload).not.toHaveProperty("existingId");
     expect(payload).not.toHaveProperty("entry");
   });
 
@@ -136,10 +136,10 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      id: "opinion-1",
-      entryId: "R20260604T000000000Z-compact",
-      status: "open"
+      id: "opinion-1"
     });
+    expect(payload).not.toHaveProperty("entryId");
+    expect(payload).not.toHaveProperty("status");
     expect(payload).not.toHaveProperty("body");
     expect(payload).not.toHaveProperty("suggestedPatch");
   });
@@ -154,16 +154,52 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      id: "N20260604T000000000Z-compact",
-      upvotes: 0,
-      downvotes: 0,
-      archived: false,
-      createdAt: "2026-06-04T00:00:00.000Z",
-      updatedAt: "2026-06-04T00:00:00.000Z"
+      id: "N20260604T000000000Z-compact"
     });
+    expect(payload).not.toHaveProperty("upvotes");
+    expect(payload).not.toHaveProperty("downvotes");
+    expect(payload).not.toHaveProperty("archived");
+    expect(payload).not.toHaveProperty("createdAt");
+    expect(payload).not.toHaveProperty("updatedAt");
     expect(payload).not.toHaveProperty("content");
     expect(payload).not.toHaveProperty("topic");
     expect(payload).not.toHaveProperty("sourceConversation");
+  });
+
+  it("returns compact success metadata for note ratings", async () => {
+    const services = createToolServices();
+    const result = await getTool(services, "rate_note").handler({
+      noteId: "N20260604T000000000Z-compact",
+      rating: "up"
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload).toEqual({
+      ok: true,
+      id: "N20260604T000000000Z-compact"
+    });
+    expect(payload).not.toHaveProperty("upvotes");
+    expect(payload).not.toHaveProperty("downvotes");
+    expect(payload).not.toHaveProperty("updatedAt");
+  });
+
+  it("returns compact success metadata for usage feedback", async () => {
+    const services = createToolServices();
+    const result = await getTool(services, "record_usage_feedback").handler({
+      entryId: "R20260604T000000000Z-compact",
+      eventType: "user_helpful"
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload).toEqual({
+      ok: true,
+      entryId: "R20260604T000000000Z-compact",
+      eventType: "user_helpful"
+    });
+    expect(payload).not.toHaveProperty("useCount");
+    expect(payload).not.toHaveProperty("lastUsedAt");
   });
 });
 
