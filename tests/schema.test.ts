@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   autoCaptureRationaleInputSchema,
-  composeNotesContextInputSchema,
   memoryUsageEventTypeSchema,
   rateNoteInputSchema,
   recordRefinementOpinionInputSchema,
@@ -158,8 +157,7 @@ describe("note input schemas", () => {
     })).toThrow();
   });
 
-  it("accepts bounded note compose budgets and rating values", () => {
-    expect(composeNotesContextInputSchema.parse({ maxLength: 5000 }).maxLength).toBe(5000);
+  it("accepts note rating values", () => {
     expect(rateNoteInputSchema.parse({ noteId: "N1", rating: "up" }).rating).toBe("up");
     expect(() => rateNoteInputSchema.parse({ noteId: "N1", rating: "sideways" })).toThrow();
   });

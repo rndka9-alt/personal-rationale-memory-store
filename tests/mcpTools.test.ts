@@ -247,7 +247,7 @@ function createToolServices(): ToolServices {
         upvotes: 1,
         updatedAt: "2026-06-04T00:01:00.000Z"
       }),
-      composeNotesContext: async () => "## Notes\n- Compact note context."
+      composeNotesContext: async () => "Compact note context."
     }
   };
 }

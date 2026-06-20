@@ -84,11 +84,10 @@ export class NoteService {
   }
 
   async composeNotesContext(input: ComposeNotesContextInput = {}) {
-    const validatedInput = composeNotesContextInputSchema.parse(input);
-    const maxLength = validatedInput.maxLength ?? defaultNoteContextMaxLength;
+    composeNotesContextInputSchema.parse(input);
     const notes = await listActiveNotes(this.pool);
     const selection = selectNotesForContext(notes, {
-      maxLength,
+      maxLength: defaultNoteContextMaxLength,
       maxNoteLength: noteContentMaxLength,
       randomRatio: randomContextRatio
     });
@@ -183,33 +182,8 @@ function compareNotesByScoreThenDate(left: NoteRecord, right: NoteRecord) {
   return right.createdAt.localeCompare(left.createdAt);
 }
 
-function formatNotesContext(selection: NoteContextSelection) {
-  const lines = ["## Notes"];
-  if (selection.selectedNotes.length === 0) {
-    lines.push("- No notes selected.");
-  } else {
-    for (const selectedNote of selection.selectedNotes) {
-      lines.push(formatNoteContent(selectedNote.note.content));
-    }
-  }
-
-  lines.push(
-    "",
-    `Selected notes: ${selection.selectedNotes.length}`,
-    `Random notes: ${selection.randomSelectedNotes}`,
-    `Score notes: ${selection.scoreSelectedNotes}`,
-    `Omitted notes: ${selection.omittedNotes}`,
-    `Excluded long notes: ${selection.excludedLongNotes}`,
-    `Selected content length: ${selection.selectedContentLength}/${selection.maxLength}`
-  );
-  return lines.join("\n");
-}
-
-function formatNoteContent(content: string) {
-  return content
-    .split("\n")
-    .map((line, index) => index === 0 ? `- ${line}` : `  ${line}`)
-    .join("\n");
+export function formatNotesContext(selection: NoteContextSelection) {
+  return selection.selectedNotes.map((selectedNote) => selectedNote.note.content).join("\n\n");
 }
 
 function createNoteId() {

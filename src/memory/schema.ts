@@ -170,9 +170,7 @@ export const archiveNoteInputSchema = z.object({
   noteId: z.string().min(1)
 });
 
-export const composeNotesContextInputSchema = z.object({
-  maxLength: z.number().int().positive().max(20000).optional()
-});
+export const composeNotesContextInputSchema = z.object({});
 
 // Ranking-only signal: boosts matching-project entries without filtering or
 // penalizing other projects, so cross-project rationale stays discoverable.

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculateNoteRandomWeight,
   calculateNoteScore,
+  formatNotesContext,
   selectNotesForContext
 } from "../src/memory/noteService.js";
 import type { NoteRecord } from "../src/memory/schema.js";
@@ -61,6 +62,31 @@ describe("note context selection", () => {
 
     expect(selection.selectedNotes.map((selectedNote) => selectedNote.note.id)).toEqual(["short"]);
     expect(selection.excludedLongNotes).toBe(1);
+  });
+
+  it("formats selected notes as original content without headers or selection metadata", () => {
+    const notes = [
+      createNote("first", "first line\nsecond line", 0, 0, "2026-06-12T00:00:02.000Z"),
+      createNote("second", "another note", 0, 0, "2026-06-12T00:00:01.000Z")
+    ];
+
+    const selection = selectNotesForContext(notes, {
+      maxLength: 5000,
+      maxNoteLength: 1000,
+      randomRatio: 0.6
+    }, () => 0);
+
+    expect(formatNotesContext(selection)).toBe("first line\nsecond line\n\nanother note");
+  });
+
+  it("formats an empty note selection as empty text", () => {
+    const selection = selectNotesForContext([], {
+      maxLength: 5000,
+      maxNoteLength: 1000,
+      randomRatio: 0.6
+    }, () => 0);
+
+    expect(formatNotesContext(selection)).toBe("");
   });
 });
 
