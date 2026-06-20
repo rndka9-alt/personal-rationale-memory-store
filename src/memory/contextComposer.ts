@@ -86,20 +86,6 @@ export class ContextComposer {
 
     const lines = [
       "# Rationale Context Pack",
-      "",
-      "## Task classification",
-      `- intent: ${classification.intent}`,
-      `- intents: ${classification.intents.join(", ")}`,
-      `- domain: ${classification.domain}`,
-      `- domains: ${classification.domains.join(", ")}`,
-      `- mode: ${classification.mode}`,
-      `- modes: ${classification.modes.join(", ")}`,
-      `- risk level: ${classification.riskLevel}`,
-      `- likely artifact: ${classification.likelyArtifact}`,
-      `- substantial: ${classification.substantial}`,
-      `- trivial: ${classification.trivial}`,
-      classification.fileHints.length > 0 ? `- file hints: ${classification.fileHints.join(", ")}` : "- file hints: none",
-      classification.reasons.length > 0 ? `- classification reasons: ${classification.reasons.join("; ")}` : "- classification reasons: default fallback",
       ...formatSearchWarnings(searchResult.warnings),
       "",
       "## Stable kernel",
@@ -117,7 +103,7 @@ export class ContextComposer {
       const resultRefinementOpinions = refinementOpinionsByEntryId.get(result.id) ?? [];
       const includeKind = index < includeFullTopK ? "full" : "summary";
       const fullText = includeKind === "full"
-        ? formatFullEntry(entry.rawMarkdown, result, resultRefinementOpinions)
+        ? formatFullEntry(entry.rawMarkdown, resultRefinementOpinions)
         : formatSummary(result, resultRefinementOpinions);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
@@ -183,10 +169,6 @@ export class ContextComposer {
     const lines = [
       "# Rationale Context Continuation",
       "",
-      `- cursor: ${input.cursor}`,
-      `- original task: ${snapshot.task}`,
-      `- candidate position: ${snapshot.position} of ${snapshot.candidates.length}`,
-      "",
       "## Retrieved rationales"
     ];
 
@@ -210,7 +192,7 @@ export class ContextComposer {
       const resultRefinementOpinions = refinementOpinionsByEntryId.get(result.id) ?? [];
       const includeKind = includedCount < includeFullTopK ? "full" : "summary";
       const fullText = includeKind === "full"
-        ? formatFullEntry(entry.rawMarkdown, result, resultRefinementOpinions)
+        ? formatFullEntry(entry.rawMarkdown, resultRefinementOpinions)
         : formatSummary(result, resultRefinementOpinions);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
@@ -293,12 +275,9 @@ function formatSummary(result: {
   title: string;
   summary?: string;
   type: string;
-  status: string;
   acceptanceState: string;
   reviewState: string;
   decisionState: string;
-  searchScore?: number;
-  searchReasons?: string[];
 }, refinementOpinions: MemoryRefinementOpinionRecord[]) {
   return [
     `### ${result.title}`,
@@ -307,57 +286,32 @@ function formatSummary(result: {
     `- acceptance state: ${result.acceptanceState}`,
     `- review state: ${result.reviewState}`,
     `- decision state: ${result.decisionState}`,
-    `- legacy status: ${result.status}`,
-    ...formatRankingLines(result),
-    result.summary ? `- summary: ${result.summary}` : "- summary: none",
+    ...(result.summary ? [`- summary: ${result.summary}`] : []),
     ...formatRefinementOpinionLines(refinementOpinions)
   ].join("\n");
 }
 
 function formatContinuationManifest(cursor: string, candidates: MemoryEntryRecord[], position: number) {
   const omitted = candidates.slice(position);
-  const preview = omitted.slice(0, 5);
   return [
     "## Retrieval continuation",
     "- has more: true",
     `- next cursor: ${cursor}`,
     `- omitted count: ${omitted.length}`,
-    "- use continue_context with this cursor to inspect more retrieved rationale candidates",
-    "",
-    "### Omitted preview",
-    ...preview.map(formatManifestItem)
+    "- use continue_context with this cursor to inspect more retrieved rationale candidates"
   ].join("\n");
-}
-
-function formatManifestItem(result: MemoryEntryRecord) {
-  const score = typeof result.searchScore === "number" ? result.searchScore.toFixed(3) : "unknown";
-  const reasons = result.searchReasons && result.searchReasons.length > 0 ? result.searchReasons.join(", ") : "none";
-  return `- ${result.id}: ${result.title} (score: ${score}; reasons: ${reasons})`;
 }
 
 function formatFullEntry(
   markdown: string,
-  result: { searchScore?: number; searchReasons?: string[] },
   refinementOpinions: MemoryRefinementOpinionRecord[]
 ) {
   return [
     "### Retrieved full rationale",
-    ...formatRankingLines(result),
     "",
     markdown.trim(),
     ...formatRefinementOpinionBlock(refinementOpinions)
   ].join("\n");
-}
-
-function formatRankingLines(result: { searchScore?: number; searchReasons?: string[] }) {
-  const lines: string[] = [];
-  if (typeof result.searchScore === "number") {
-    lines.push(`- search score: ${result.searchScore.toFixed(3)}`);
-  }
-  if (result.searchReasons && result.searchReasons.length > 0) {
-    lines.push(`- search reasons: ${result.searchReasons.join(", ")}`);
-  }
-  return lines;
 }
 
 function formatRefinementOpinionBlock(opinions: MemoryRefinementOpinionRecord[]) {

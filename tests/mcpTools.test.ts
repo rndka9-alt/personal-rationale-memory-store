@@ -73,6 +73,75 @@ describe("MCP write tool results", () => {
     }
   });
 
+  it("keeps high-level retrieval tool inputs minimal", () => {
+    const services = createToolServices();
+
+    expect(Object.keys(getTool(services, "search_rationales").schema)).toEqual(["query", "project"]);
+    expect(Object.keys(getTool(services, "compose_context").schema)).toEqual(["task", "project"]);
+    expect(Object.keys(getTool(services, "continue_context").schema)).toEqual(["cursor"]);
+  });
+
+  it("returns compact search results without internal ranking or storage metadata", async () => {
+    const services = createToolServices();
+    services.rationaleService.searchWithDiagnostics = async () => ({
+      results: [{
+        id: "R20260604T000000000Z-search",
+        type: "rationale",
+        status: "candidate",
+        acceptanceState: "candidate",
+        reviewState: "unreviewed",
+        decisionState: "unknown",
+        title: "Keep search responses compact",
+        summary: "Search callers only need enough detail to choose a follow-up read.",
+        canonicalPath: "/memory/R20260604T000000000Z-search.md",
+        scope: "general",
+        sourceKind: "session",
+        sourceRef: "test",
+        confidence: 0.5,
+        useCount: 3,
+        metadata: { domains: ["development"] },
+        lexicalRank: 1,
+        vectorScore: 0.8,
+        searchScore: 4.2,
+        searchReasons: ["vector:0.800:+4.00"]
+      }],
+      warnings: [{
+        kind: "vector_search_failed",
+        severity: "warning",
+        message: "Vector search failed; returning lexical fallback results.",
+        details: { provider: "mock" }
+      }]
+    });
+
+    const result = await getTool(services, "search_rationales").handler({
+      query: "compact search result"
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload).toEqual({
+      results: [{
+        id: "R20260604T000000000Z-search",
+        title: "Keep search responses compact",
+        type: "rationale",
+        acceptanceState: "candidate",
+        reviewState: "unreviewed",
+        decisionState: "unknown",
+        summary: "Search callers only need enough detail to choose a follow-up read."
+      }],
+      warnings: [{
+        kind: "vector_search_failed",
+        severity: "warning",
+        message: "Vector search failed; returning lexical fallback results."
+      }]
+    });
+    expect(payload.results[0]).not.toHaveProperty("canonicalPath");
+    expect(payload.results[0]).not.toHaveProperty("metadata");
+    expect(payload.results[0]).not.toHaveProperty("searchScore");
+    expect(payload.results[0]).not.toHaveProperty("searchReasons");
+    expect(payload.warnings[0]).not.toHaveProperty("details");
+  });
+
   it("returns compact success metadata for auto-captured rationales", async () => {
     const services = createToolServices();
     const result = await getTool(services, "auto_capture_rationale").handler({

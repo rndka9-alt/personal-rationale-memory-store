@@ -9,7 +9,6 @@ import {
   recordRefinementOpinionInputSchema,
   recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
-  searchInputSchema,
   searchProjectFilterSchema
 } from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
@@ -51,11 +50,13 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "search_rationales",
       description: "Search rationale memories with lexical, vector, and metadata signals. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
-      schema: searchInputSchema.shape,
+      schema: searchToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"),
-      handler: async (input: unknown) => jsonToolResult(await services.rationaleService.searchWithDiagnostics(input))
+      handler: async (input: unknown) => jsonToolResult(compactSearchResult(
+        await services.rationaleService.searchWithDiagnostics(searchToolInputSchema.parse(input))
+      ))
     },
     {
       name: "get_rationale",
@@ -69,15 +70,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "compose_context",
       description: "Compose bounded prompt-ready rationale context for a task. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
-      schema: {
-        task: z.string().min(1),
-        explicitMode: z.string().optional(),
-        explicitDomains: z.array(z.string()).optional(),
-        project: searchProjectFilterSchema.optional(),
-        tokenBudget: z.number().int().positive().optional(),
-        includeFullTopK: z.number().int().min(0).optional(),
-        minScore: z.number().min(0).optional()
-      },
+      schema: composeInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("메모 훑어보는 중..", "메모 훑어보기 완료!"),
@@ -86,11 +79,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "continue_context",
       description: "Continue a previous compose_context retrieval from a stateful in-memory cursor.",
-      schema: {
-        cursor: z.string().min(1),
-        tokenBudget: z.number().int().positive().optional(),
-        includeFullTopK: z.number().int().min(0).optional()
-      },
+      schema: continueInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("계속해서 훑어보는 중..", "추가 확인 완료!"),
@@ -188,20 +177,18 @@ const writeToolAnnotations = {
   openWorldHint: false
 };
 
+const searchToolInputSchema = z.object({
+  query: z.string().min(1),
+  project: searchProjectFilterSchema.optional()
+});
+
 const composeInputSchema = z.object({
   task: z.string().min(1),
-  explicitMode: z.string().optional(),
-  explicitDomains: z.array(z.string()).optional(),
-  project: searchProjectFilterSchema.optional(),
-  tokenBudget: z.number().int().positive().optional(),
-  includeFullTopK: z.number().int().min(0).optional(),
-  minScore: z.number().min(0).optional()
+  project: searchProjectFilterSchema.optional()
 });
 
 const continueInputSchema = z.object({
-  cursor: z.string().min(1),
-  tokenBudget: z.number().int().positive().optional(),
-  includeFullTopK: z.number().int().min(0).optional()
+  cursor: z.string().min(1)
 });
 
 function jsonToolResult(value: unknown): ToolResult {
@@ -223,6 +210,85 @@ function toolInvocationMetadata(invoking: string, invoked: string) {
     "openai/toolInvocation/invoking": invoking,
     "openai/toolInvocation/invoked": invoked
   };
+}
+
+function compactSearchResult(result: {
+  results: Array<{
+    id: string;
+    title: string;
+    summary?: string;
+    type: string;
+    acceptanceState: string;
+    reviewState: string;
+    decisionState: string;
+  }>;
+  warnings: Array<{
+    kind: string;
+    severity: string;
+    message: string;
+  }>;
+}) {
+  const response: {
+    results: Array<{
+      id: string;
+      title: string;
+      type: string;
+      acceptanceState: string;
+      reviewState: string;
+      decisionState: string;
+      summary?: string;
+    }>;
+    warnings?: Array<{
+      kind: string;
+      severity: string;
+      message: string;
+    }>;
+  } = {
+    results: result.results.map(compactSearchEntry)
+  };
+
+  if (result.warnings.length > 0) {
+    response.warnings = result.warnings.map((warning) => ({
+      kind: warning.kind,
+      severity: warning.severity,
+      message: warning.message
+    }));
+  }
+
+  return response;
+}
+
+function compactSearchEntry(entry: {
+  id: string;
+  title: string;
+  summary?: string;
+  type: string;
+  acceptanceState: string;
+  reviewState: string;
+  decisionState: string;
+}) {
+  const response: {
+    id: string;
+    title: string;
+    type: string;
+    acceptanceState: string;
+    reviewState: string;
+    decisionState: string;
+    summary?: string;
+  } = {
+    id: entry.id,
+    title: entry.title,
+    type: entry.type,
+    acceptanceState: entry.acceptanceState,
+    reviewState: entry.reviewState,
+    decisionState: entry.decisionState
+  };
+
+  if (entry.summary) {
+    response.summary = entry.summary;
+  }
+
+  return response;
 }
 
 function compactRationaleWriteResult(result: RationaleWriteResult) {
