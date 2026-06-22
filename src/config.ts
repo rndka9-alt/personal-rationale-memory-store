@@ -21,6 +21,7 @@ const environmentSchema = z.object({
   MCP_OAUTH_ENABLED: z.string().default("false"),
   MCP_OAUTH_CLIENT_ID: z.string().default("mtdl-memory-mcp"),
   MCP_OAUTH_REDIRECT_URI: optionalUrlSchema,
+  MCP_OAUTH_ALLOWED_REDIRECT_URIS: z.string().default(""),
   MCP_OAUTH_LOGIN_CODE: z.string().optional(),
   MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH: z.preprocess(emptyStringToUndefined, z.string().optional()),
   MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM: z.preprocess(emptyStringToUndefined, z.string().optional()),
@@ -50,13 +51,17 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   const mode = parsedEnvironment.EMBEDDING_MODE;
   const shouldUseVoyageDefaults = provider === "voyage" && mode !== "mock";
   const oauthEnabled = parseBoolean(parsedEnvironment.MCP_OAUTH_ENABLED, "MCP_OAUTH_ENABLED");
+  const oauthRedirectUris = resolveOAuthRedirectUris(
+    parsedEnvironment.MCP_OAUTH_REDIRECT_URI,
+    parsedEnvironment.MCP_OAUTH_ALLOWED_REDIRECT_URIS
+  );
 
   if (oauthEnabled) {
     if (!parsedEnvironment.MCP_PUBLIC_URL) {
       throw new Error("MCP_PUBLIC_URL is required when MCP_OAUTH_ENABLED=true.");
     }
-    if (!parsedEnvironment.MCP_OAUTH_REDIRECT_URI) {
-      throw new Error("MCP_OAUTH_REDIRECT_URI is required when MCP_OAUTH_ENABLED=true.");
+    if (oauthRedirectUris.length === 0) {
+      throw new Error("At least one OAuth redirect URI is required when MCP_OAUTH_ENABLED=true.");
     }
     if (!parsedEnvironment.MCP_OAUTH_LOGIN_CODE) {
       throw new Error("MCP_OAUTH_LOGIN_CODE is required when MCP_OAUTH_ENABLED=true.");
@@ -81,7 +86,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
         enabled: oauthEnabled,
         publicUrl: parsedEnvironment.MCP_PUBLIC_URL,
         clientId: parsedEnvironment.MCP_OAUTH_CLIENT_ID,
-        redirectUri: parsedEnvironment.MCP_OAUTH_REDIRECT_URI,
+        redirectUris: oauthRedirectUris,
         loginCode: parsedEnvironment.MCP_OAUTH_LOGIN_CODE,
         signingPrivateKeyPath: parsedEnvironment.MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH,
         signingPrivateKeyPem: parsedEnvironment.MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM,
@@ -128,6 +133,24 @@ function parseBoolean(value: string, name: string) {
 
 function splitSpaceSeparatedList(value: string) {
   return value.split(/\s+/).filter((part) => part.length > 0);
+}
+
+function resolveOAuthRedirectUris(primaryRedirectUri: string | undefined, allowedRedirectUris: string) {
+  const redirectUris = primaryRedirectUri
+    ? [primaryRedirectUri, ...splitSpaceSeparatedList(allowedRedirectUris)]
+    : splitSpaceSeparatedList(allowedRedirectUris);
+
+  const uniqueRedirectUris: string[] = [];
+  const seenRedirectUris = new Set<string>();
+  for (const redirectUri of redirectUris) {
+    const parsedRedirectUri = z.string().url().parse(redirectUri);
+    if (!seenRedirectUris.has(parsedRedirectUri)) {
+      uniqueRedirectUris.push(parsedRedirectUri);
+      seenRedirectUris.add(parsedRedirectUri);
+    }
+  }
+
+  return uniqueRedirectUris;
 }
 
 function emptyStringToUndefined(value: unknown) {

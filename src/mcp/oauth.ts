@@ -268,7 +268,7 @@ export class OAuthAuthorizationServer {
     if (request.redirect_uri !== codeRecord.request.redirect_uri) {
       throw new OAuthHttpError(400, "invalid_grant", "Redirect URI did not match the authorization request.");
     }
-    if (request.resource && request.resource !== this.resource) {
+    if (request.resource && !resourceIdentifiersMatch(request.resource, this.resource)) {
       throw new OAuthHttpError(400, "invalid_target", "Resource did not match this MCP server.");
     }
     if (codeRecord.request.code_challenge && !request.code_verifier) {
@@ -361,10 +361,10 @@ export class OAuthAuthorizationServer {
     if (request.client_id !== this.config.clientId) {
       throw new OAuthHttpError(400, "invalid_client", "Unknown OAuth client.");
     }
-    if (request.redirect_uri !== requireConfiguredValue(this.config.redirectUri, "MCP_OAUTH_REDIRECT_URI")) {
+    if (!this.config.redirectUris.includes(request.redirect_uri)) {
       throw new OAuthHttpError(400, "invalid_request", "Redirect URI is not allowed.");
     }
-    if (request.resource && request.resource !== this.resource) {
+    if (request.resource && !resourceIdentifiersMatch(request.resource, this.resource)) {
       throw new OAuthHttpError(400, "invalid_target", "Resource did not match this MCP server.");
     }
     if (Boolean(request.code_challenge) !== Boolean(request.code_challenge_method)) {
@@ -640,6 +640,18 @@ function exportRsaPublicJwk(publicKey: KeyObject): RsaPublicJwk {
 function verifyPkce(codeVerifier: string, codeChallenge: string) {
   const digest = createHash("sha256").update(codeVerifier).digest();
   return base64UrlEncode(digest) === codeChallenge;
+}
+
+function resourceIdentifiersMatch(requestedResource: string, configuredResource: string) {
+  return normalizeRootResourceIdentifier(requestedResource) === normalizeRootResourceIdentifier(configuredResource);
+}
+
+function normalizeRootResourceIdentifier(resource: string) {
+  const parsedResource = new URL(resource);
+  if (parsedResource.pathname === "/" && parsedResource.search === "" && parsedResource.hash === "") {
+    return parsedResource.origin;
+  }
+  return resource;
 }
 
 async function readFormBody(request: IncomingMessage) {

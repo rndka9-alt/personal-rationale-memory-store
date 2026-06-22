@@ -104,6 +104,72 @@ describe("OAuthAuthorizationServer", () => {
     expect(tokenResponse.scope).toBe("openid email profile rationale:read rationale:write");
   });
 
+  it("accepts additional OAuth redirect URIs from the allowlist", () => {
+    const oauthServer = createOAuthServer({
+      MCP_OAUTH_ALLOWED_REDIRECT_URIS: "https://claude.ai/api/mcp/auth_callback"
+    });
+    const codeVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+    const authorizationResult = oauthServer.authorize(new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://claude.ai/api/mcp/auth_callback",
+      scope: "openid email profile rationale:read rationale:write",
+      code_challenge: createPkceChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      resource: "https://memory-mcp.mtdl.kr",
+      login_code: "test-login-code"
+    }));
+    const code = authorizationResult.redirectUrl.searchParams.get("code");
+    if (!code) {
+      throw new Error("Authorization redirect did not include a code.");
+    }
+
+    const tokenResponse = oauthServer.exchangeToken(new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://claude.ai/api/mcp/auth_callback",
+      client_id: "mtdl-memory-mcp",
+      code_verifier: codeVerifier,
+      resource: "https://memory-mcp.mtdl.kr"
+    }));
+
+    expect(tokenResponse.token_type).toBe("Bearer");
+    expect(tokenResponse.scope).toBe("openid email profile rationale:read rationale:write");
+  });
+
+  it("accepts OAuth resource identifiers with a root trailing slash", () => {
+    const oauthServer = createOAuthServer({
+      MCP_OAUTH_ALLOWED_REDIRECT_URIS: "https://claude.ai/api/mcp/auth_callback"
+    });
+    const codeVerifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
+    const authorizationResult = oauthServer.authorize(new URLSearchParams({
+      response_type: "code",
+      client_id: "mtdl-memory-mcp",
+      redirect_uri: "https://claude.ai/api/mcp/auth_callback",
+      scope: "rationale:read rationale:write",
+      code_challenge: createPkceChallenge(codeVerifier),
+      code_challenge_method: "S256",
+      resource: "https://memory-mcp.mtdl.kr/",
+      login_code: "test-login-code"
+    }));
+    const code = authorizationResult.redirectUrl.searchParams.get("code");
+    if (!code) {
+      throw new Error("Authorization redirect did not include a code.");
+    }
+
+    const tokenResponse = oauthServer.exchangeToken(new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://claude.ai/api/mcp/auth_callback",
+      client_id: "mtdl-memory-mcp",
+      code_verifier: codeVerifier,
+      resource: "https://memory-mcp.mtdl.kr/"
+    }));
+
+    expect(tokenResponse.token_type).toBe("Bearer");
+    expect(tokenResponse.scope).toBe("rationale:read rationale:write");
+  });
+
   it("sets a login session cookie that can authorize the next OAuth request", () => {
     const oauthServer = createOAuthServer();
     const firstAuthorizationResult = oauthServer.authorize(new URLSearchParams({
