@@ -3,6 +3,7 @@ import {
   calculateNoteRandomWeight,
   calculateNoteScore,
   formatNotesContext,
+  NoteSlotCache,
   selectNotesForContext
 } from "../src/memory/noteService.js";
 import type { NoteRecord } from "../src/memory/schema.js";
@@ -64,29 +65,62 @@ describe("note context selection", () => {
     expect(selection.excludedLongNotes).toBe(1);
   });
 
-  it("formats selected notes as original content without headers or selection metadata", () => {
-    const notes = [
-      createNote("first", "first line\nsecond line", 0, 0, "2026-06-12T00:00:02.000Z"),
-      createNote("second", "another note", 0, 0, "2026-06-12T00:00:01.000Z")
-    ];
-
-    const selection = selectNotesForContext(notes, {
-      maxLength: 5000,
-      maxNoteLength: 1000,
-      randomRatio: 0.6
-    }, () => 0);
-
-    expect(formatNotesContext(selection)).toBe("first line\nsecond line\n\nanother note");
+  it("heads each note with its own slot line so ratings can target it", () => {
+    expect(formatNotesContext([
+      { slot: "00", content: "first line\nsecond line" },
+      { slot: "01", content: "another note" }
+    ])).toBe("━━━ 00 ━━━\nfirst line\nsecond line\n\n━━━ 01 ━━━\nanother note");
   });
 
   it("formats an empty note selection as empty text", () => {
-    const selection = selectNotesForContext([], {
-      maxLength: 5000,
-      maxNoteLength: 1000,
-      randomRatio: 0.6
-    }, () => 0);
+    expect(formatNotesContext([])).toBe("");
+  });
+});
 
-    expect(formatNotesContext(selection)).toBe("");
+describe("note slot cache", () => {
+  it("assigns short distinct slots and resolves them back to note ids", () => {
+    const cache = new NoteSlotCache();
+    const slotA = cache.assign("note-a");
+    const slotB = cache.assign("note-b");
+
+    expect(slotA).not.toBe(slotB);
+    expect(cache.resolve(slotA)).toBe("note-a");
+    expect(cache.resolve(slotB)).toBe("note-b");
+  });
+
+  it("reuses the same slot for a repeated note instead of allocating a new one", () => {
+    const cache = new NoteSlotCache();
+    const first = cache.assign("note-a");
+    cache.assign("note-b");
+
+    expect(cache.assign("note-a")).toBe(first);
+  });
+
+  it("evicts the oldest slot once capacity is exceeded", () => {
+    const cache = new NoteSlotCache(2);
+    const slotA = cache.assign("note-a");
+    const slotB = cache.assign("note-b");
+    const slotC = cache.assign("note-c");
+
+    expect(cache.resolve(slotA)).toBeUndefined();
+    expect(cache.resolve(slotB)).toBe("note-b");
+    expect(cache.resolve(slotC)).toBe("note-c");
+  });
+
+  it("keeps a re-touched slot fresh so it survives later eviction", () => {
+    const cache = new NoteSlotCache(2);
+    const slotA = cache.assign("note-a");
+    cache.assign("note-b");
+    // note-a를 다시 만지면 가장 최근으로 갱신되어, 다음 발급 때 note-b가 먼저 밀려난다.
+    cache.assign("note-a");
+    cache.assign("note-c");
+
+    expect(cache.resolve(slotA)).toBe("note-a");
+  });
+
+  it("resolves an unknown slot to undefined", () => {
+    const cache = new NoteSlotCache();
+    expect(cache.resolve("zz")).toBeUndefined();
   });
 });
 

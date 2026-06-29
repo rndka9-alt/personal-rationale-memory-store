@@ -161,8 +161,10 @@ export const recordNoteInputSchema = z.object({
 
 export const noteRatingSchema = z.enum(["up", "down"]);
 
+// rate_note는 노트 원문 id가 아니라 compose_notes_context가 내려준 짧은 슬롯 id로 평가한다.
+// 긴 노트 id를 다시 모델 컨텍스트에 싣지 않으려는 선택이다.
 export const rateNoteInputSchema = z.object({
-  noteId: z.string().min(1),
+  slot: z.string().min(1),
   rating: noteRatingSchema
 });
 

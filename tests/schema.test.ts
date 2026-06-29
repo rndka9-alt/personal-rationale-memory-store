@@ -158,7 +158,7 @@ describe("note input schemas", () => {
   });
 
   it("accepts note rating values", () => {
-    expect(rateNoteInputSchema.parse({ noteId: "N1", rating: "up" }).rating).toBe("up");
-    expect(() => rateNoteInputSchema.parse({ noteId: "N1", rating: "sideways" })).toThrow();
+    expect(rateNoteInputSchema.parse({ slot: "a3", rating: "up" }).rating).toBe("up");
+    expect(() => rateNoteInputSchema.parse({ slot: "a3", rating: "sideways" })).toThrow();
   });
 });

@@ -97,13 +97,13 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "rate_note",
-      description: "Add one upvote or downvote to a note. Ratings influence note composition without excluding downvoted notes outright.",
+      description: "Add one upvote or downvote to a note using its short slot id, shown by compose_notes_context in each note's '━━━ <slot> ━━━' header line. Slots are ephemeral (LRU, capacity 40); rating an expired slot returns ok:false with httpStatus 410 instead of an error, so just re-fetch the notes and rate again.",
       schema: rateNoteInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
       metadata: toolInvocationMetadata("쪽지 평가 중..", "쪽지 평가 완료!"),
       handler: async (input: unknown) =>
-        jsonToolResult(compactNoteResult(await services.noteService.rateNote(rateNoteInputSchema.parse(input))))
+        jsonToolResult(await services.noteService.rateNote(rateNoteInputSchema.parse(input)))
     },
     {
       name: "compose_notes_context",

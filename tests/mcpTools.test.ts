@@ -235,22 +235,42 @@ describe("MCP write tool results", () => {
     expect(payload).not.toHaveProperty("sourceConversation");
   });
 
-  it("returns compact success metadata for note ratings", async () => {
+  it("returns slot-scoped success metadata for note ratings", async () => {
     const services = createToolServices();
     const result = await getTool(services, "rate_note").handler({
-      noteId: "N20260604T000000000Z-compact",
+      slot: "a3",
       rating: "up"
     });
 
     const payload = parseToolJson(result);
 
-    expect(payload).toEqual({
-      ok: true,
-      id: "N20260604T000000000Z-compact"
+    expect(payload.ok).toBe(true);
+    expect(payload.slot).toBe("a3");
+    expect(payload.rating).toBe("up");
+    expect(typeof payload.feedback).toBe("string");
+    // 긴 노트 원문 id는 응답에 노출하지 않는다(슬롯만으로 충분).
+    expect(payload).not.toHaveProperty("id");
+    expect(payload).not.toHaveProperty("content");
+  });
+
+  it("returns a 410 expiry result instead of throwing when the slot is gone", async () => {
+    const services = createToolServices();
+    services.noteService.rateNote = async () => ({
+      ok: false as const,
+      httpStatus: 410,
+      reason: "앗.. 그 쪽지는 이미 날아가버렷어요! 쪽지를 다시 꺼낸 다음 평가해 주세요"
     });
-    expect(payload).not.toHaveProperty("upvotes");
-    expect(payload).not.toHaveProperty("downvotes");
-    expect(payload).not.toHaveProperty("updatedAt");
+
+    const result = await getTool(services, "rate_note").handler({
+      slot: "zz",
+      rating: "up"
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload.ok).toBe(false);
+    expect(payload.httpStatus).toBe(410);
+    expect(typeof payload.reason).toBe("string");
   });
 
   it("returns compact success metadata for usage feedback", async () => {
@@ -311,11 +331,17 @@ function createToolServices(): ToolServices {
     },
     noteService: {
       recordNote: async () => createNoteRecord(),
-      rateNote: async () => ({
-        ...createNoteRecord(),
-        upvotes: 1,
-        updatedAt: "2026-06-04T00:01:00.000Z"
-      }),
+      rateNote: async (input: unknown) => {
+        const { slot, rating } = input as { slot: string; rating: "up" | "down" };
+        return {
+          ok: true as const,
+          slot,
+          rating,
+          upvotes: rating === "up" ? 1 : 0,
+          downvotes: rating === "down" ? 1 : 0,
+          feedback: "추천 도장 쾅! 좋은 쪽지로 기억해 둘게요 ✨"
+        };
+      },
       composeNotesContext: async () => "Compact note context."
     }
   };
