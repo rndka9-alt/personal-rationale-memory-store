@@ -120,6 +120,7 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
     project: parseProject(value.project),
     useCount: readNumber(value, "useCount"),
     lastUsedAt: readOptionalString(value, "lastUsedAt"),
+    createdAt: readOptionalString(value, "createdAt"),
     usageFeedback: parseUsageFeedback(value.usageFeedback),
     openRefinementOpinionCount: readNumber(value, "openRefinementOpinionCount"),
     reviewPriorityScore: readNumber(value, "reviewPriorityScore"),

@@ -1186,6 +1186,7 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
     deprecatedBy: typeof row.deprecated_by === "string" ? row.deprecated_by : undefined,
     useCount: Number(row.use_count),
     lastUsedAt: row.last_used_at instanceof Date ? row.last_used_at.toISOString() : undefined,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : undefined,
     project: readProjectContext(metadata.project),
     metadata
   };

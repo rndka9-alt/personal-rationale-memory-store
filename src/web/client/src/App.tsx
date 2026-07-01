@@ -48,6 +48,7 @@ const refinementOpinionTypes: Array<{ value: RefinementOpinionType; label: strin
 
 const queueSortModes = [
   { value: "priority", label: "Priority" },
+  { value: "created", label: "Newest" },
   { value: "last_used", label: "Last used" },
   { value: "opinions", label: "Opinions" },
   { value: "positive_feedback", label: "Positive feedback" },
@@ -64,8 +65,14 @@ const queueSignalFilters = [
   { value: "recently_used", label: "Recently used" }
 ];
 
-type QueueSortMode = "priority" | "last_used" | "opinions" | "positive_feedback" | "negative_feedback" | "uses";
+const noteSortModes = [
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" }
+];
+
+type QueueSortMode = "priority" | "created" | "last_used" | "opinions" | "positive_feedback" | "negative_feedback" | "uses";
 type QueueSignalFilter = "all" | "repair_attention" | "with_opinions" | "with_negative_feedback" | "with_positive_feedback" | "recently_used";
+type NotesSortMode = "newest" | "oldest";
 type PatchInputMode = "fields" | "json";
 type MainView = "review" | "notes";
 type PatchFieldValues = {
@@ -393,8 +400,10 @@ function NotesView(props: {
   onArchive: (id: string) => void;
   onRestore: (id: string) => void;
 }) {
+  const [sortMode, setSortMode] = useState<NotesSortMode>("newest");
   const activeCount = props.notes.filter((note) => !note.archived).length;
   const archivedCount = props.notes.length - activeCount;
+  const sortedNotes = useMemo(() => sortNotes(props.notes, sortMode), [props.notes, sortMode]);
 
   return (
     <section className="min-h-0 flex-1 py-6">
@@ -403,7 +412,21 @@ function NotesView(props: {
           <h2 className="text-sm font-semibold text-ink-strong">Stored notes</h2>
           <p className="mt-1 text-xs text-ink-muted">{activeCount} active / {archivedCount} archived</p>
         </div>
-        <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">{props.notes.length}</span>
+        <div className="flex items-center gap-3">
+          <label className="text-sm">
+            <span className="sr-only">Sort notes</span>
+            <select
+              className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+              value={sortMode}
+              onChange={(event) => setSortMode(readNotesSortMode(event.target.value))}
+            >
+              {noteSortModes.map((mode) => (
+                <option key={mode.value} value={mode.value}>{mode.label}</option>
+              ))}
+            </select>
+          </label>
+          <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">{props.notes.length}</span>
+        </div>
       </div>
 
       {props.actionError ? <p className="mb-4 text-sm text-danger-base">{props.actionError.message}</p> : null}
@@ -416,7 +439,7 @@ function NotesView(props: {
         <div className="border-y border-line-base py-8 text-sm text-ink-muted">No notes match this view.</div>
       ) : (
         <div className="divide-y divide-line-base border-y border-line-base">
-          {props.notes.map((note) => (
+          {sortedNotes.map((note) => (
             <article key={note.id} className="grid gap-4 py-4 md:grid-cols-[minmax(0,1fr)_160px]">
               <div className="min-w-0">
                 <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -1243,6 +1266,7 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
 function readQueueSortMode(value: string): QueueSortMode {
   if (
     value === "priority"
+    || value === "created"
     || value === "last_used"
     || value === "opinions"
     || value === "positive_feedback"
@@ -1268,6 +1292,25 @@ function readQueueSignalFilter(value: string): QueueSignalFilter {
   }
 
   throw new Error(`Invalid queue signal filter: ${value}`);
+}
+
+function readNotesSortMode(value: string): NotesSortMode {
+  if (value === "newest" || value === "oldest") {
+    return value;
+  }
+
+  throw new Error(`Invalid notes sort mode: ${value}`);
+}
+
+function sortNotes(notes: NoteRecord[], sortMode: NotesSortMode) {
+  return notes
+    .map((note, originalIndex) => ({ note, originalIndex }))
+    .sort((left, right) => {
+      const newestFirst = calculateTimestamp(right.note.createdAt) - calculateTimestamp(left.note.createdAt);
+      const difference = sortMode === "oldest" ? -newestFirst : newestFirst;
+      return difference === 0 ? left.originalIndex - right.originalIndex : difference;
+    })
+    .map((entry) => entry.note);
 }
 
 function readRefinementOpinionType(value: string): RefinementOpinionType {
@@ -1315,6 +1358,9 @@ function sortQueueItems(items: ReviewQueueItem[], sortMode: QueueSortMode) {
 function calculateQueueSortValue(item: ReviewQueueItem, sortMode: QueueSortMode) {
   if (sortMode === "priority") {
     return item.reviewPriorityScore;
+  }
+  if (sortMode === "created") {
+    return calculateTimestamp(item.createdAt);
   }
   if (sortMode === "last_used") {
     return calculateTimestamp(item.lastUsedAt);

@@ -267,6 +267,8 @@ export type MemoryEntryRecord = {
   deprecatedBy?: string;
   useCount: number;
   lastUsedAt?: string;
+  /** ISO creation timestamp from the DB row; only present on records loaded from the database. */
+  createdAt?: string;
   metadata: Record<string, unknown>;
   lexicalRank?: number;
   vectorScore?: number;

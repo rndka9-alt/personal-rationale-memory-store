@@ -31,6 +31,7 @@ export type ReviewQueueItem = {
   confidence: number;
   useCount: number;
   lastUsedAt?: string;
+  createdAt?: string;
   usageFeedback: UsageFeedbackCounts;
   openRefinementOpinionCount: number;
   reviewPriorityScore: number;
