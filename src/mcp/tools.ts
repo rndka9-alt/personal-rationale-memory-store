@@ -107,7 +107,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_notes_context",
-      description: "Compose plain note context from original note text only. Notes are selected by weighted random first, then score ordering, within a character budget.",
+      description: "Compose plain note context from original note text. Notes are selected by weighted random first, then score ordering, within a character budget. The output ends with a rate_note nudge; note bodies are never rewritten.",
       schema: composeNotesContextInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -118,7 +118,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record relevant rationale memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Rationale memories can be referenced from other tasks and later conversations, so actively capture reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use record_note for casual thoughts, personal memories, and lightweight notes. Weak or duplicate captures are filtered out downstream; when in doubt, capture. If a captured rationale memory may be inaccurate, outdated, or poorly scoped, mention it to the user so they can review and correct it.",
+        "Record relevant rationale memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Rationale memories can be referenced from other tasks and later conversations, so actively capture reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use record_note for casual thoughts, personal memories, and lightweight notes. Exact duplicates converge into the existing entry, and low-relevance memories are kept out of composed context by a similarity floor; when in doubt, capture. If a captured rationale memory may be inaccurate, outdated, or poorly scoped, mention it to the user so they can review and correct it.",
       schema: autoCaptureRationaleInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,

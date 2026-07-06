@@ -127,6 +127,11 @@ const refinementOpinionLimitSchema = z.number().int().positive().max(5);
 const refinementOpinionActionSchema = z.enum(["resolve", "reject", "apply_patch"]);
 type RefinementOpinionAction = z.infer<typeof refinementOpinionActionSchema>;
 
+// Vector similarity stays the dominant term on purpose: it is the only relevance
+// signal, while every other weight is a trust/affinity signal. The compose-side
+// similarity floor guarantees boosts only reorder already-relevant candidates,
+// which is what makes the positive-feedback cap (4 events × weight) safe to give
+// more reach than a single project match.
 const searchRankingWeights = {
   vector: 5,
   lexical: 1,
@@ -134,13 +139,8 @@ const searchRankingWeights = {
   reviewed: 0.5,
   candidate: 0.25,
   needsRevision: -1,
-  confidenceMax: 1,
-  feedbackPositive: 0.35,
+  feedbackPositive: 0.5,
   feedbackNegative: 0.75,
-  typeMatch: 1,
-  domainMatch: 2,
-  intentMatch: 1.5,
-  modeMatch: 1.5,
   projectMatch: 1.5
 };
 
@@ -1213,23 +1213,14 @@ function mergeSearchResults<TEntry extends { id: string }>(primary: TEntry[], se
 
 function rankSearchResults<TEntry extends {
   id: string;
-  confidence: number;
   acceptanceState: MemoryEntryRecord["acceptanceState"];
   reviewState: MemoryEntryRecord["reviewState"];
-  type: string;
-  metadata: Record<string, unknown>;
-  useCount: number;
-  lastUsedAt?: string;
   project?: ProjectContext;
   lexicalRank?: number;
   vectorScore?: number;
   searchScore?: number;
   searchReasons?: string[];
 }>(entries: TEntry[], filters: {
-  domains?: string[];
-  intents?: string[];
-  modes?: string[];
-  types?: string[];
   project?: SearchProjectFilter;
 }, usageFeedbackCounts: Map<string, MemoryUsageFeedbackCounts>) {
   return entries
@@ -1361,21 +1352,12 @@ export function calculateReviewPriority(entry: {
 }
 
 export function calculateSearchRanking(entry: {
-  confidence: number;
   acceptanceState: MemoryEntryRecord["acceptanceState"];
   reviewState: MemoryEntryRecord["reviewState"];
-  type: string;
-  metadata: Record<string, unknown>;
-  useCount: number;
-  lastUsedAt?: string;
   project?: ProjectContext;
   lexicalRank?: number;
   vectorScore?: number;
 }, filters: {
-  domains?: string[];
-  intents?: string[];
-  modes?: string[];
-  types?: string[];
   project?: SearchProjectFilter;
 }, usageFeedback = createEmptyUsageFeedbackCounts()) {
   let score = 0;
@@ -1411,14 +1393,6 @@ export function calculateSearchRanking(entry: {
     score += addScoreContribution(reasons, "needs-revision", searchRankingWeights.needsRevision);
   }
 
-  if (entry.confidence > 0) {
-    score += addScoreContribution(
-      reasons,
-      "confidence",
-      Math.min(entry.confidence, searchRankingWeights.confidenceMax)
-    );
-  }
-
   score += addScoreContribution(
     reasons,
     "positive-feedback",
@@ -1440,40 +1414,6 @@ export function calculateSearchRanking(entry: {
     String(usageFeedback.negativeCount)
   );
 
-  if (filters.types && filters.types.includes(entry.type)) {
-    score += addScoreContribution(reasons, "type-match", searchRankingWeights.typeMatch);
-  }
-
-  const domainMatches = countMetadataMatches(entry.metadata, "domains", filters.domains);
-  if (domainMatches > 0) {
-    score += addScoreContribution(
-      reasons,
-      "domain-match",
-      domainMatches * searchRankingWeights.domainMatch,
-      String(domainMatches)
-    );
-  }
-
-  const intentMatches = countMetadataMatches(entry.metadata, "intents", filters.intents);
-  if (intentMatches > 0) {
-    score += addScoreContribution(
-      reasons,
-      "intent-match",
-      intentMatches * searchRankingWeights.intentMatch,
-      String(intentMatches)
-    );
-  }
-
-  const modeMatches = countMetadataMatches(entry.metadata, "modes", filters.modes);
-  if (modeMatches > 0) {
-    score += addScoreContribution(
-      reasons,
-      "mode-match",
-      modeMatches * searchRankingWeights.modeMatch,
-      String(modeMatches)
-    );
-  }
-
   if (matchesProjectFilter(entry.project, filters.project)) {
     score += addScoreContribution(reasons, "project-match", searchRankingWeights.projectMatch);
   }
@@ -1483,17 +1423,26 @@ export function calculateSearchRanking(entry: {
 
 // Project context is provenance: matching the caller's current project boosts
 // ranking, but other projects are never penalized so cross-project rationale
-// stays discoverable (R20260514T070848652Z-j3uj1b).
+// stays discoverable (R20260514T070848652Z-j3uj1b). Names compare
+// case-insensitively because the same project arrives as e.g. "RisuAI" and
+// "Risuai" from different clients; genuinely distinct projects (forks,
+// sidecars) differ beyond casing and stay separate.
 function matchesProjectFilter(project: ProjectContext | undefined, filter: SearchProjectFilter | undefined) {
   if (!project || !filter) {
     return false;
   }
 
-  if (project.name === filter.name) {
+  if (equalsIgnoreCase(project.name, filter.name)) {
     return true;
   }
 
-  return filter.repo !== undefined && project.repo === filter.repo;
+  return filter.repo !== undefined
+    && project.repo !== undefined
+    && equalsIgnoreCase(project.repo, filter.repo);
+}
+
+function equalsIgnoreCase(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function calculateRecentUsageScore(lastUsedAt: string | undefined) {
@@ -1516,19 +1465,6 @@ function calculateRecentUsageScore(lastUsedAt: string | undefined) {
 
 function formatErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
-}
-
-function countMetadataMatches(metadata: Record<string, unknown>, key: string, expectedValues: string[] | undefined) {
-  if (!expectedValues || expectedValues.length === 0) {
-    return 0;
-  }
-
-  const value = metadata[key];
-  if (!Array.isArray(value)) {
-    return 0;
-  }
-
-  return value.filter((item): item is string => typeof item === "string" && expectedValues.includes(item)).length;
 }
 
 function getStringArray(metadata: Record<string, unknown> | undefined, key: string) {

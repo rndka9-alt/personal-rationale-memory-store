@@ -59,24 +59,11 @@ describe("calculateReviewPriority", () => {
 describe("calculateSearchRanking", () => {
   it("reports signed score contributions for ranking signals", () => {
     const ranking = calculateSearchRanking({
-      confidence: 0.7,
       acceptanceState: "accepted",
       reviewState: "reviewed",
-      type: "rationale",
-      metadata: {
-        domains: ["memory-system"],
-        intents: ["design"],
-        modes: ["coding"]
-      },
-      useCount: 4,
       vectorScore: 0.8,
       lexicalRank: 1
-    }, {
-      domains: ["memory-system"],
-      intents: ["design"],
-      modes: ["coding"],
-      types: ["rationale"]
-    }, {
+    }, {}, {
       appliedCount: 1,
       helpfulCount: 1,
       unhelpfulCount: 0,
@@ -89,18 +76,13 @@ describe("calculateSearchRanking", () => {
     expect(ranking.reasons).toContain("lexical:1.00:+1.00");
     expect(ranking.reasons).toContain("accepted:+2.00");
     expect(ranking.reasons).toContain("reviewed:+0.50");
-    expect(ranking.reasons).toContain("positive-feedback:2:+0.70");
-    expect(ranking.reasons).toContain("domain-match:1:+2.00");
+    expect(ranking.reasons).toContain("positive-feedback:2:+1.00");
   });
 
   it("penalizes memories that need revision during search", () => {
     const ranking = calculateSearchRanking({
-      confidence: 0.5,
       acceptanceState: "candidate",
       reviewState: "needs_revision",
-      type: "rationale",
-      metadata: {},
-      useCount: 0,
       vectorScore: 0.7
     }, {}, {
       appliedCount: 0,
@@ -115,33 +97,38 @@ describe("calculateSearchRanking", () => {
     expect(ranking.reasons).toContain("negative-feedback:2:-1.50");
   });
 
-  it("boosts matching-project memories without penalizing other projects", () => {
-    const noProjectRanking = calculateSearchRanking({
-      confidence: 0.5,
+  it("caps positive feedback below unbounded accumulation", () => {
+    const ranking = calculateSearchRanking({
       acceptanceState: "candidate",
       reviewState: "unreviewed",
-      type: "rationale",
-      metadata: {},
-      useCount: 0,
+      vectorScore: 0.7
+    }, {}, {
+      appliedCount: 10,
+      helpfulCount: 0,
+      unhelpfulCount: 0,
+      dismissedCount: 0,
+      positiveCount: 10,
+      negativeCount: 0
+    });
+
+    expect(ranking.reasons).toContain("positive-feedback:10:+2.00");
+  });
+
+  it("boosts matching-project memories without penalizing other projects", () => {
+    const noProjectRanking = calculateSearchRanking({
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
       vectorScore: 0.7
     }, { project: { name: "alpha" } });
     const matchingProjectRanking = calculateSearchRanking({
-      confidence: 0.5,
       acceptanceState: "candidate",
       reviewState: "unreviewed",
-      type: "rationale",
-      metadata: {},
-      useCount: 0,
       vectorScore: 0.7,
       project: { name: "alpha" }
     }, { project: { name: "alpha" } });
     const otherProjectRanking = calculateSearchRanking({
-      confidence: 0.5,
       acceptanceState: "candidate",
       reviewState: "unreviewed",
-      type: "rationale",
-      metadata: {},
-      useCount: 0,
       vectorScore: 0.7,
       project: { name: "beta" }
     }, { project: { name: "alpha" } });
@@ -152,67 +139,25 @@ describe("calculateSearchRanking", () => {
     expect(otherProjectRanking.reasons.some((reason) => reason.startsWith("project-"))).toBe(false);
   });
 
-  it("does not penalize auto-captured unreviewed candidates", () => {
-    const manualCandidateRanking = calculateSearchRanking({
-      confidence: 0.5,
+  it("matches project names case-insensitively", () => {
+    const ranking = calculateSearchRanking({
       acceptanceState: "candidate",
       reviewState: "unreviewed",
-      type: "rationale",
-      metadata: {},
-      useCount: 0,
-      vectorScore: 0.7
-    }, {});
-    const autoCapturedRanking = calculateSearchRanking({
-      confidence: 0.5,
-      acceptanceState: "candidate",
-      reviewState: "unreviewed",
-      type: "rationale",
-      metadata: { capture_kind: "auto" },
-      useCount: 0,
-      vectorScore: 0.7
-    }, {});
+      vectorScore: 0.7,
+      project: { name: "RisuAI" }
+    }, { project: { name: "risuai" } });
 
-    expect(autoCapturedRanking.score).toBe(manualCandidateRanking.score);
-    expect(autoCapturedRanking.reasons.some((reason) => reason.startsWith("auto-unreviewed:"))).toBe(false);
+    expect(ranking.reasons).toContain("project-match:+1.50");
   });
 
-  it("does not boost search ranking from passive use counts", () => {
-    const baseRanking = calculateSearchRanking({
-      confidence: 0.5,
+  it("keeps distinct project names separate even when one contains the other", () => {
+    const ranking = calculateSearchRanking({
       acceptanceState: "candidate",
       reviewState: "unreviewed",
-      type: "rationale",
-      metadata: {},
-      useCount: 0,
-      vectorScore: 0.7
-    }, {}, {
-      appliedCount: 0,
-      helpfulCount: 0,
-      unhelpfulCount: 0,
-      dismissedCount: 0,
-      positiveCount: 0,
-      negativeCount: 0
-    });
-    const passiveUseRanking = calculateSearchRanking({
-      confidence: 0.5,
-      acceptanceState: "candidate",
-      reviewState: "unreviewed",
-      type: "rationale",
-      metadata: {},
-      useCount: 100,
-      lastUsedAt: "2099-01-01T00:00:00.000Z",
-      vectorScore: 0.7
-    }, {}, {
-      appliedCount: 0,
-      helpfulCount: 0,
-      unhelpfulCount: 0,
-      dismissedCount: 0,
-      positiveCount: 0,
-      negativeCount: 0
-    });
+      vectorScore: 0.7,
+      project: { name: "Risuai-NodeOnly" }
+    }, { project: { name: "risuai" } });
 
-    expect(passiveUseRanking.score).toBe(baseRanking.score);
-    expect(passiveUseRanking.reasons.some((reason) => reason.startsWith("usage:"))).toBe(false);
-    expect(passiveUseRanking.reasons.some((reason) => reason.startsWith("recent-usage:"))).toBe(false);
+    expect(ranking.reasons.some((reason) => reason.startsWith("project-"))).toBe(false);
   });
 });

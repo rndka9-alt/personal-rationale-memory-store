@@ -13,7 +13,7 @@ export type TaskClassification = {
   reasons: string[];
 };
 
-export function classifyTask(task: string, explicitMode?: string, explicitDomains?: string[]): TaskClassification {
+export function classifyTask(task: string): TaskClassification {
   const lowerTask = task.toLowerCase();
   const reasons: string[] = [];
   const intents = unique([
@@ -21,11 +21,11 @@ export function classifyTask(task: string, explicitMode?: string, explicitDomain
     "design"
   ]);
   const modes = unique([
-    ...(explicitMode ? [explicitMode] : matchMode(lowerTask, reasons)),
+    ...matchMode(lowerTask, reasons),
     "planning"
   ]);
   const domains = unique([
-    ...(explicitDomains && explicitDomains.length > 0 ? explicitDomains : matchDomain(lowerTask, reasons)),
+    ...matchDomain(lowerTask, reasons),
     "development"
   ]);
   const fileHints = extractFileHints(task);

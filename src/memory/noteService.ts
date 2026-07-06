@@ -232,8 +232,18 @@ export type SlottedNote = {
   content: string;
 };
 
+// 평가 유도 문구를 컨텍스트 자체에 싣는다: rate_note는 서버에 배선만 되어 있으면 불리지 않는다는 걸
+// 운영 데이터로 확인함(노트 167개 중 평가 1건). 컨텍스트 안에 계기가 있어야 피드백 루프가 돈다.
+const noteRatingNudge =
+  "도움이 됐거나 별로였던 쪽지는 rate_note로 평가해 주세요 (slot: 각 ━━━ 헤더의 값, rating: \"up\" 또는 \"down\").";
+
 export function formatNotesContext(notes: SlottedNote[]) {
-  return notes.map((note) => `━━━ ${note.slot} ━━━\n${note.content}`).join("\n\n");
+  if (notes.length === 0) {
+    return "";
+  }
+
+  const body = notes.map((note) => `━━━ ${note.slot} ━━━\n${note.content}`).join("\n\n");
+  return `${body}\n\n${noteRatingNudge}`;
 }
 
 function noteRatingFeedback(rating: NoteRating) {

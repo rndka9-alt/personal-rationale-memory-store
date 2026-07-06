@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
-import { classifyTask } from "../ontology/taskClassifier.js";
 import type { RationaleSearchWarning, RationaleService } from "./rationaleService.js";
 import type { MemoryEntryRecord, MemoryRefinementOpinionRecord, SearchProjectFilter } from "./schema.js";
 
@@ -11,15 +10,25 @@ const refinementOpinionLimitPerEntry = 3;
 // Historical note-typed memory entries predate the separate plain note store.
 // Keep them out of rationale context so notes and rationale memories stay distinct.
 const legacyComposeExcludedTypes = ["note"];
+// The relevance floor applies to vector similarity itself, not the composite
+// searchScore: composite scores mix trust boosts (accepted/project/feedback),
+// so a boosted-but-unrelated memory could pass any composite threshold.
+// 0.4 drops roughly the bottom quarter of historical compose inclusions;
+// recalibrate after reviewing what it excludes.
+const vectorSimilarityFloor = 0.4;
+// Feedback only flows if the context pack itself asks for it: the loop is fully
+// wired server-side, but production data showed near-zero feedback because
+// clients had no in-context trigger to call record_usage_feedback.
+const feedbackFooter = [
+  "## Feedback",
+  "- After acting on this pack, call record_usage_feedback per memory id: eventType \"applied\" if it shaped your work, \"dismissed\" if it was retrieved but not useful."
+].join("\n");
 
 export type ComposeContextInput = {
   task: string;
-  explicitMode?: string;
-  explicitDomains?: string[];
   project?: SearchProjectFilter;
   tokenBudget?: number;
   includeFullTopK?: number;
-  minScore?: number;
 };
 
 export type ContinueContextInput = {
@@ -39,44 +48,30 @@ export class ContextComposer {
   async compose(input: ComposeContextInput) {
     const tokenBudget = input.tokenBudget ?? 1200;
     const includeFullTopK = input.includeFullTopK ?? 2;
-    const minScore = input.minScore ?? 0;
     logInfo("Composing rationale context started.", {
       task: input.task,
-      explicitMode: input.explicitMode,
-      explicitDomains: input.explicitDomains,
       project: input.project,
       tokenBudget,
-      includeFullTopK,
-      minScore
-    });
-    const classification = classifyTask(input.task, input.explicitMode, input.explicitDomains);
-    logInfo("Rationale context task classified.", {
-      intent: classification.intent,
-      intents: classification.intents,
-      domain: classification.domain,
-      domains: classification.domains,
-      mode: classification.mode,
-      modes: classification.modes,
-      riskLevel: classification.riskLevel,
-      likelyArtifact: classification.likelyArtifact,
-      trivial: classification.trivial,
-      fileHints: classification.fileHints
+      includeFullTopK
     });
     const kernel = await this.loadKernel(tokenBudget);
     const searchResult = await this.rationaleService.searchWithDiagnostics({
       query: input.task,
-      domains: input.explicitDomains,
-      modes: input.explicitMode ? [input.explicitMode] : undefined,
       project: input.project,
       excludeTypes: legacyComposeExcludedTypes,
       limit: 50,
       includeDeprecated: false
     }, "compose");
     const searchResults = searchResult.results;
-    const relevantResults = searchResults.filter((result) => (result.searchScore ?? 0) >= minScore);
+    // Lexical-only results (no vectorScore) pass the floor: they matched the task
+    // text directly, and vector-failure fallback results must stay usable.
+    const relevantResults = searchResults.filter((result) =>
+      typeof result.vectorScore !== "number" || result.vectorScore >= vectorSimilarityFloor
+    );
     logInfo("Rationale context retrieval completed.", {
       resultCount: searchResults.length,
       relevantResultCount: relevantResults.length,
+      belowSimilarityFloorCount: searchResults.length - relevantResults.length,
       warningCount: searchResult.warnings.length
     });
     const refinementOpinionsByEntryId = await this.rationaleService.listOpenRefinementOpinions(
@@ -94,7 +89,8 @@ export class ContextComposer {
       "## Retrieved rationales"
     ];
 
-    let usedTokens = estimateTokens(lines.join("\n"));
+    // Reserve footer tokens up front so appending it never overshoots the budget.
+    let usedTokens = estimateTokens(lines.join("\n")) + estimateTokens(feedbackFooter);
     let index = 0;
     const usageEvents: UsageEventInput[] = [];
 
@@ -136,6 +132,10 @@ export class ContextComposer {
       });
       const manifest = formatContinuationManifest(cursor, relevantResults, index);
       lines.push("", manifest);
+    }
+
+    if (index > 0) {
+      lines.push("", feedbackFooter);
     }
 
     const contextWithManifest = lines.join("\n").trimEnd();

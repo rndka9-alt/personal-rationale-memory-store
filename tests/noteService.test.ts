@@ -66,10 +66,22 @@ describe("note context selection", () => {
   });
 
   it("heads each note with its own slot line so ratings can target it", () => {
-    expect(formatNotesContext([
+    const context = formatNotesContext([
       { slot: "00", content: "first line\nsecond line" },
       { slot: "01", content: "another note" }
-    ])).toBe("━━━ 00 ━━━\nfirst line\nsecond line\n\n━━━ 01 ━━━\nanother note");
+    ]);
+
+    expect(context).toContain("━━━ 00 ━━━\nfirst line\nsecond line\n\n━━━ 01 ━━━\nanother note");
+  });
+
+  it("appends a rating nudge so clients have an in-context trigger for rate_note", () => {
+    const context = formatNotesContext([
+      { slot: "00", content: "a note" }
+    ]);
+
+    // 유도 문구는 노트 본문 뒤 마지막 단락으로 온다(본문이 먼저).
+    expect(context.startsWith("━━━ 00 ━━━")).toBe(true);
+    expect(context).toContain("rate_note");
   });
 
   it("formats an empty note selection as empty text", () => {
