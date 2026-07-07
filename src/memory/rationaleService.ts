@@ -3,8 +3,8 @@ import { z } from "zod";
 import {
   claimRationaleContentFingerprint,
   completeRationaleContentFingerprint,
-  countMemoryUsageFeedback,
   countOpenMemoryRefinementOpinions,
+  countMemoryUsageFeedback,
   failRationaleContentFingerprint,
   findMemoryEntry,
   findMemoryRefinementOpinion,
@@ -116,7 +116,6 @@ export type RationaleSearchWarning = {
 };
 
 export type ReviewQueueEntry = MemoryEntryRecord & {
-  openRefinementOpinionCount: number;
   usageFeedback: MemoryUsageFeedbackCounts;
   reviewPriorityScore: number;
   reviewPriorityReasons: string[];
@@ -160,8 +159,6 @@ const searchRankingWeights = {
 };
 
 const reviewPriorityWeights = {
-  openOpinion: 4,
-  openOpinionMax: 12,
   needsRevision: 4,
   usageMultiplier: 1.5,
   usageMax: 6,
@@ -605,9 +602,8 @@ export class RationaleService {
       const reviewStateMatches = !reviewState || entry.reviewState === reviewState;
       return captureKindMatches && reviewStateMatches;
     });
-    const openOpinionCounts = await countOpenMemoryRefinementOpinions(this.pool, filteredEntries.map((entry) => entry.id));
     const usageFeedbackCounts = await this.countUsageFeedback(filteredEntries.map((entry) => entry.id));
-    const prioritizedEntries = prioritizeReviewQueueEntries(filteredEntries, openOpinionCounts, usageFeedbackCounts);
+    const prioritizedEntries = prioritizeReviewQueueEntries(filteredEntries, usageFeedbackCounts);
     logInfo("Listed rationale review queue.", {
       resultCount: prioritizedEntries.length
     });
@@ -1452,17 +1448,14 @@ function rankSearchResults<TEntry extends {
 
 function prioritizeReviewQueueEntries(
   entries: MemoryEntryRecord[],
-  openOpinionCounts: Map<string, number>,
   usageFeedbackCounts: Map<string, MemoryUsageFeedbackCounts>
 ): ReviewQueueEntry[] {
   return entries
     .map((entry, originalIndex) => {
-      const openRefinementOpinionCount = openOpinionCounts.get(entry.id) ?? 0;
       const usageFeedback = usageFeedbackCounts.get(entry.id) ?? createEmptyUsageFeedbackCounts();
-      const priority = calculateReviewPriority(entry, openRefinementOpinionCount, usageFeedback);
+      const priority = calculateReviewPriority(entry, usageFeedback);
       return {
         ...entry,
-        openRefinementOpinionCount,
         usageFeedback,
         reviewPriorityScore: priority.score,
         reviewPriorityReasons: priority.reasons,
@@ -1509,18 +1502,9 @@ export function calculateReviewPriority(entry: {
   reviewState: MemoryEntryRecord["reviewState"];
   useCount: number;
   lastUsedAt?: string;
-}, openRefinementOpinionCount: number, usageFeedback = createEmptyUsageFeedbackCounts()) {
+}, usageFeedback = createEmptyUsageFeedbackCounts()) {
   let score = 0;
   const reasons: string[] = [];
-
-  if (openRefinementOpinionCount > 0) {
-    score += addScoreContribution(
-      reasons,
-      "open-opinions",
-      Math.min(openRefinementOpinionCount * reviewPriorityWeights.openOpinion, reviewPriorityWeights.openOpinionMax),
-      String(openRefinementOpinionCount)
-    );
-  }
 
   if (entry.reviewState === "needs_revision") {
     score += addScoreContribution(reasons, "needs-revision", reviewPriorityWeights.needsRevision);

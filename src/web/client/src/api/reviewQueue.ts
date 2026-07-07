@@ -1,9 +1,6 @@
 import { requestJson } from "./http";
 import type {
   ProjectContext,
-  RefinementOpinionAction,
-  RefinementOpinionType,
-  RefinementOpinion,
   ReviewAction,
   ReviewQueueDetail,
   ReviewQueueItem,
@@ -45,36 +42,6 @@ export async function submitReviewAction(input: {
       action: input.action,
       notes: input.notes,
       reason: input.reason
-    }
-  });
-}
-
-export async function submitRefinementOpinionAction(input: {
-  id: string;
-  action: RefinementOpinionAction;
-  note?: string;
-}) {
-  await requestJson(`/api/refinement-opinions/${encodeURIComponent(input.id)}/action`, {
-    method: "POST",
-    body: {
-      action: input.action,
-      note: input.note
-    }
-  });
-}
-
-export async function createRefinementOpinion(input: {
-  entryId: string;
-  opinionType: RefinementOpinionType;
-  body: string;
-  suggestedPatch?: Record<string, unknown>;
-}) {
-  await requestJson(`/api/review-queue/${encodeURIComponent(input.entryId)}/refinement-opinions`, {
-    method: "POST",
-    body: {
-      opinionType: input.opinionType,
-      body: input.body,
-      suggestedPatch: input.suggestedPatch
     }
   });
 }
@@ -122,7 +89,6 @@ function parseReviewQueueItem(value: unknown): ReviewQueueItem {
     lastUsedAt: readOptionalString(value, "lastUsedAt"),
     createdAt: readOptionalString(value, "createdAt"),
     usageFeedback: parseUsageFeedback(value.usageFeedback),
-    openRefinementOpinionCount: readNumber(value, "openRefinementOpinionCount"),
     reviewPriorityScore: readNumber(value, "reviewPriorityScore"),
     reviewPriorityReasons: readStringArray(value, "reviewPriorityReasons"),
     metadata: readRecord(value, "metadata")
@@ -145,8 +111,7 @@ function parseReviewQueueDetail(value: unknown): ReviewQueueDetail {
       strengths: readStringArray(value.review, "strengths"),
       cautions: readStringArray(value.review, "cautions")
     },
-    usage: parseUsage(value.usage),
-    refinementOpinions: readRefinementOpinions(value.refinementOpinions)
+    usage: parseUsage(value.usage)
   };
 }
 
@@ -175,26 +140,6 @@ function parseUsageFeedback(value: unknown): UsageFeedbackCounts {
     positiveCount: readNumber(value, "positiveCount"),
     negativeCount: readNumber(value, "negativeCount")
   };
-}
-
-function readRefinementOpinions(value: unknown): RefinementOpinion[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(isRecord).map((item) => ({
-    id: readRequiredString(item, "id"),
-    entryId: readRequiredString(item, "entryId"),
-    opinionType: readRequiredString(item, "opinionType"),
-    status: readRequiredString(item, "status"),
-    body: readRequiredString(item, "body"),
-    suggestedPatch: readOptionalRecord(item, "suggestedPatch"),
-    sourceKind: readRequiredString(item, "sourceKind"),
-    sourceRef: readOptionalString(item, "sourceRef"),
-    metadata: readRecord(item, "metadata"),
-    createdAt: readRequiredString(item, "createdAt"),
-    updatedAt: readRequiredString(item, "updatedAt")
-  }));
 }
 
 function parseRationaleEntry(value: Record<string, unknown>) {
@@ -315,11 +260,6 @@ function readStringArray(value: Record<string, unknown>, key: string) {
 function readRecord(value: Record<string, unknown>, key: string) {
   const fieldValue = value[key];
   return isRecord(fieldValue) ? fieldValue : {};
-}
-
-function readOptionalRecord(value: Record<string, unknown>, key: string) {
-  const fieldValue = value[key];
-  return isRecord(fieldValue) ? fieldValue : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

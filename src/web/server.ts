@@ -112,7 +112,6 @@ async function routeApiRequest(
   if (detailMatch && method === "GET") {
     const entry = await rationaleService.getRationale(detailMatch.id);
     const indexedEntry = await rationaleService.getMemoryEntryRecord(detailMatch.id);
-    const refinementOpinions = await rationaleService.listOpenRefinementOpinions([detailMatch.id], 5);
     const usageFeedbackCounts = await rationaleService.countUsageFeedback([detailMatch.id]);
     const usageFeedback = usageFeedbackCounts.get(detailMatch.id);
     if (!usageFeedback) {
@@ -126,8 +125,7 @@ async function routeApiRequest(
         useCount: indexedEntry.useCount,
         lastUsedAt: indexedEntry.lastUsedAt,
         feedback: usageFeedback
-      },
-      refinementOpinions: refinementOpinions.get(detailMatch.id) ?? []
+      }
     });
     return;
   }
@@ -142,40 +140,6 @@ async function routeApiRequest(
       patch: parsedBody.patch
     });
     writeJson(response, 200, { entry });
-    return;
-  }
-
-  const createRefinementOpinionMatch = matchReviewQueueRefinementOpinionsPath(url.pathname);
-  if (createRefinementOpinionMatch && method === "POST") {
-    const body = await readJsonBody(request);
-    const parsedBody = parseCreateRefinementOpinionBody(body);
-    const opinion = await rationaleService.recordRefinementOpinion({
-      entryId: createRefinementOpinionMatch.id,
-      opinionType: parsedBody.opinionType,
-      body: parsedBody.body,
-      suggestedPatch: parsedBody.suggestedPatch,
-      source: {
-        kind: "web_ui",
-        ref: "review-ui"
-      },
-      metadata: {
-        created_from: "review_ui"
-      }
-    });
-    writeJson(response, 200, { opinion });
-    return;
-  }
-
-  const refinementOpinionMatch = matchRefinementOpinionActionPath(url.pathname);
-  if (refinementOpinionMatch && method === "POST") {
-    const body = await readJsonBody(request);
-    const parsedBody = parseRefinementOpinionActionBody(body);
-    const opinion = await rationaleService.markRefinementOpinion(
-      refinementOpinionMatch.id,
-      parsedBody.action,
-      parsedBody.note
-    );
-    writeJson(response, 200, { opinion });
     return;
   }
 
@@ -217,12 +181,6 @@ function matchReviewQueueReviewPath(pathname: string) {
   return id ? { id: decodeURIComponent(id) } : undefined;
 }
 
-function matchReviewQueueRefinementOpinionsPath(pathname: string) {
-  const match = /^\/api\/review-queue\/([^/]+)\/refinement-opinions$/.exec(pathname);
-  const id = match?.[1];
-  return id ? { id: decodeURIComponent(id) } : undefined;
-}
-
 function matchNoteArchivePath(pathname: string) {
   const match = /^\/api\/notes\/([^/]+)\/archive$/.exec(pathname);
   const id = match?.[1];
@@ -231,12 +189,6 @@ function matchNoteArchivePath(pathname: string) {
 
 function matchNoteRestorePath(pathname: string) {
   const match = /^\/api\/notes\/([^/]+)\/restore$/.exec(pathname);
-  const id = match?.[1];
-  return id ? { id: decodeURIComponent(id) } : undefined;
-}
-
-function matchRefinementOpinionActionPath(pathname: string) {
-  const match = /^\/api\/refinement-opinions\/([^/]+)\/action$/.exec(pathname);
   const id = match?.[1];
   return id ? { id: decodeURIComponent(id) } : undefined;
 }
@@ -296,60 +248,6 @@ function parseReviewActionBody(value: unknown): {
     notes: typeof value.notes === "string" ? value.notes : undefined,
     reason: typeof value.reason === "string" ? value.reason : undefined,
     patch: isRecord(value.patch) ? value.patch : undefined
-  };
-}
-
-function parseRefinementOpinionActionBody(value: unknown): {
-  action: "resolve" | "reject" | "apply_patch";
-  note?: string;
-} {
-  if (!isRecord(value)) {
-    throw new Error("Refinement opinion action body must be an object.");
-  }
-
-  const action = value.action;
-  if (action !== "resolve" && action !== "reject" && action !== "apply_patch") {
-    throw new Error("Invalid refinement opinion action.");
-  }
-
-  return {
-    action,
-    note: typeof value.note === "string" ? value.note : undefined
-  };
-}
-
-function parseCreateRefinementOpinionBody(value: unknown): {
-  opinionType: "opinion" | "patch_request" | "correction" | "question";
-  body: string;
-  suggestedPatch?: Record<string, unknown>;
-} {
-  if (!isRecord(value)) {
-    throw new Error("Refinement opinion body must be an object.");
-  }
-
-  const opinionType = value.opinionType;
-  if (
-    opinionType !== "opinion"
-    && opinionType !== "patch_request"
-    && opinionType !== "correction"
-    && opinionType !== "question"
-  ) {
-    throw new Error("Invalid refinement opinion type.");
-  }
-
-  if (typeof value.body !== "string" || value.body.trim().length === 0) {
-    throw new Error("Refinement opinion body is required.");
-  }
-
-  const suggestedPatch = value.suggestedPatch;
-  if (typeof suggestedPatch !== "undefined" && !isRecord(suggestedPatch)) {
-    throw new Error("Refinement opinion suggestedPatch must be an object.");
-  }
-
-  return {
-    opinionType,
-    body: value.body,
-    suggestedPatch
   };
 }
 

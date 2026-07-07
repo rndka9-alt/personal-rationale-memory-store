@@ -33,7 +33,6 @@ export type ReviewQueueItem = {
   lastUsedAt?: string;
   createdAt?: string;
   usageFeedback: UsageFeedbackCounts;
-  openRefinementOpinionCount: number;
   reviewPriorityScore: number;
   reviewPriorityReasons: string[];
   metadata: Record<string, unknown>;
@@ -86,20 +85,6 @@ export type CandidateReview = {
   cautions: string[];
 };
 
-export type RefinementOpinion = {
-  id: string;
-  entryId: string;
-  opinionType: string;
-  status: string;
-  body: string;
-  suggestedPatch?: Record<string, unknown>;
-  sourceKind: string;
-  sourceRef?: string;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-};
-
 export type ReviewQueueDetail = {
   entry: RationaleEntry;
   review: CandidateReview;
@@ -108,11 +93,6 @@ export type ReviewQueueDetail = {
     lastUsedAt?: string;
     feedback: UsageFeedbackCounts;
   };
-  refinementOpinions: RefinementOpinion[];
 };
 
 export type ReviewAction = "accept" | "keep_candidate" | "needs_revision" | "deprecate";
-
-export type RefinementOpinionType = "opinion" | "patch_request" | "correction" | "question";
-
-export type RefinementOpinionAction = "resolve" | "reject" | "apply_patch";

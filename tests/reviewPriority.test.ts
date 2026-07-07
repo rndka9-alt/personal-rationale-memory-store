@@ -2,25 +2,25 @@ import { describe, expect, it } from "vitest";
 import { calculateReviewPriority, calculateSearchRanking } from "../src/memory/rationaleService.js";
 
 describe("calculateReviewPriority", () => {
-  it("prioritizes open opinions before usage-only candidates", () => {
-    const withOpinion = calculateReviewPriority({
-      reviewState: "unreviewed",
+  it("prioritizes revision attention before usage-only candidates", () => {
+    const needsRevision = calculateReviewPriority({
+      reviewState: "needs_revision",
       useCount: 0
-    }, 1);
+    });
     const withUsageOnly = calculateReviewPriority({
       reviewState: "unreviewed",
       useCount: 3
-    }, 0);
+    });
 
-    expect(withOpinion.score).toBeGreaterThan(withUsageOnly.score);
-    expect(withOpinion.reasons).toContain("open-opinions:1:+4.00");
+    expect(needsRevision.score).toBeGreaterThan(withUsageOnly.score);
+    expect(needsRevision.reasons).toContain("needs-revision:+4.00");
   });
 
   it("keeps standard candidates explicit when no priority signal exists", () => {
     const priority = calculateReviewPriority({
       reviewState: "unreviewed",
       useCount: 0
-    }, 0);
+    });
 
     expect(priority.score).toBe(0);
     expect(priority.reasons).toEqual(["standard-candidate"]);
@@ -30,7 +30,7 @@ describe("calculateReviewPriority", () => {
     const helpful = calculateReviewPriority({
       reviewState: "unreviewed",
       useCount: 0
-    }, 0, {
+    }, {
       appliedCount: 0,
       helpfulCount: 2,
       unhelpfulCount: 0,
@@ -41,7 +41,7 @@ describe("calculateReviewPriority", () => {
     const unhelpful = calculateReviewPriority({
       reviewState: "unreviewed",
       useCount: 0
-    }, 0, {
+    }, {
       appliedCount: 0,
       helpfulCount: 0,
       unhelpfulCount: 2,

@@ -196,7 +196,7 @@ The web UI is a light, minimal review surface for queued rationale candidates. I
 
 - list queued memories
 - inspect and review a selected memory
-- inspect deprecated refinement opinions while revision migration is pending
+- inspect usage feedback and lifecycle state for a selected memory
 
 Review actions available in the first UI pass:
 
@@ -207,7 +207,7 @@ Review actions available in the first UI pass:
 
 The UI uses React, Tailwind CSS, TanStack Query, and a small fetch wrapper. It talks to the separate `web` server API, not directly to the MCP transport.
 
-Queued memories are sorted by review priority instead of raw update time by default. Open refinement opinions are the strongest signal, followed by `needs_revision`, negative feedback that needs review attention, explicit positive use count, and recent positive use. The queue includes the priority score and signed score contribution reasons so reviewers can see why an item rose to the top. Reviewers can also sort by last used, opinions, positive feedback, negative feedback, or use count, and filter the list to entries with opinions, repair attention, feedback, or recent usage. Review actions advance the detail pane to the next queued item, and the queue supports selecting visible entries for bulk accept, keep, revise, or deprecate actions. Quick views switch between the unreviewed inbox, repair-focused work, and reviewed promotion candidates.
+Queued memories are sorted by review priority instead of raw update time by default. `needs_revision`, negative feedback that needs review attention, explicit positive use count, recent positive use, and positive feedback contribute to the queue score. The queue includes the priority score and signed score contribution reasons so reviewers can see why an item rose to the top. Reviewers can also sort by last used, positive feedback, negative feedback, or use count, and filter the list to entries with repair attention, feedback, or recent usage. Review actions advance the detail pane to the next queued item, and the queue supports selecting visible entries for bulk accept, keep, revise, or deprecate actions. Quick views switch between the unreviewed inbox, repair-focused work, and reviewed promotion candidates.
 
 ## Embeddings
 
