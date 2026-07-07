@@ -984,7 +984,7 @@ function RefinementOpinionList(props: {
                   disabled={props.isMutating}
                   onClick={() => props.onAction({ id: opinion.id, action: "resolve" })}
                 >
-                  Resolve
+                  Close
                 </ActionButton>
                 <ActionButton
                   danger

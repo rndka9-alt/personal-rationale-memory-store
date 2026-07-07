@@ -17,10 +17,11 @@ import {
   recordRetrievalQueryEvent,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
+  summarizeOpenMemoryRefinementOpinions,
   updateMemoryRefinementOpinionStatus,
   updateMemoryStatus
 } from "../db/queries.js";
-import type { MemoryUsageFeedbackCounts, RetrievalQuerySourceKind } from "../db/queries.js";
+import type { MemoryUsageFeedbackCounts, OpenRefinementOpinionSummary, RetrievalQuerySourceKind } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
@@ -757,6 +758,11 @@ export class RationaleService {
     const parsedLimit = refinementOpinionLimitSchema.parse(limitPerEntry);
     const opinions = await listOpenMemoryRefinementOpinions(this.pool, parsedEntryIds, parsedLimit);
     return groupRefinementOpinionsByEntryId(opinions);
+  }
+
+  async summarizeOpenRefinementOpinions(entryIds: string[]): Promise<Map<string, OpenRefinementOpinionSummary>> {
+    const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
+    return summarizeOpenMemoryRefinementOpinions(this.pool, parsedEntryIds);
   }
 
   async countOpenRefinementOpinions(entryIds: string[]) {

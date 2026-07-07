@@ -15,7 +15,8 @@ import {
   type NoteRating,
   type NoteRecord,
   noteSourceConversationSchema,
-  type ProjectContext
+  type ProjectContext,
+  type RefinementOpinionType
 } from "../memory/schema.js";
 
 export type MemoryChunkInsert = {
@@ -44,6 +45,11 @@ export type MemoryUsageFeedbackCounts = {
   dismissedCount: number;
   positiveCount: number;
   negativeCount: number;
+};
+
+export type OpenRefinementOpinionSummary = {
+  openCount: number;
+  openTypes: RefinementOpinionType[];
 };
 
 export type MemoryRefinementOpinionInsert = {
@@ -729,6 +735,46 @@ export async function countOpenMemoryRefinementOpinions(pool: pg.Pool, entryIds:
     resultCount: result.rows.length
   });
   return counts;
+}
+
+export async function summarizeOpenMemoryRefinementOpinions(pool: pg.Pool, entryIds: string[]) {
+  if (entryIds.length === 0) {
+    return new Map<string, OpenRefinementOpinionSummary>();
+  }
+
+  logInfo("DB summarize open memory refinement opinions started.", {
+    entryCount: entryIds.length
+  });
+
+  const result = await pool.query(
+    `SELECT
+      entry_id,
+      COUNT(*)::int AS open_count,
+      ARRAY_AGG(DISTINCT opinion_type ORDER BY opinion_type) AS open_types
+    FROM memory_refinement_opinions
+    WHERE entry_id = ANY($1)
+      AND status = 'open'
+    GROUP BY entry_id`,
+    [entryIds]
+  );
+
+  const summaries = new Map<string, OpenRefinementOpinionSummary>();
+  for (const row of result.rows) {
+    const rawTypes = row.open_types;
+    if (!Array.isArray(rawTypes)) {
+      throw new Error("Open refinement opinion summary returned invalid open_types.");
+    }
+    summaries.set(String(row.entry_id), {
+      openCount: Number(row.open_count),
+      openTypes: rawTypes.map((type) => refinementOpinionTypeSchema.parse(type))
+    });
+  }
+
+  logInfo("DB summarize open memory refinement opinions completed.", {
+    entryCount: entryIds.length,
+    resultCount: result.rows.length
+  });
+  return summaries;
 }
 
 export async function updateMemoryStatus(

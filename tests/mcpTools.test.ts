@@ -139,7 +139,49 @@ describe("MCP write tool results", () => {
     expect(payload.results[0]).not.toHaveProperty("metadata");
     expect(payload.results[0]).not.toHaveProperty("searchScore");
     expect(payload.results[0]).not.toHaveProperty("searchReasons");
+    expect(payload.results[0]).not.toHaveProperty("refinementOpinions");
     expect(payload.warnings[0]).not.toHaveProperty("details");
+  });
+
+  it("returns open refinement opinion hints in search results", async () => {
+    const services = createToolServices();
+    services.rationaleService.searchWithDiagnostics = async () => ({
+      results: [{
+        id: "R20260604T000000000Z-search",
+        type: "rationale",
+        status: "candidate",
+        acceptanceState: "candidate",
+        reviewState: "unreviewed",
+        decisionState: "unknown",
+        title: "Keep search responses compact",
+        summary: "Search callers only need enough detail to choose a follow-up read.",
+        canonicalPath: "/memory/R20260604T000000000Z-search.md",
+        scope: "general",
+        confidence: 0.5,
+        useCount: 3,
+        metadata: {},
+        searchScore: 4.2,
+        searchReasons: ["vector:0.800:+4.00"]
+      }],
+      warnings: []
+    });
+    services.rationaleService.summarizeOpenRefinementOpinions = async () => new Map([
+      ["R20260604T000000000Z-search", {
+        openCount: 2,
+        openTypes: ["correction", "patch_request"]
+      }]
+    ]);
+
+    const result = await getTool(services, "search_rationales").handler({
+      query: "compact search result"
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload.results[0].refinementOpinions).toEqual({
+      openCount: 2,
+      openTypes: ["correction", "patch_request"]
+    });
   });
 
   it("returns compact success metadata for auto-captured rationales", async () => {
@@ -299,6 +341,7 @@ function createToolServices(): ToolServices {
     rationaleService: {
       searchWithDiagnostics: unusedServiceMethod,
       getRationale: unusedServiceMethod,
+      summarizeOpenRefinementOpinions: async () => new Map(),
       autoCaptureRationale: async () => ({
         id: recordedEntry.frontmatter.id,
         canonicalPath: "/memory/R20260604T000000000Z-compact.md",

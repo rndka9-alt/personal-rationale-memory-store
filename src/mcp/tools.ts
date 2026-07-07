@@ -18,6 +18,7 @@ export type ToolServices = {
     RationaleService,
     | "searchWithDiagnostics"
     | "getRationale"
+    | "summarizeOpenRefinementOpinions"
     | "autoCaptureRationale"
     | "recordRefinementOpinion"
     | "recordUsageFeedback"
@@ -54,9 +55,13 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"),
-      handler: async (input: unknown) => jsonToolResult(compactSearchResult(
-        await services.rationaleService.searchWithDiagnostics(searchToolInputSchema.parse(input))
-      ))
+      handler: async (input: unknown) => {
+        const searchResult = await services.rationaleService.searchWithDiagnostics(searchToolInputSchema.parse(input));
+        const opinionSummaries = await services.rationaleService.summarizeOpenRefinementOpinions(
+          searchResult.results.map((result) => result.id)
+        );
+        return jsonToolResult(compactSearchResult(searchResult, opinionSummaries));
+      }
     },
     {
       name: "get_rationale",
@@ -227,7 +232,10 @@ function compactSearchResult(result: {
     severity: string;
     message: string;
   }>;
-}) {
+}, opinionSummaries: Map<string, {
+  openCount: number;
+  openTypes: string[];
+}>) {
   const response: {
     results: Array<{
       id: string;
@@ -237,6 +245,10 @@ function compactSearchResult(result: {
       reviewState: string;
       decisionState: string;
       summary?: string;
+      refinementOpinions?: {
+        openCount: number;
+        openTypes: string[];
+      };
     }>;
     warnings?: Array<{
       kind: string;
@@ -244,7 +256,7 @@ function compactSearchResult(result: {
       message: string;
     }>;
   } = {
-    results: result.results.map(compactSearchEntry)
+    results: result.results.map((entry) => compactSearchEntry(entry, opinionSummaries.get(entry.id)))
   };
 
   if (result.warnings.length > 0) {
@@ -266,7 +278,10 @@ function compactSearchEntry(entry: {
   acceptanceState: string;
   reviewState: string;
   decisionState: string;
-}) {
+}, opinionSummary: {
+  openCount: number;
+  openTypes: string[];
+} | undefined) {
   const response: {
     id: string;
     title: string;
@@ -275,6 +290,10 @@ function compactSearchEntry(entry: {
     reviewState: string;
     decisionState: string;
     summary?: string;
+    refinementOpinions?: {
+      openCount: number;
+      openTypes: string[];
+    };
   } = {
     id: entry.id,
     title: entry.title,
@@ -286,6 +305,9 @@ function compactSearchEntry(entry: {
 
   if (entry.summary) {
     response.summary = entry.summary;
+  }
+  if (opinionSummary && opinionSummary.openCount > 0) {
+    response.refinementOpinions = opinionSummary;
   }
 
   return response;
