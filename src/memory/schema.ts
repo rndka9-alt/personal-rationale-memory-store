@@ -117,6 +117,27 @@ export const autoCaptureRationaleInputSchema = z.object({
   metadata: recordCandidateInputSchema.shape.metadata
 });
 
+export const rationaleFieldPatchSchema = z.object({
+  title: recordCandidateInputSchema.shape.title.optional(),
+  type: recordCandidateInputSchema.shape.type,
+  situation: recordCandidateInputSchema.shape.situation,
+  goal: recordCandidateInputSchema.shape.goal,
+  constraints: recordCandidateInputSchema.shape.constraints,
+  decision: recordCandidateInputSchema.shape.decision,
+  rationale: recordCandidateInputSchema.shape.rationale.optional(),
+  rejectedAlternatives: recordCandidateInputSchema.shape.rejectedAlternatives,
+  tradeoff: recordCandidateInputSchema.shape.tradeoff,
+  reuseWhen: recordCandidateInputSchema.shape.reuseWhen,
+  avoidWhen: recordCandidateInputSchema.shape.avoidWhen,
+  metadata: recordCandidateInputSchema.shape.metadata
+}).refine((value) => Object.keys(value).length > 0, "Patch must include at least one field.");
+
+export const updateRationaleInputSchema = z.object({
+  revisionId: z.string().min(1),
+  reason: z.string().min(1).max(1000),
+  patch: rationaleFieldPatchSchema
+});
+
 export const recordRefinementOpinionInputSchema = z.object({
   entryId: z.string().min(1),
   opinionType: refinementOpinionTypeSchema.default("opinion"),
@@ -202,6 +223,8 @@ export type RationaleEntry = z.infer<typeof rationaleEntrySchema>;
 export type CapturedMemoryType = z.infer<typeof capturedMemoryTypeSchema>;
 export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
 export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
+export type RationaleFieldPatch = z.infer<typeof rationaleFieldPatchSchema>;
+export type UpdateRationaleInput = z.infer<typeof updateRationaleInputSchema>;
 export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type SearchProjectFilter = z.infer<typeof searchProjectFilterSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
@@ -244,6 +267,16 @@ export type MemoryRefinementOpinionRecord = {
   updatedAt: string;
 };
 
+export type MemoryRevisionRecord = {
+  id: string;
+  entryId: string;
+  revisionNumber: number;
+  content: string;
+  reason: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type MemoryEntryRecord = {
   id: string;
   type: string;
@@ -258,6 +291,7 @@ export type MemoryEntryRecord = {
   title: string;
   summary?: string;
   canonicalPath: string;
+  currentRevisionId?: string;
   scope: string;
   sourceKind?: string;
   sourceRef?: string;
@@ -298,6 +332,7 @@ export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string
     title: entry.title,
     summary: summarizeRationale(entry),
     canonicalPath,
+    currentRevisionId: readOptionalMetadataString(entry.frontmatter.metadata, "current_revision_id"),
     scope: entry.frontmatter.scope,
     sourceKind: entry.frontmatter.source?.kind,
     sourceRef: entry.frontmatter.source?.ref,
@@ -317,4 +352,9 @@ export function summarizeRationale(entry: RationaleEntry) {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function readOptionalMetadataString(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === "string" ? value : undefined;
 }

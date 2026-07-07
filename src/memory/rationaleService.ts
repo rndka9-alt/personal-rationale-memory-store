@@ -8,20 +8,24 @@ import {
   failRationaleContentFingerprint,
   findMemoryEntry,
   findMemoryRefinementOpinion,
+  findMemoryRevision,
+  findLatestMemoryRevision,
+  insertMemoryRevision,
   listAllMemoryEntriesByAcceptanceState,
   listMemoryEntriesByAcceptanceState,
   listOpenMemoryRefinementOpinions,
   listRecentMemoryEntries,
+  lockMemoryEntryForUpdate,
   recordMemoryRefinementOpinion,
   recordMemoryUsageEvents,
   recordRetrievalQueryEvent,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
-  summarizeOpenMemoryRefinementOpinions,
+  setMemoryEntryCurrentRevision,
   updateMemoryRefinementOpinionStatus,
   updateMemoryStatus
 } from "../db/queries.js";
-import type { MemoryUsageFeedbackCounts, OpenRefinementOpinionSummary, RetrievalQuerySourceKind } from "../db/queries.js";
+import type { MemoryUsageFeedbackCounts, RetrievalQuerySourceKind } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
@@ -38,6 +42,7 @@ import {
   recordUsageFeedbackInputSchema,
   reviewStateSchema,
   searchInputSchema,
+  updateRationaleInputSchema,
   type AutoCaptureRationaleInput,
   type MemoryEntryRecord,
   type MemoryRefinementOpinionRecord,
@@ -50,6 +55,7 @@ import {
   type SearchProjectFilter
 } from "./schema.js";
 import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
+import { parseRationaleMarkdown, serializeRationaleEntry } from "./fileStore.js";
 
 const rationalePatchSchema = z.object({
   title: z.string().optional(),
@@ -122,6 +128,14 @@ export type RationaleWriteResult = {
   entry?: RationaleEntry;
   status?: "duplicate" | "processing";
   existingId?: string;
+};
+
+export type MemoryRevisionBackfillResult = {
+  scanned: number;
+  indexed: number;
+  backfilled: number;
+  linked: number;
+  skipped: number;
 };
 
 const refinementOpinionLimitSchema = z.number().int().positive().max(5);
@@ -256,6 +270,18 @@ export class RationaleService {
     try {
       const canonicalPath = await this.fileStore.writeEntry(entry);
       await this.indexingService.indexEntry(entry, canonicalPath);
+      const revision = await insertMemoryRevision(this.pool, {
+        id: createRevisionId(),
+        entryId: id,
+        revisionNumber: 0,
+        content: serializeRationaleRevisionContent(entry),
+        reason: "Initial memory capture",
+        metadata: {
+          source_kind: validatedInput.source?.kind,
+          source_ref: validatedInput.source?.ref
+        }
+      });
+      await setMemoryEntryCurrentRevision(this.pool, id, revision.id);
       await completeRationaleContentFingerprint(this.pool, contentFingerprint, id);
       logInfo("Recording rationale candidate completed.", {
         entryId: id,
@@ -315,12 +341,30 @@ export class RationaleService {
       entryId: id
     });
     const databaseEntry = await findMemoryEntry(this.pool, id);
-    const canonicalPath = databaseEntry ? databaseEntry.canonicalPath : this.fileStore.pathForId(id);
-    const entry = await this.fileStore.readEntry(canonicalPath);
+    if (!databaseEntry) {
+      const canonicalPath = this.fileStore.pathForId(id);
+      const fileEntry = await this.fileStore.readEntry(canonicalPath);
+      logInfo("Reading rationale completed.", {
+        entryId: id,
+        canonicalPath,
+        foundInDatabase: false
+      });
+      return fileEntry;
+    }
+
+    if (!databaseEntry.currentRevisionId) {
+      throw new Error(`Memory entry has no current revision. Run backfill-revisions before reading ${id}.`);
+    }
+
+    const currentRevision = await findMemoryRevision(this.pool, databaseEntry.currentRevisionId);
+    if (!currentRevision) {
+      throw new Error(`Current memory revision not found: ${databaseEntry.currentRevisionId}`);
+    }
+    const entry = parseRationaleMarkdown(currentRevision.content);
     logInfo("Reading rationale completed.", {
       entryId: id,
-      canonicalPath,
-      foundInDatabase: Boolean(databaseEntry)
+      canonicalPath: databaseEntry.canonicalPath,
+      foundInDatabase: true
     });
     return entry;
   }
@@ -359,15 +403,119 @@ export class RationaleService {
       entryId: id,
       patchKeys: Object.keys(patch)
     });
-    const entry = await this.getRationale(id);
-    const updatedEntry = applyRationalePatch(entry, patch);
-    const canonicalPath = await this.fileStore.writeEntry(updatedEntry);
-    await this.indexingService.indexEntry(updatedEntry, canonicalPath);
+    const databaseEntry = await findMemoryEntry(this.pool, id);
+    if (!databaseEntry) {
+      throw new Error(`Memory entry not found in index: ${id}`);
+    }
+    if (!databaseEntry.currentRevisionId) {
+      throw new Error(`Memory entry has no current revision. Run backfill-revisions before updating ${id}.`);
+    }
+    const result = await this.updateRationaleFromRevision({
+      revisionId: databaseEntry.currentRevisionId,
+      reason: "Legacy rationale patch",
+      patch
+    });
+    if (!result.ok) {
+      throw new Error(`Rationale update conflicted for ${id}: latest revision is ${result.latestRevisionId}`);
+    }
+    const updatedEntry = await this.getRationale(id);
     logInfo("Updating rationale completed.", {
       entryId: id,
-      canonicalPath
+      revisionId: result.revisionId
     });
     return updatedEntry;
+  }
+
+  async updateRationaleFromRevision(input: unknown) {
+    const parsedInput = updateRationaleInputSchema.parse(input);
+    logInfo("Updating rationale from revision started.", {
+      revisionId: parsedInput.revisionId,
+      patchKeys: Object.keys(parsedInput.patch)
+    });
+    const baseRevision = await findMemoryRevision(this.pool, parsedInput.revisionId);
+    if (!baseRevision) {
+      throw new Error(`Memory revision not found: ${parsedInput.revisionId}`);
+    }
+    const databaseEntry = await findMemoryEntry(this.pool, baseRevision.entryId);
+    if (!databaseEntry) {
+      throw new Error(`Memory entry not found for revision: ${baseRevision.entryId}`);
+    }
+    if (databaseEntry.currentRevisionId !== baseRevision.id) {
+      const latestRevision = databaseEntry.currentRevisionId
+        ? databaseEntry.currentRevisionId
+        : (await findLatestMemoryRevision(this.pool, baseRevision.entryId))?.id;
+      if (!latestRevision) {
+        throw new Error(`Memory entry has no latest revision: ${baseRevision.entryId}`);
+      }
+      return {
+        ok: false as const,
+        latestRevisionId: latestRevision
+      };
+    }
+
+    const baseEntry = parseRationaleMarkdown(baseRevision.content);
+    const updatedEntry = applyRationalePatch(baseEntry, parsedInput.patch);
+    const canonicalPath = databaseEntry.canonicalPath;
+    const revisionId = createRevisionId();
+    const preparedIndex = await this.indexingService.prepareEntryIndex(updatedEntry, canonicalPath, {
+      fingerprintFile: false
+    });
+    preparedIndex.entryRecord.currentRevisionId = revisionId;
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const lockedEntry = await lockMemoryEntryForUpdate(client, baseRevision.entryId);
+      if (!lockedEntry) {
+        throw new Error(`Memory entry disappeared during update: ${baseRevision.entryId}`);
+      }
+      if (!lockedEntry.currentRevisionId) {
+        throw new Error(`Memory entry has no current revision. Run backfill-revisions before updating ${baseRevision.entryId}.`);
+      }
+      if (lockedEntry.currentRevisionId !== baseRevision.id) {
+        await client.query("ROLLBACK");
+        return {
+          ok: false as const,
+          latestRevisionId: lockedEntry.currentRevisionId
+        };
+      }
+
+      const revision = await insertMemoryRevision(client, {
+        id: revisionId,
+        entryId: baseRevision.entryId,
+        revisionNumber: baseRevision.revisionNumber + 1,
+        content: serializeRationaleRevisionContent(updatedEntry),
+        reason: parsedInput.reason,
+        metadata: {
+          base_revision_id: baseRevision.id
+        }
+      });
+      await this.indexingService.writePreparedIndex(client, preparedIndex);
+      await setMemoryEntryCurrentRevision(client, baseRevision.entryId, revision.id);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    try {
+      await this.fileStore.writeEntry(updatedEntry);
+    } catch (error) {
+      logError("Writing rationale file cache after revision update failed.", error, {
+        entryId: baseRevision.entryId,
+        revisionId
+      });
+    }
+    logInfo("Updating rationale from revision completed.", {
+      entryId: baseRevision.entryId,
+      revisionId
+    });
+    return {
+      ok: true as const,
+      revisionId
+    };
   }
 
   async deprecateRationale(id: string, reason: string, replacementId?: string) {
@@ -760,11 +908,6 @@ export class RationaleService {
     return groupRefinementOpinionsByEntryId(opinions);
   }
 
-  async summarizeOpenRefinementOpinions(entryIds: string[]): Promise<Map<string, OpenRefinementOpinionSummary>> {
-    const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
-    return summarizeOpenMemoryRefinementOpinions(this.pool, parsedEntryIds);
-  }
-
   async countOpenRefinementOpinions(entryIds: string[]) {
     const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
     return countOpenMemoryRefinementOpinions(this.pool, parsedEntryIds);
@@ -871,6 +1014,74 @@ export class RationaleService {
       entryCount: entries.length
     });
     return entries.length;
+  }
+
+  async backfillMemoryRevisions(): Promise<MemoryRevisionBackfillResult> {
+    const entries = await this.fileStore.listEntries();
+    const result: MemoryRevisionBackfillResult = {
+      scanned: entries.length,
+      indexed: 0,
+      backfilled: 0,
+      linked: 0,
+      skipped: 0
+    };
+    logInfo("Backfilling memory revisions started.", {
+      entryCount: entries.length
+    });
+
+    for (const { canonicalPath, entry } of entries) {
+      let databaseEntry = await findMemoryEntry(this.pool, entry.frontmatter.id);
+      if (!databaseEntry) {
+        await this.indexingService.indexEntry(entry, canonicalPath);
+        result.indexed += 1;
+        databaseEntry = await findMemoryEntry(this.pool, entry.frontmatter.id);
+      }
+
+      if (!databaseEntry) {
+        throw new Error(`Memory entry was not indexed during revision backfill: ${entry.frontmatter.id}`);
+      }
+
+      if (databaseEntry.currentRevisionId) {
+        const currentRevision = await findMemoryRevision(this.pool, databaseEntry.currentRevisionId);
+        if (currentRevision) {
+          result.skipped += 1;
+          continue;
+        }
+      }
+
+      const latestRevision = await findLatestMemoryRevision(this.pool, entry.frontmatter.id);
+      if (latestRevision) {
+        await setMemoryEntryCurrentRevision(this.pool, entry.frontmatter.id, latestRevision.id);
+        result.linked += 1;
+        continue;
+      }
+
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const revision = await insertMemoryRevision(client, {
+          id: createRevisionId(),
+          entryId: entry.frontmatter.id,
+          revisionNumber: 0,
+          content: serializeRationaleRevisionContent(entry),
+          reason: "Backfilled initial memory revision",
+          metadata: {
+            backfilled_from: "canonical_file"
+          }
+        });
+        await setMemoryEntryCurrentRevision(client, entry.frontmatter.id, revision.id);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      result.backfilled += 1;
+    }
+
+    logInfo("Backfilling memory revisions completed.", result);
+    return result;
   }
 
   private async repairUntaggedMemory() {
@@ -1473,6 +1684,18 @@ function formatErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
+function serializeRationaleRevisionContent(entry: RationaleEntry) {
+  const content = serializeRationaleEntry(entry);
+  if (!content.includes("\u0000")) {
+    return content;
+  }
+
+  logWarn("Rationale revision content contained NUL bytes; removed before database storage.", {
+    entryId: entry.frontmatter.id
+  });
+  return content.replaceAll("\u0000", "");
+}
+
 function getStringArray(metadata: Record<string, unknown> | undefined, key: string) {
   if (!metadata) {
     return [];
@@ -1564,4 +1787,10 @@ function createRationaleId() {
   const timestamp = new Date().toISOString().replaceAll("-", "").replaceAll(":", "").replaceAll(".", "");
   const randomPart = Math.random().toString(36).slice(2, 8);
   return `R${timestamp}-${randomPart}`;
+}
+
+function createRevisionId() {
+  const timestamp = new Date().toISOString().replaceAll("-", "").replaceAll(":", "").replaceAll(".", "");
+  const randomPart = Math.random().toString(36).slice(2, 8);
+  return `V${timestamp}-${randomPart}`;
 }

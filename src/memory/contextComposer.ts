@@ -3,10 +3,9 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
 import type { RationaleSearchWarning, RationaleService } from "./rationaleService.js";
-import type { MemoryEntryRecord, MemoryRefinementOpinionRecord, SearchProjectFilter } from "./schema.js";
+import type { MemoryEntryRecord, SearchProjectFilter } from "./schema.js";
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
-const refinementOpinionLimitPerEntry = 3;
 // Historical note-typed memory entries predate the separate plain note store.
 // Keep them out of rationale context so notes and rationale memories stay distinct.
 const legacyComposeExcludedTypes = ["note"];
@@ -74,11 +73,6 @@ export class ContextComposer {
       belowSimilarityFloorCount: searchResults.length - relevantResults.length,
       warningCount: searchResult.warnings.length
     });
-    const refinementOpinionsByEntryId = await this.rationaleService.listOpenRefinementOpinions(
-      relevantResults.map((result) => result.id),
-      refinementOpinionLimitPerEntry
-    );
-
     const lines = [
       "# Rationale Context Pack",
       ...formatSearchWarnings(searchResult.warnings),
@@ -96,11 +90,10 @@ export class ContextComposer {
 
     for (const result of relevantResults) {
       const entry = await this.rationaleService.getRationale(result.id);
-      const resultRefinementOpinions = refinementOpinionsByEntryId.get(result.id) ?? [];
       const includeKind = index < includeFullTopK ? "full" : "summary";
       const fullText = includeKind === "full"
-        ? formatFullEntry(entry.rawMarkdown, resultRefinementOpinions)
-        : formatSummary(result, resultRefinementOpinions);
+        ? formatFullEntry(entry.rawMarkdown)
+        : formatSummary(result);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context stopped at token budget.", {
@@ -176,12 +169,6 @@ export class ContextComposer {
     let includedCount = 0;
     let position = snapshot.position;
     const usageEvents: UsageEventInput[] = [];
-    const remainingCandidates = snapshot.candidates.slice(snapshot.position);
-    const refinementOpinionsByEntryId = await this.rationaleService.listOpenRefinementOpinions(
-      remainingCandidates.map((candidate) => candidate.id),
-      refinementOpinionLimitPerEntry
-    );
-
     while (position < snapshot.candidates.length) {
       const result = snapshot.candidates[position];
       if (!result) {
@@ -189,11 +176,10 @@ export class ContextComposer {
       }
 
       const entry = await this.rationaleService.getRationale(result.id);
-      const resultRefinementOpinions = refinementOpinionsByEntryId.get(result.id) ?? [];
       const includeKind = includedCount < includeFullTopK ? "full" : "summary";
       const fullText = includeKind === "full"
-        ? formatFullEntry(entry.rawMarkdown, resultRefinementOpinions)
-        : formatSummary(result, resultRefinementOpinions);
+        ? formatFullEntry(entry.rawMarkdown)
+        : formatSummary(result);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context continuation stopped at token budget.", {
@@ -278,7 +264,7 @@ function formatSummary(result: {
   acceptanceState: string;
   reviewState: string;
   decisionState: string;
-}, refinementOpinions: MemoryRefinementOpinionRecord[]) {
+}) {
   return [
     `### ${result.title}`,
     `- id: ${result.id}`,
@@ -286,8 +272,7 @@ function formatSummary(result: {
     `- acceptance state: ${result.acceptanceState}`,
     `- review state: ${result.reviewState}`,
     `- decision state: ${result.decisionState}`,
-    ...(result.summary ? [`- summary: ${result.summary}`] : []),
-    ...formatRefinementOpinionLines(refinementOpinions)
+    ...(result.summary ? [`- summary: ${result.summary}`] : [])
   ].join("\n");
 }
 
@@ -302,59 +287,12 @@ function formatContinuationManifest(cursor: string, candidates: MemoryEntryRecor
   ].join("\n");
 }
 
-function formatFullEntry(
-  markdown: string,
-  refinementOpinions: MemoryRefinementOpinionRecord[]
-) {
+function formatFullEntry(markdown: string) {
   return [
     "### Retrieved full rationale",
     "",
-    markdown.trim(),
-    ...formatRefinementOpinionBlock(refinementOpinions)
+    markdown.trim()
   ].join("\n");
-}
-
-function formatRefinementOpinionBlock(opinions: MemoryRefinementOpinionRecord[]) {
-  if (opinions.length === 0) {
-    return [];
-  }
-
-  return [
-    "",
-    "#### Open refinement opinions",
-    ...opinions.flatMap(formatRefinementOpinion)
-  ];
-}
-
-function formatRefinementOpinionLines(opinions: MemoryRefinementOpinionRecord[]) {
-  if (opinions.length === 0) {
-    return [];
-  }
-
-  return [
-    `- open refinement opinions: ${opinions.length}`,
-    ...opinions.map((opinion) =>
-      `  - ${opinion.opinionType} ${opinion.id}: ${truncateToCharacters(opinion.body, 240)}`
-    )
-  ];
-}
-
-function formatRefinementOpinion(opinion: MemoryRefinementOpinionRecord) {
-  const lines = [
-    `- ${opinion.opinionType} ${opinion.id}`,
-    `  - source: ${formatSource(opinion.sourceKind, opinion.sourceRef)}`,
-    `  - body: ${truncateToCharacters(opinion.body, 500)}`
-  ];
-
-  if (opinion.suggestedPatch) {
-    lines.push(`  - suggested patch: ${truncateToCharacters(JSON.stringify(opinion.suggestedPatch), 800)}`);
-  }
-
-  return lines;
-}
-
-function formatSource(sourceKind: string, sourceRef: string | undefined) {
-  return sourceRef ? `${sourceKind}:${sourceRef}` : sourceKind;
 }
 
 function createComposedUsageEvent(
@@ -389,10 +327,6 @@ function createComposedUsageEvent(
 function truncateToTokens(text: string, maxTokens: number) {
   const maxCharacters = maxTokens * 4;
   return text.length > maxCharacters ? text.slice(0, maxCharacters) : text;
-}
-
-function truncateToCharacters(text: string, maxCharacters: number) {
-  return text.length > maxCharacters ? `${text.slice(0, maxCharacters)}...` : text;
 }
 
 function estimateTokens(text: string) {

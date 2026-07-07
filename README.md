@@ -1,6 +1,6 @@
 # Rationale Memory Store
 
-Rationale Memory Store is a Dockerized MCP server for storing and retrieving rationale-centered memories. It stores the human-readable source of truth as Markdown/YAML under `data/memory`, then indexes metadata and chunks in Postgres with pgvector.
+Rationale Memory Store is a Dockerized MCP server for storing and retrieving rationale-centered memories. It stores versioned rationale bodies in Postgres, indexes metadata and chunks with pgvector, and maintains Markdown/YAML files under `data/memory` as a human-readable cache/export format.
 
 This is not a generic notes app. The key artifact is a reusable explanation of why a decision made sense under specific constraints.
 
@@ -49,15 +49,15 @@ volumes:
 
 The only Postgres-side bind mount is `./migrations:/docker-entrypoint-initdb.d:ro`, which is used to seed schema files when the database volume is first created. It is not the database storage location.
 
-Canonical Markdown/YAML memories remain under `./data:/app/data` as a host bind mount because those files are intentionally human-readable and editable outside the container.
+Markdown/YAML memory files remain under `./data:/app/data` as a host bind mount because those files are intentionally human-readable and useful for export/review outside the container.
 
-Files are the canonical source of truth, but they are not watched automatically. If a human or an LLM-assisted workflow edits a Markdown file directly, run:
+Postgres `memory_revisions` is the canonical source of truth for rationale bodies. Direct Markdown edits are a legacy/maintenance workflow; if a human or an LLM-assisted workflow edits a Markdown file directly, run:
 
 ```text
 npm run cli -- reindex changed
 ```
 
-Changed reindex compares canonical file hashes with the last indexed hash and updates only stale entries. This keeps file review explicit instead of silently mutating the index in the background.
+Changed reindex compares file hashes with the last indexed hash and updates only stale entries. This keeps file review explicit instead of silently mutating the index in the background.
 
 ## MCP Transport
 
@@ -196,8 +196,7 @@ The web UI is a light, minimal review surface for queued rationale candidates. I
 
 - list queued memories
 - inspect and review a selected memory
-- add refinement opinions or patch requests to a selected memory
-- resolve, reject, or apply open refinement opinions attached to a selected memory
+- inspect deprecated refinement opinions while revision migration is pending
 
 Review actions available in the first UI pass:
 
@@ -255,7 +254,7 @@ Tools:
 - `rate_note`
 - `compose_notes_context`
 - `auto_capture_rationale`
-- `record_refinement_opinion`
+- `update_rationale`
 - `record_usage_feedback`
 
 Resources:
@@ -271,7 +270,7 @@ Prompts:
 
 ## Data Model
 
-Canonical rationale files use YAML frontmatter plus Markdown sections:
+Rationale revision content uses YAML frontmatter plus Markdown sections:
 
 - situation
 - goal
@@ -285,7 +284,7 @@ Canonical rationale files use YAML frontmatter plus Markdown sections:
 - project context
 - source metadata
 
-Postgres stores queryable metadata and pgvector embeddings. Files remain the canonical source of truth, so the CLI reindex command can rebuild the DB index from `data/memory/rationales`.
+Postgres stores full rationale revisions, queryable metadata, and pgvector embeddings. Markdown files are a readable cache/export format; use `npm run cli -- backfill-revisions` after deploying the revision schema to seed revision 0 snapshots from existing files before serving writes.
 
 Lifecycle is represented by explicit frontmatter fields:
 
@@ -309,11 +308,11 @@ Use `record_usage_feedback` after a memory is actually applied, judged helpful, 
 
 The Review UI surfaces aggregated feedback counts for `applied`, `user_helpful`, `user_unhelpful`, and `dismissed` events. These aggregates are displayed for review context and are intended as the basis for later ranking weight tuning.
 
-Refinement opinions are stored separately from canonical Markdown in `memory_refinement_opinions`. Use `record_refinement_opinion` to attach an unresolved `opinion`, `patch_request`, `correction`, or `question` to a memory without mutating the memory body immediately. `search_rationales` includes compact open refinement opinion hints (`openCount` and `openTypes`) only when open opinions exist, so callers can decide whether to inspect pending critique without carrying opinion bodies in search results. `compose_context` and `continue_context` include up to three open refinement opinions per retrieved memory so pending critique can travel with the rationale while keeping context bounded. The Review UI can create refinement opinions with a field-oriented patch editor or raw JSON patch input. It can also close open opinions as resolved or rejected; `apply_patch` first updates the canonical rationale with the suggested patch, then marks the opinion resolved.
+Rationale body changes are versioned in `memory_revisions`. `update_rationale` accepts a base `revisionId`, a minimal field patch, and a required reason; successful updates create a new full-content revision and return only `{ ok, revisionId }`. If the base revision is stale, it returns `{ ok: false, latestRevisionId }` without applying the patch. Refinement opinions remain in `memory_refinement_opinions` for migration and audit, but they are deprecated and no longer part of the MCP surface or composed rationale context.
 
 When more relevant candidates exist than fit the initial context, it appends a compact continuation manifest with an in-memory cursor and omitted count. `continue_context` uses that cursor to return the next retrieved candidates without rerunning the search; cursors are process-local and kept in a small FIFO cache, so evicted cursors require rerunning `compose_context`.
 
-Candidate review and lifecycle mutation are intentionally not exposed as MCP tools. Keep agent-facing MCP context small by exposing only tools that an LLM needs during active work. Administrative operations such as reviewing, accepting, editing, deprecating, promoting, and ontology changes should be handled through internal services or a management dashboard.
+Candidate review and lifecycle mutation are intentionally not exposed as MCP tools. Keep agent-facing MCP context small by exposing only tools that an LLM needs during active work. Administrative operations such as reviewing, accepting, deprecating, promoting, and ontology changes should be handled through internal services or a management dashboard.
 
 LLMs may autonomously call `auto_capture_rationale` when they encounter a reusable decision rationale. Auto-captured memories are stored with lifecycle fields such as:
 

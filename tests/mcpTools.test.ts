@@ -19,7 +19,7 @@ describe("MCP write tool results", () => {
       "rate_note",
       "compose_notes_context",
       "auto_capture_rationale",
-      "record_refinement_opinion",
+      "update_rationale",
       "record_usage_feedback"
     ]);
   });
@@ -33,10 +33,10 @@ describe("MCP write tool results", () => {
       ["continue_context", ["계속해서 훑어보는 중..", "추가 확인 완료!"]],
       ["get_rationale", ["특정 메모 확인하는 중..", "메모 확인 완료!"]],
       ["rate_note", ["쪽지 평가 중..", "쪽지 평가 완료!"]],
-      ["record_refinement_opinion", ["메모에 의견 붙이는 중..", "의견 붙이기 완료!"]],
       ["record_note", ["쪽지 적는 중..", "쪽지 적엇어요!"]],
       ["record_usage_feedback", ["메모를 평가하는 중..", "평가 완료!"]],
-      ["search_rationales", ["괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"]]
+      ["search_rationales", ["괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"]],
+      ["update_rationale", ["메모 수정 중..", "메모 수정 완료!"]]
     ]);
 
     for (const toolDefinition of toolDefinitions(services)) {
@@ -77,6 +77,7 @@ describe("MCP write tool results", () => {
     const services = createToolServices();
 
     expect(Object.keys(getTool(services, "search_rationales").schema)).toEqual(["query", "project"]);
+    expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["revisionId", "reason", "patch"]);
     expect(Object.keys(getTool(services, "compose_context").schema)).toEqual(["task", "project"]);
     expect(Object.keys(getTool(services, "continue_context").schema)).toEqual(["cursor"]);
   });
@@ -143,47 +144,6 @@ describe("MCP write tool results", () => {
     expect(payload.warnings[0]).not.toHaveProperty("details");
   });
 
-  it("returns open refinement opinion hints in search results", async () => {
-    const services = createToolServices();
-    services.rationaleService.searchWithDiagnostics = async () => ({
-      results: [{
-        id: "R20260604T000000000Z-search",
-        type: "rationale",
-        status: "candidate",
-        acceptanceState: "candidate",
-        reviewState: "unreviewed",
-        decisionState: "unknown",
-        title: "Keep search responses compact",
-        summary: "Search callers only need enough detail to choose a follow-up read.",
-        canonicalPath: "/memory/R20260604T000000000Z-search.md",
-        scope: "general",
-        confidence: 0.5,
-        useCount: 3,
-        metadata: {},
-        searchScore: 4.2,
-        searchReasons: ["vector:0.800:+4.00"]
-      }],
-      warnings: []
-    });
-    services.rationaleService.summarizeOpenRefinementOpinions = async () => new Map([
-      ["R20260604T000000000Z-search", {
-        openCount: 2,
-        openTypes: ["correction", "patch_request"]
-      }]
-    ]);
-
-    const result = await getTool(services, "search_rationales").handler({
-      query: "compact search result"
-    });
-
-    const payload = parseToolJson(result);
-
-    expect(payload.results[0].refinementOpinions).toEqual({
-      openCount: 2,
-      openTypes: ["correction", "patch_request"]
-    });
-  });
-
   it("returns compact success metadata for auto-captured rationales", async () => {
     const services = createToolServices();
     const result = await getTool(services, "auto_capture_rationale").handler({
@@ -233,12 +193,12 @@ describe("MCP write tool results", () => {
     expect(payload).not.toHaveProperty("entry");
   });
 
-  it("returns compact success metadata for refinement opinions", async () => {
+  it("returns compact success metadata for rationale updates", async () => {
     const services = createToolServices();
-    const result = await getTool(services, "record_refinement_opinion").handler({
-      entryId: "R20260604T000000000Z-compact",
-      body: "Mention why the result is intentionally compact.",
-      suggestedPatch: {
+    const result = await getTool(services, "update_rationale").handler({
+      revisionId: "V20260604T000000000Z-base",
+      reason: "Keep the rationale concise.",
+      patch: {
         rationale: "Shorter MCP write responses reduce context pressure."
       }
     });
@@ -247,12 +207,32 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      id: "opinion-1"
+      revisionId: "V20260604T000000000Z-next"
     });
-    expect(payload).not.toHaveProperty("entryId");
-    expect(payload).not.toHaveProperty("status");
-    expect(payload).not.toHaveProperty("body");
-    expect(payload).not.toHaveProperty("suggestedPatch");
+    expect(payload).not.toHaveProperty("entry");
+  });
+
+  it("returns latest revision ids for rationale update conflicts", async () => {
+    const services = createToolServices();
+    services.rationaleService.updateRationaleFromRevision = async () => ({
+      ok: false as const,
+      latestRevisionId: "V20260604T000000000Z-latest"
+    });
+
+    const result = await getTool(services, "update_rationale").handler({
+      revisionId: "V20260604T000000000Z-stale",
+      reason: "Keep the rationale concise.",
+      patch: {
+        rationale: "Shorter MCP write responses reduce context pressure."
+      }
+    });
+
+    const payload = parseToolJson(result);
+
+    expect(payload).toEqual({
+      ok: false,
+      latestRevisionId: "V20260604T000000000Z-latest"
+    });
   });
 
   it("returns compact success metadata for notes", async () => {
@@ -341,25 +321,29 @@ function createToolServices(): ToolServices {
     rationaleService: {
       searchWithDiagnostics: unusedServiceMethod,
       getRationale: unusedServiceMethod,
-      summarizeOpenRefinementOpinions: async () => new Map(),
+      getMemoryEntryRecord: async () => ({
+        id: recordedEntry.frontmatter.id,
+        type: "rationale",
+        status: "candidate",
+        acceptanceState: "candidate",
+        reviewState: "unreviewed",
+        decisionState: "unknown",
+        title: recordedEntry.title,
+        canonicalPath: "/memory/R20260604T000000000Z-compact.md",
+        currentRevisionId: "V20260604T000000000Z-current",
+        scope: "general",
+        confidence: 0.5,
+        useCount: 0,
+        metadata: {}
+      }),
+      updateRationaleFromRevision: async () => ({
+        ok: true as const,
+        revisionId: "V20260604T000000000Z-next"
+      }),
       autoCaptureRationale: async () => ({
         id: recordedEntry.frontmatter.id,
         canonicalPath: "/memory/R20260604T000000000Z-compact.md",
         entry: recordedEntry
-      }),
-      recordRefinementOpinion: async () => ({
-        id: "opinion-1",
-        entryId: recordedEntry.frontmatter.id,
-        opinionType: "patch_request",
-        status: "open",
-        body: "Mention why the result is intentionally compact.",
-        suggestedPatch: {
-          rationale: "Shorter MCP write responses reduce context pressure."
-        },
-        sourceKind: "llm_opinion",
-        metadata: {},
-        createdAt: "2026-06-04T00:00:00.000Z",
-        updatedAt: "2026-06-04T00:00:00.000Z"
       }),
       recordUsageFeedback: async () => ({
         entryId: recordedEntry.frontmatter.id,

@@ -10,13 +10,13 @@ import {
   reviewStateSchema,
   type MemoryEntryRecord,
   type MemoryRefinementOpinionRecord,
+  type MemoryRevisionRecord,
   type MemorySearchFilters,
   type MemoryUsageEventType,
   type NoteRating,
   type NoteRecord,
   noteSourceConversationSchema,
-  type ProjectContext,
-  type RefinementOpinionType
+  type ProjectContext
 } from "../memory/schema.js";
 
 export type MemoryChunkInsert = {
@@ -28,6 +28,8 @@ export type MemoryChunkInsert = {
   tokenEstimate: number;
   metadata: Record<string, unknown>;
 };
+
+export type QueryExecutor = Pick<pg.Pool, "query">;
 
 export type MemoryUsageEventInsert = {
   entryId: string;
@@ -47,11 +49,6 @@ export type MemoryUsageFeedbackCounts = {
   negativeCount: number;
 };
 
-export type OpenRefinementOpinionSummary = {
-  openCount: number;
-  openTypes: RefinementOpinionType[];
-};
-
 export type MemoryRefinementOpinionInsert = {
   entryId: string;
   opinionType: MemoryRefinementOpinionRecord["opinionType"];
@@ -59,6 +56,15 @@ export type MemoryRefinementOpinionInsert = {
   suggestedPatch?: Record<string, unknown>;
   sourceKind: string;
   sourceRef?: string;
+  metadata: Record<string, unknown>;
+};
+
+export type MemoryRevisionInsert = {
+  id: string;
+  entryId: string;
+  revisionNumber: number;
+  content: string;
+  reason: string;
   metadata: Record<string, unknown>;
 };
 
@@ -207,24 +213,7 @@ export async function syncCompletedRationaleContentFingerprint(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
-      `DELETE FROM rationale_content_fingerprints
-      WHERE entry_id = $1
-        AND content_fingerprint <> $2`,
-      [entryId, contentFingerprint]
-    );
-    await client.query(
-      `INSERT INTO rationale_content_fingerprints (content_fingerprint, entry_id, status)
-      VALUES ($1, $2, 'completed')
-      ON CONFLICT (content_fingerprint) DO UPDATE SET
-        entry_id = EXCLUDED.entry_id,
-        status = 'completed',
-        failure_reason = NULL,
-        updated_at = now()
-      WHERE rationale_content_fingerprints.entry_id = EXCLUDED.entry_id
-        OR rationale_content_fingerprints.status = 'failed'`,
-      [contentFingerprint, entryId]
-    );
+    await syncCompletedRationaleContentFingerprintWithExecutor(client, contentFingerprint, entryId);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -239,17 +228,42 @@ export async function syncCompletedRationaleContentFingerprint(
   });
 }
 
-export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord) {
+export async function syncCompletedRationaleContentFingerprintWithExecutor(
+  executor: QueryExecutor,
+  contentFingerprint: string,
+  entryId: string
+) {
+  await executor.query(
+    `DELETE FROM rationale_content_fingerprints
+    WHERE entry_id = $1
+      AND content_fingerprint <> $2`,
+    [entryId, contentFingerprint]
+  );
+  await executor.query(
+    `INSERT INTO rationale_content_fingerprints (content_fingerprint, entry_id, status)
+    VALUES ($1, $2, 'completed')
+    ON CONFLICT (content_fingerprint) DO UPDATE SET
+      entry_id = EXCLUDED.entry_id,
+      status = 'completed',
+      failure_reason = NULL,
+      updated_at = now()
+    WHERE rationale_content_fingerprints.entry_id = EXCLUDED.entry_id
+      OR rationale_content_fingerprints.status = 'failed'`,
+    [contentFingerprint, entryId]
+  );
+}
+
+export async function upsertMemoryEntry(executor: QueryExecutor, entry: MemoryEntryRecord) {
   logInfo("DB upsert memory entry started.", {
     entryId: entry.id,
     status: entry.status,
     type: entry.type
   });
-  await pool.query(
+  await executor.query(
     `INSERT INTO memory_entries (
       id, type, status, acceptance_state, review_state, decision_state, title, summary, canonical_path, scope, source_kind, source_ref,
-      confidence, promoted_to, deprecated_by, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      confidence, promoted_to, deprecated_by, metadata, current_revision_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     ON CONFLICT (id) DO UPDATE SET
       type = EXCLUDED.type,
       status = EXCLUDED.status,
@@ -265,6 +279,7 @@ export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord)
       confidence = EXCLUDED.confidence,
       promoted_to = EXCLUDED.promoted_to,
       deprecated_by = EXCLUDED.deprecated_by,
+      current_revision_id = COALESCE(EXCLUDED.current_revision_id, memory_entries.current_revision_id),
       metadata = EXCLUDED.metadata,
       updated_at = now()`,
     [
@@ -283,12 +298,114 @@ export async function upsertMemoryEntry(pool: pg.Pool, entry: MemoryEntryRecord)
       entry.confidence,
       entry.promotedTo,
       entry.deprecatedBy,
-      entry.metadata
+      entry.metadata,
+      entry.currentRevisionId
     ]
   );
   logInfo("DB upsert memory entry completed.", {
     entryId: entry.id
   });
+}
+
+export async function insertMemoryRevision(executor: QueryExecutor, revision: MemoryRevisionInsert) {
+  logInfo("DB insert memory revision started.", {
+    revisionId: revision.id,
+    entryId: revision.entryId,
+    revisionNumber: revision.revisionNumber
+  });
+  const result = await executor.query(
+    `INSERT INTO memory_revisions (
+      id, entry_id, revision_number, content, reason, metadata
+    ) VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING *`,
+    [
+      revision.id,
+      revision.entryId,
+      revision.revisionNumber,
+      revision.content,
+      revision.reason,
+      revision.metadata
+    ]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Memory revision insert returned no row.");
+  }
+  logInfo("DB insert memory revision completed.", {
+    revisionId: revision.id,
+    entryId: revision.entryId
+  });
+  return mapMemoryRevisionRow(row);
+}
+
+export async function findMemoryRevision(executor: QueryExecutor, id: string) {
+  logInfo("DB find memory revision started.", {
+    revisionId: id
+  });
+  const result = await executor.query("SELECT * FROM memory_revisions WHERE id = $1", [id]);
+  const row = result.rows[0];
+  logInfo("DB find memory revision completed.", {
+    revisionId: id,
+    found: Boolean(row)
+  });
+  return row ? mapMemoryRevisionRow(row) : undefined;
+}
+
+export async function findLatestMemoryRevision(executor: QueryExecutor, entryId: string) {
+  logInfo("DB find latest memory revision started.", {
+    entryId
+  });
+  const result = await executor.query(
+    `SELECT *
+    FROM memory_revisions
+    WHERE entry_id = $1
+    ORDER BY revision_number DESC
+    LIMIT 1`,
+    [entryId]
+  );
+  const row = result.rows[0];
+  logInfo("DB find latest memory revision completed.", {
+    entryId,
+    found: Boolean(row)
+  });
+  return row ? mapMemoryRevisionRow(row) : undefined;
+}
+
+export async function lockMemoryEntryForUpdate(executor: QueryExecutor, id: string) {
+  logInfo("DB lock memory entry for update started.", {
+    entryId: id
+  });
+  const result = await executor.query("SELECT * FROM memory_entries WHERE id = $1 FOR UPDATE", [id]);
+  const row = result.rows[0];
+  logInfo("DB lock memory entry for update completed.", {
+    entryId: id,
+    found: Boolean(row)
+  });
+  return row ? mapMemoryEntryRow(row) : undefined;
+}
+
+export async function setMemoryEntryCurrentRevision(executor: QueryExecutor, entryId: string, revisionId: string) {
+  logInfo("DB set memory entry current revision started.", {
+    entryId,
+    revisionId
+  });
+  const result = await executor.query(
+    `UPDATE memory_entries
+    SET current_revision_id = $2,
+        updated_at = now()
+    WHERE id = $1
+    RETURNING *`,
+    [entryId, revisionId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Memory entry not found while setting current revision: ${entryId}`);
+  }
+  logInfo("DB set memory entry current revision completed.", {
+    entryId,
+    revisionId
+  });
+  return mapMemoryEntryRow(row);
 }
 
 export async function insertNote(pool: pg.Pool, note: NoteInsert) {
@@ -623,16 +740,16 @@ export async function countMemoryUsageFeedback(pool: pg.Pool, entryIds: string[]
   return counts;
 }
 
-export async function replaceMemoryChunks(pool: pg.Pool, entryId: string, chunks: MemoryChunkInsert[]) {
+export async function replaceMemoryChunks(executor: QueryExecutor, entryId: string, chunks: MemoryChunkInsert[]) {
   logInfo("DB replace memory chunks started.", {
     entryId,
     chunkCount: chunks.length
   });
-  await pool.query("DELETE FROM memory_chunks WHERE entry_id = $1", [entryId]);
+  await executor.query("DELETE FROM memory_chunks WHERE entry_id = $1", [entryId]);
 
   for (const chunk of chunks) {
     const embeddingLiteral = chunk.embedding ? `[${chunk.embedding.join(",")}]` : null;
-    await pool.query(
+    await executor.query(
       `INSERT INTO memory_chunks (
         entry_id, chunk_index, chunk_kind, content, embedding, token_estimate, metadata
       ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -653,11 +770,11 @@ export async function replaceMemoryChunks(pool: pg.Pool, entryId: string, chunks
   });
 }
 
-export async function findMemoryEntry(pool: pg.Pool, id: string) {
+export async function findMemoryEntry(executor: QueryExecutor, id: string) {
   logInfo("DB find memory entry started.", {
     entryId: id
   });
-  const result = await pool.query("SELECT * FROM memory_entries WHERE id = $1", [id]);
+  const result = await executor.query("SELECT * FROM memory_entries WHERE id = $1", [id]);
   const row = result.rows[0];
   logInfo("DB find memory entry completed.", {
     entryId: id,
@@ -735,46 +852,6 @@ export async function countOpenMemoryRefinementOpinions(pool: pg.Pool, entryIds:
     resultCount: result.rows.length
   });
   return counts;
-}
-
-export async function summarizeOpenMemoryRefinementOpinions(pool: pg.Pool, entryIds: string[]) {
-  if (entryIds.length === 0) {
-    return new Map<string, OpenRefinementOpinionSummary>();
-  }
-
-  logInfo("DB summarize open memory refinement opinions started.", {
-    entryCount: entryIds.length
-  });
-
-  const result = await pool.query(
-    `SELECT
-      entry_id,
-      COUNT(*)::int AS open_count,
-      ARRAY_AGG(DISTINCT opinion_type ORDER BY opinion_type) AS open_types
-    FROM memory_refinement_opinions
-    WHERE entry_id = ANY($1)
-      AND status = 'open'
-    GROUP BY entry_id`,
-    [entryIds]
-  );
-
-  const summaries = new Map<string, OpenRefinementOpinionSummary>();
-  for (const row of result.rows) {
-    const rawTypes = row.open_types;
-    if (!Array.isArray(rawTypes)) {
-      throw new Error("Open refinement opinion summary returned invalid open_types.");
-    }
-    summaries.set(String(row.entry_id), {
-      openCount: Number(row.open_count),
-      openTypes: rawTypes.map((type) => refinementOpinionTypeSchema.parse(type))
-    });
-  }
-
-  logInfo("DB summarize open memory refinement opinions completed.", {
-    entryCount: entryIds.length,
-    resultCount: result.rows.length
-  });
-  return summaries;
 }
 
 export async function updateMemoryStatus(
@@ -1043,6 +1120,18 @@ function mapMemoryRefinementOpinionRow(row: pg.QueryResultRow): MemoryRefinement
   };
 }
 
+function mapMemoryRevisionRow(row: pg.QueryResultRow): MemoryRevisionRecord {
+  return {
+    id: String(row.id),
+    entryId: String(row.entry_id),
+    revisionNumber: Number(row.revision_number),
+    content: String(row.content),
+    reason: String(row.reason),
+    metadata: readRecord(row.metadata, "metadata"),
+    createdAt: readTimestamp(row.created_at, "created_at")
+  };
+}
+
 function shouldIncrementUseCount(eventType: MemoryUsageEventType) {
   const parsedEventType = memoryUsageEventTypeSchema.parse(eventType);
   return parsedEventType === "applied" || parsedEventType === "user_helpful";
@@ -1224,6 +1313,7 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
     title: String(row.title),
     summary: typeof row.summary === "string" ? row.summary : undefined,
     canonicalPath: String(row.canonical_path),
+    currentRevisionId: typeof row.current_revision_id === "string" ? row.current_revision_id : undefined,
     scope: String(row.scope),
     sourceKind: typeof row.source_kind === "string" ? row.source_kind : undefined,
     sourceRef: typeof row.source_ref === "string" ? row.source_ref : undefined,

@@ -6,10 +6,10 @@ import {
   autoCaptureRationaleInputSchema,
   composeNotesContextInputSchema,
   rateNoteInputSchema,
-  recordRefinementOpinionInputSchema,
   recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
-  searchProjectFilterSchema
+  searchProjectFilterSchema,
+  updateRationaleInputSchema
 } from "../memory/schema.js";
 import { logError, logInfo } from "../diagnostics/index.js";
 
@@ -18,9 +18,9 @@ export type ToolServices = {
     RationaleService,
     | "searchWithDiagnostics"
     | "getRationale"
-    | "summarizeOpenRefinementOpinions"
+    | "getMemoryEntryRecord"
+    | "updateRationaleFromRevision"
     | "autoCaptureRationale"
-    | "recordRefinementOpinion"
     | "recordUsageFeedback"
   >;
   contextComposer: Pick<ContextComposer, "compose" | "continueContext">;
@@ -55,13 +55,9 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"),
-      handler: async (input: unknown) => {
-        const searchResult = await services.rationaleService.searchWithDiagnostics(searchToolInputSchema.parse(input));
-        const opinionSummaries = await services.rationaleService.summarizeOpenRefinementOpinions(
-          searchResult.results.map((result) => result.id)
-        );
-        return jsonToolResult(compactSearchResult(searchResult, opinionSummaries));
-      }
+      handler: async (input: unknown) => jsonToolResult(compactSearchResult(
+        await services.rationaleService.searchWithDiagnostics(searchToolInputSchema.parse(input))
+      ))
     },
     {
       name: "get_rationale",
@@ -70,7 +66,15 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("특정 메모 확인하는 중..", "메모 확인 완료!"),
-      handler: async (input) => jsonToolResult(await services.rationaleService.getRationale(z.string().parse(input.id)))
+      handler: async (input) => {
+        const id = z.string().parse(input.id);
+        const entry = await services.rationaleService.getRationale(id);
+        const entryRecord = await services.rationaleService.getMemoryEntryRecord(id);
+        return jsonToolResult({
+          ...entry,
+          revisionId: entryRecord.currentRevisionId
+        });
+      }
     },
     {
       name: "compose_context",
@@ -134,16 +138,14 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         ))
     },
     {
-      name: "record_refinement_opinion",
-      description: "Attach a bounded unresolved refinement opinion or patch request to a rationale memory.",
-      schema: recordRefinementOpinionInputSchema.shape,
+      name: "update_rationale",
+      description: "Patch a rationale memory from a base revision.",
+      schema: updateRationaleInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
-      metadata: toolInvocationMetadata("메모에 의견 붙이는 중..", "의견 붙이기 완료!"),
+      metadata: toolInvocationMetadata("메모 수정 중..", "메모 수정 완료!"),
       handler: async (input: unknown) =>
-        jsonToolResult(compactRefinementOpinionWriteResult(
-          await services.rationaleService.recordRefinementOpinion(recordRefinementOpinionInputSchema.parse(input))
-        ))
+        jsonToolResult(await services.rationaleService.updateRationaleFromRevision(updateRationaleInputSchema.parse(input)))
     },
     {
       name: "record_usage_feedback",
@@ -232,10 +234,7 @@ function compactSearchResult(result: {
     severity: string;
     message: string;
   }>;
-}, opinionSummaries: Map<string, {
-  openCount: number;
-  openTypes: string[];
-}>) {
+}) {
   const response: {
     results: Array<{
       id: string;
@@ -245,10 +244,6 @@ function compactSearchResult(result: {
       reviewState: string;
       decisionState: string;
       summary?: string;
-      refinementOpinions?: {
-        openCount: number;
-        openTypes: string[];
-      };
     }>;
     warnings?: Array<{
       kind: string;
@@ -256,7 +251,7 @@ function compactSearchResult(result: {
       message: string;
     }>;
   } = {
-    results: result.results.map((entry) => compactSearchEntry(entry, opinionSummaries.get(entry.id)))
+    results: result.results.map(compactSearchEntry)
   };
 
   if (result.warnings.length > 0) {
@@ -278,10 +273,7 @@ function compactSearchEntry(entry: {
   acceptanceState: string;
   reviewState: string;
   decisionState: string;
-}, opinionSummary: {
-  openCount: number;
-  openTypes: string[];
-} | undefined) {
+}) {
   const response: {
     id: string;
     title: string;
@@ -290,10 +282,6 @@ function compactSearchEntry(entry: {
     reviewState: string;
     decisionState: string;
     summary?: string;
-    refinementOpinions?: {
-      openCount: number;
-      openTypes: string[];
-    };
   } = {
     id: entry.id,
     title: entry.title,
@@ -305,9 +293,6 @@ function compactSearchEntry(entry: {
 
   if (entry.summary) {
     response.summary = entry.summary;
-  }
-  if (opinionSummary && opinionSummary.openCount > 0) {
-    response.refinementOpinions = opinionSummary;
   }
 
   return response;
@@ -331,13 +316,6 @@ function compactRationaleWriteResult(result: RationaleWriteResult) {
 }
 
 function compactNoteResult(result: { id: string }) {
-  return {
-    ok: true,
-    id: result.id
-  };
-}
-
-function compactRefinementOpinionWriteResult(result: { id: string }) {
   return {
     ok: true,
     id: result.id

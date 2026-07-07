@@ -4,14 +4,26 @@ import {
   findMemoryEntry,
   replaceMemoryChunks,
   syncCompletedRationaleContentFingerprint,
+  syncCompletedRationaleContentFingerprintWithExecutor,
   upsertMemoryEntry
 } from "../db/queries.js";
+import type { MemoryChunkInsert, QueryExecutor } from "../db/queries.js";
 import { logInfo } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
-import { toMemoryEntryRecord, type RationaleEntry } from "./schema.js";
+import { toMemoryEntryRecord, type MemoryEntryRecord, type RationaleEntry } from "./schema.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { fingerprintCanonicalFile, readIndexedFileHash, withIndexMetadata } from "./fileIndex.js";
 import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
+
+export type PreparedMemoryIndex = {
+  entryRecord: MemoryEntryRecord;
+  chunks: MemoryChunkInsert[];
+  contentFingerprint: string;
+};
+
+type PrepareEntryIndexOptions = {
+  fingerprintFile?: boolean;
+};
 
 export class IndexingService {
   constructor(
@@ -26,16 +38,33 @@ export class IndexingService {
       entryId: entry.frontmatter.id,
       canonicalPath
     });
+    const preparedIndex = await this.prepareEntryIndex(entry, canonicalPath);
+    await this.writePreparedIndex(this.pool, preparedIndex);
+    logInfo("Indexing memory entry completed.", {
+      entryId: entry.frontmatter.id,
+      chunkCount: preparedIndex.chunks.length,
+      embeddingCount: preparedIndex.chunks.filter((chunk) => chunk.embedding).length
+    });
+  }
+
+  async prepareEntryIndex(
+    entry: RationaleEntry,
+    canonicalPath: string,
+    options: PrepareEntryIndexOptions = {}
+  ): Promise<PreparedMemoryIndex> {
     const chunks = splitRationaleIntoChunks(entry);
     const embeddings = await this.embedChunks(entry.frontmatter.id, chunks);
-    const fingerprint = await fingerprintCanonicalFile(canonicalPath);
     const entryRecord = toMemoryEntryRecord(entry, canonicalPath);
-    entryRecord.metadata = withIndexMetadata(entryRecord.metadata, fingerprint);
-    await upsertMemoryEntry(this.pool, entryRecord);
-    await replaceMemoryChunks(
-      this.pool,
-      entry.frontmatter.id,
-      chunks.map((chunk, chunkIndex) => ({
+
+    if (options.fingerprintFile ?? true) {
+      const fingerprint = await fingerprintCanonicalFile(canonicalPath);
+      entryRecord.metadata = withIndexMetadata(entryRecord.metadata, fingerprint);
+    }
+
+    return {
+      entryRecord,
+      contentFingerprint: fingerprintRationaleContent(entry),
+      chunks: chunks.map((chunk, chunkIndex) => ({
         entryId: entry.frontmatter.id,
         chunkIndex,
         chunkKind: chunk.kind,
@@ -49,13 +78,17 @@ export class IndexingService {
           canonical_path: canonicalPath
         }
       }))
+    };
+  }
+
+  async writePreparedIndex(executor: QueryExecutor, preparedIndex: PreparedMemoryIndex) {
+    await upsertMemoryEntry(executor, preparedIndex.entryRecord);
+    await replaceMemoryChunks(executor, preparedIndex.entryRecord.id, preparedIndex.chunks);
+    await syncCompletedRationaleContentFingerprintWithExecutor(
+      executor,
+      preparedIndex.contentFingerprint,
+      preparedIndex.entryRecord.id
     );
-    await this.syncContentFingerprint(entry);
-    logInfo("Indexing memory entry completed.", {
-      entryId: entry.frontmatter.id,
-      chunkCount: chunks.length,
-      embeddingCount: embeddings.length
-    });
   }
 
   async syncContentFingerprint(entry: RationaleEntry) {
