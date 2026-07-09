@@ -15,6 +15,8 @@ import {
   listMemoryEntriesByAcceptanceState,
   listOpenMemoryRefinementOpinions,
   listRecentMemoryEntries,
+  listReviewQueueMemoryEntries,
+  listReviewQueueMemoryPage,
   lockMemoryEntryForUpdate,
   recordMemoryRefinementOpinion,
   recordMemoryUsageEvents,
@@ -119,6 +121,31 @@ export type ReviewQueueEntry = MemoryEntryRecord & {
   usageFeedback: MemoryUsageFeedbackCounts;
   reviewPriorityScore: number;
   reviewPriorityReasons: string[];
+};
+
+export type ReviewQueueSortMode =
+  | "priority"
+  | "created"
+  | "last_used"
+  | "positive_feedback"
+  | "negative_feedback"
+  | "uses";
+
+export type ReviewQueueSignalFilter =
+  | "all"
+  | "repair_attention"
+  | "with_negative_feedback"
+  | "with_positive_feedback"
+  | "recently_used";
+
+export type ReviewQueuePageOptions = {
+  captureKind?: string;
+  reviewState?: string;
+  search?: string;
+  sortMode: ReviewQueueSortMode;
+  signalFilter: ReviewQueueSignalFilter;
+  page: number;
+  pageSize: number;
 };
 
 export type RationaleWriteResult = {
@@ -608,6 +635,57 @@ export class RationaleService {
       resultCount: prioritizedEntries.length
     });
     return prioritizedEntries;
+  }
+
+  async listReviewQueuePage(options: ReviewQueuePageOptions) {
+    logInfo("Listing paginated rationale review queue.", {
+      captureKind: options.captureKind,
+      reviewState: options.reviewState,
+      hasSearch: Boolean(options.search),
+      sortMode: options.sortMode,
+      signalFilter: options.signalFilter,
+      page: options.page,
+      pageSize: options.pageSize
+    });
+    if (options.sortMode === "created" && options.signalFilter === "all") {
+      const result = await listReviewQueueMemoryPage(this.pool, {
+        captureKind: options.captureKind,
+        reviewState: options.reviewState,
+        search: options.search,
+        page: options.page,
+        pageSize: options.pageSize
+      });
+      const usageFeedbackCounts = await this.countUsageFeedback(result.entries.map((entry) => entry.id));
+      const prioritizedEntries = prioritizeReviewQueueEntries(result.entries, usageFeedbackCounts);
+      const items = sortReviewQueueEntries(prioritizedEntries, "created");
+      logInfo("Listed paginated rationale review queue.", {
+        page: result.pagination.page,
+        pageSize: result.pagination.pageSize,
+        totalItems: result.pagination.totalItems,
+        resultCount: items.length
+      });
+      return {
+        items,
+        pagination: result.pagination
+      };
+    }
+
+    const entries = await listReviewQueueMemoryEntries(this.pool, {
+      captureKind: options.captureKind,
+      reviewState: options.reviewState,
+      search: options.search
+    });
+    const usageFeedbackCounts = await this.countUsageFeedback(entries.map((entry) => entry.id));
+    const prioritizedEntries = prioritizeReviewQueueEntries(entries, usageFeedbackCounts);
+    const result = paginateReviewQueueEntries(prioritizedEntries, options);
+
+    logInfo("Listed paginated rationale review queue.", {
+      page: result.pagination.page,
+      pageSize: options.pageSize,
+      totalItems: result.pagination.totalItems,
+      resultCount: result.items.length
+    });
+    return result;
   }
 
   async reviewCandidates(limit: number) {
@@ -1467,6 +1545,90 @@ function prioritizeReviewQueueEntries(
       return priorityDifference === 0 ? left.originalIndex - right.originalIndex : priorityDifference;
     })
     .map(({ originalIndex, ...entry }) => entry);
+}
+
+export function paginateReviewQueueEntries(
+  entries: ReviewQueueEntry[],
+  options: Pick<ReviewQueuePageOptions, "signalFilter" | "sortMode" | "page" | "pageSize">
+) {
+  const filteredEntries = filterReviewQueueEntries(entries, options.signalFilter);
+  const sortedEntries = sortReviewQueueEntries(filteredEntries, options.sortMode);
+  const totalItems = sortedEntries.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / options.pageSize));
+  const page = Math.min(options.page, totalPages);
+  const offset = (page - 1) * options.pageSize;
+  return {
+    items: sortedEntries.slice(offset, offset + options.pageSize),
+    pagination: {
+      page,
+      pageSize: options.pageSize,
+      totalItems,
+      totalPages
+    }
+  };
+}
+
+function filterReviewQueueEntries(
+  entries: ReviewQueueEntry[],
+  signalFilter: ReviewQueueSignalFilter
+) {
+  if (signalFilter === "all") {
+    return entries;
+  }
+
+  return entries.filter((entry) => {
+    if (signalFilter === "repair_attention") {
+      return entry.usageFeedback.negativeCount > 0 || entry.reviewState === "needs_revision";
+    }
+    if (signalFilter === "with_negative_feedback") {
+      return entry.usageFeedback.negativeCount > 0;
+    }
+    if (signalFilter === "with_positive_feedback") {
+      return entry.usageFeedback.positiveCount > 0;
+    }
+    return calculateTimestamp(entry.lastUsedAt) > 0;
+  });
+}
+
+function sortReviewQueueEntries(
+  entries: ReviewQueueEntry[],
+  sortMode: ReviewQueueSortMode
+) {
+  return entries
+    .map((entry, originalIndex) => ({ entry, originalIndex }))
+    .sort((left, right) => {
+      const scoreDifference = calculateReviewQueueSortValue(right.entry, sortMode)
+        - calculateReviewQueueSortValue(left.entry, sortMode);
+      return scoreDifference === 0 ? left.originalIndex - right.originalIndex : scoreDifference;
+    })
+    .map(({ entry }) => entry);
+}
+
+function calculateReviewQueueSortValue(entry: ReviewQueueEntry, sortMode: ReviewQueueSortMode) {
+  if (sortMode === "priority") {
+    return entry.reviewPriorityScore;
+  }
+  if (sortMode === "created") {
+    return calculateTimestamp(entry.createdAt);
+  }
+  if (sortMode === "last_used") {
+    return calculateTimestamp(entry.lastUsedAt);
+  }
+  if (sortMode === "positive_feedback") {
+    return entry.usageFeedback.positiveCount;
+  }
+  if (sortMode === "negative_feedback") {
+    return entry.usageFeedback.negativeCount;
+  }
+  return entry.useCount;
+}
+
+function calculateTimestamp(value: string | undefined) {
+  if (!value) {
+    return 0;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function createEmptyUsageFeedbackCounts(): MemoryUsageFeedbackCounts {

@@ -1,10 +1,27 @@
 import { requestJson } from "./http";
 import type { NoteRecord } from "../types/note";
+import type { Pagination } from "../types/pagination";
 
-export async function fetchNotes(includeArchived: boolean) {
+export type NoteSortMode = "newest" | "oldest";
+
+export type NoteFilters = {
+  includeArchived: boolean;
+  search?: string;
+  sortMode: NoteSortMode;
+  page: number;
+  pageSize: number;
+};
+
+export async function fetchNotes(filters: NoteFilters) {
   const params = new URLSearchParams({
-    includeArchived: String(includeArchived)
+    includeArchived: String(filters.includeArchived),
+    sortMode: filters.sortMode,
+    page: String(filters.page),
+    pageSize: String(filters.pageSize)
   });
+  if (filters.search) {
+    params.set("search", filters.search);
+  }
   const data = await requestJson(`/api/notes?${params.toString()}`);
   return parseNotesResponse(data);
 }
@@ -23,12 +40,27 @@ export async function restoreNote(id: string) {
   return parseNoteActionResponse(data);
 }
 
-function parseNotesResponse(value: unknown) {
-  if (!isRecord(value) || !Array.isArray(value.notes)) {
+function parseNotesResponse(value: unknown): {
+  notes: NoteRecord[];
+  pagination: Pagination;
+} {
+  if (!isRecord(value) || !Array.isArray(value.notes) || !isRecord(value.pagination)) {
     throw new Error("Invalid notes response.");
   }
 
-  return value.notes.map(parseNoteRecord);
+  return {
+    notes: value.notes.map(parseNoteRecord),
+    pagination: parsePagination(value.pagination)
+  };
+}
+
+function parsePagination(value: Record<string, unknown>): Pagination {
+  return {
+    page: readNumber(value, "page"),
+    pageSize: readNumber(value, "pageSize"),
+    totalItems: readNumber(value, "totalItems"),
+    totalPages: readNumber(value, "totalPages")
+  };
 }
 
 function parseNoteActionResponse(value: unknown) {

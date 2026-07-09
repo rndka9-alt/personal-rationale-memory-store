@@ -6,19 +6,47 @@ import type {
   ReviewQueueItem,
   UsageFeedbackCounts
 } from "../types/review";
+import type { Pagination } from "../types/pagination";
+
+export type ReviewQueueSortMode =
+  | "priority"
+  | "created"
+  | "last_used"
+  | "positive_feedback"
+  | "negative_feedback"
+  | "uses";
+
+export type ReviewQueueSignalFilter =
+  | "all"
+  | "repair_attention"
+  | "with_negative_feedback"
+  | "with_positive_feedback"
+  | "recently_used";
 
 export type ReviewQueueFilters = {
   captureKind?: string;
   reviewState: string;
+  search?: string;
+  sortMode: ReviewQueueSortMode;
+  signalFilter: ReviewQueueSignalFilter;
+  page: number;
+  pageSize: number;
 };
 
 export async function fetchReviewQueue(filters: ReviewQueueFilters) {
   const params = new URLSearchParams({
-    reviewState: filters.reviewState
+    reviewState: filters.reviewState,
+    sortMode: filters.sortMode,
+    signalFilter: filters.signalFilter,
+    page: String(filters.page),
+    pageSize: String(filters.pageSize)
   });
 
   if (filters.captureKind) {
     params.set("captureKind", filters.captureKind);
+  }
+  if (filters.search) {
+    params.set("search", filters.search);
   }
 
   const data = await requestJson(`/api/review-queue?${params.toString()}`);
@@ -46,12 +74,27 @@ export async function submitReviewAction(input: {
   });
 }
 
-function parseReviewQueueResponse(value: unknown) {
-  if (!isRecord(value) || !Array.isArray(value.items)) {
+function parseReviewQueueResponse(value: unknown): {
+  items: ReviewQueueItem[];
+  pagination: Pagination;
+} {
+  if (!isRecord(value) || !Array.isArray(value.items) || !isRecord(value.pagination)) {
     throw new Error("Invalid review queue response.");
   }
 
-  return value.items.map(parseReviewQueueItem);
+  return {
+    items: value.items.map(parseReviewQueueItem),
+    pagination: parsePagination(value.pagination)
+  };
+}
+
+function parsePagination(value: Record<string, unknown>): Pagination {
+  return {
+    page: readNumber(value, "page"),
+    pageSize: readNumber(value, "pageSize"),
+    totalItems: readNumber(value, "totalItems"),
+    totalPages: readNumber(value, "totalPages")
+  };
 }
 
 function parseReviewQueueItem(value: unknown): ReviewQueueItem {

@@ -7,6 +7,7 @@ import {
   listNotes as listNoteRecords,
   restoreNoteRecord
 } from "../db/queries.js";
+import type { NoteListOptions } from "../db/queries.js";
 import { logInfo } from "../diagnostics/index.js";
 import {
   archiveNoteInputSchema,
@@ -47,6 +48,16 @@ export type NoteContextSelection = {
   scoreSelectedNotes: number;
   selectedContentLength: number;
   maxLength: number;
+};
+
+export type NotePage = {
+  notes: NoteRecord[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
 };
 
 type SelectNotesOptions = {
@@ -116,8 +127,22 @@ export class NoteService {
     return restoreNoteRecord(this.pool, validatedInput.noteId);
   }
 
-  async listNotes(includeArchived = false) {
-    return listNoteRecords(this.pool, includeArchived);
+  async listNotes(options: NoteListOptions): Promise<NotePage> {
+    const result = await listNoteRecords(this.pool, options);
+    const totalPages = Math.max(1, Math.ceil(result.totalItems / options.pageSize));
+    const page = Math.min(options.page, totalPages);
+    if (page !== options.page) {
+      return this.listNotes({ ...options, page });
+    }
+    return {
+      notes: result.notes,
+      pagination: {
+        page,
+        pageSize: options.pageSize,
+        totalItems: result.totalItems,
+        totalPages
+      }
+    };
   }
 
   async composeNotesContext(input: ComposeNotesContextInput = {}) {

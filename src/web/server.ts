@@ -9,7 +9,14 @@ import { MemoryFileStore } from "../memory/fileStore.js";
 import { IndexingService } from "../memory/indexingService.js";
 import { NoteService } from "../memory/noteService.js";
 import { RationaleService } from "../memory/rationaleService.js";
+import type {
+  ReviewQueueSignalFilter,
+  ReviewQueueSortMode
+} from "../memory/rationaleService.js";
 import { logError, logInfo } from "../diagnostics/index.js";
+
+const defaultPageSize = 25;
+const maximumPageSize = 100;
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl);
@@ -82,15 +89,29 @@ async function routeApiRequest(
     const captureKind = readOptionalString(url.searchParams.get("captureKind"));
     const reviewStateParam = readOptionalString(url.searchParams.get("reviewState"));
     const reviewState = reviewStateParam === "all" ? undefined : reviewStateParam ?? "unreviewed";
-    const items = await rationaleService.listReviewQueue(captureKind, reviewState);
-    writeJson(response, 200, { items });
+    const result = await rationaleService.listReviewQueuePage({
+      captureKind,
+      reviewState,
+      search: readSearchParam(url.searchParams.get("search")),
+      sortMode: readReviewQueueSortMode(url.searchParams.get("sortMode")),
+      signalFilter: readReviewQueueSignalFilter(url.searchParams.get("signalFilter")),
+      page: readPositiveInteger(url.searchParams.get("page"), 1, "page"),
+      pageSize: readPageSize(url.searchParams.get("pageSize"))
+    });
+    writeJson(response, 200, result);
     return;
   }
 
   if (method === "GET" && url.pathname === "/api/notes") {
     const includeArchived = readBooleanParam(url.searchParams.get("includeArchived"));
-    const notes = await noteService.listNotes(includeArchived);
-    writeJson(response, 200, { notes });
+    const result = await noteService.listNotes({
+      includeArchived,
+      search: readSearchParam(url.searchParams.get("search")),
+      sortMode: readNoteSortMode(url.searchParams.get("sortMode")),
+      page: readPositiveInteger(url.searchParams.get("page"), 1, "page"),
+      pageSize: readPageSize(url.searchParams.get("pageSize"))
+    });
+    writeJson(response, 200, result);
     return;
   }
 
@@ -213,6 +234,80 @@ function readBooleanParam(value: string | null) {
     return true;
   }
   throw new Error(`Invalid boolean query parameter: ${value}`);
+}
+
+function readSearchParam(value: string | null) {
+  if (value === null) {
+    return undefined;
+  }
+  const search = value.trim();
+  if (search.length === 0) {
+    return undefined;
+  }
+  if (search.length > 200) {
+    throw new Error("Search query cannot exceed 200 characters.");
+  }
+  return search;
+}
+
+function readPositiveInteger(value: string | null, defaultValue: number, name: string) {
+  if (value === null || value.length === 0) {
+    return defaultValue;
+  }
+  const parsedValue = Number(value);
+  if (!Number.isInteger(parsedValue) || parsedValue < 1) {
+    throw new Error(`Invalid positive integer query parameter ${name}: ${value}`);
+  }
+  return parsedValue;
+}
+
+function readPageSize(value: string | null) {
+  const pageSize = readPositiveInteger(value, defaultPageSize, "pageSize");
+  if (pageSize > maximumPageSize) {
+    throw new Error(`pageSize cannot exceed ${maximumPageSize}.`);
+  }
+  return pageSize;
+}
+
+function readReviewQueueSortMode(value: string | null): ReviewQueueSortMode {
+  if (value === null || value === "created") {
+    return "created";
+  }
+  if (
+    value === "priority"
+    || value === "last_used"
+    || value === "positive_feedback"
+    || value === "negative_feedback"
+    || value === "uses"
+  ) {
+    return value;
+  }
+  throw new Error(`Invalid review queue sort mode: ${value}`);
+}
+
+function readReviewQueueSignalFilter(value: string | null): ReviewQueueSignalFilter {
+  if (value === null || value === "all") {
+    return "all";
+  }
+  if (
+    value === "repair_attention"
+    || value === "with_negative_feedback"
+    || value === "with_positive_feedback"
+    || value === "recently_used"
+  ) {
+    return value;
+  }
+  throw new Error(`Invalid review queue signal filter: ${value}`);
+}
+
+function readNoteSortMode(value: string | null): "newest" | "oldest" {
+  if (value === null || value === "newest") {
+    return "newest";
+  }
+  if (value === "oldest") {
+    return "oldest";
+  }
+  throw new Error(`Invalid note sort mode: ${value}`);
 }
 
 async function readJsonBody(request: IncomingMessage) {

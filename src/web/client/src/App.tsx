@@ -4,14 +4,18 @@ import {
   fetchReviewQueue,
   fetchReviewQueueDetail,
   submitReviewAction,
-  type ReviewQueueFilters
+  type ReviewQueueFilters,
+  type ReviewQueueSignalFilter,
+  type ReviewQueueSortMode
 } from "./api/reviewQueue";
 import {
   archiveNote,
   fetchNotes,
-  restoreNote
+  restoreNote,
+  type NoteSortMode
 } from "./api/notes";
 import type { NoteRecord } from "./types/note";
+import type { Pagination } from "./types/pagination";
 import type {
   ProjectContext,
   ReviewAction,
@@ -35,8 +39,8 @@ const captureKinds = [
 ];
 
 const queueSortModes = [
-  { value: "priority", label: "Priority" },
   { value: "created", label: "Newest" },
+  { value: "priority", label: "Priority" },
   { value: "last_used", label: "Last used" },
   { value: "positive_feedback", label: "Positive feedback" },
   { value: "negative_feedback", label: "Negative feedback" },
@@ -56,28 +60,52 @@ const noteSortModes = [
   { value: "oldest", label: "Oldest" }
 ];
 
-type QueueSortMode = "priority" | "created" | "last_used" | "positive_feedback" | "negative_feedback" | "uses";
-type QueueSignalFilter = "all" | "repair_attention" | "with_negative_feedback" | "with_positive_feedback" | "recently_used";
-type NotesSortMode = "newest" | "oldest";
 type MainView = "review" | "notes";
+
+const pageSize = 25;
+const searchDebounceMilliseconds = 300;
+
+function useDebouncedValue(value: string, delayMilliseconds: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    // 검색어를 입력하는 동안 매 키 입력마다 서버 조회가 발생하지 않도록 짧게 지연한다.
+    const timeout = window.setTimeout(() => setDebouncedValue(value.trim()), delayMilliseconds);
+    return () => window.clearTimeout(timeout);
+  }, [delayMilliseconds, value]);
+
+  return debouncedValue;
+}
 
 export function App() {
   const queryClient = useQueryClient();
   const [reviewState, setReviewState] = useState("unreviewed");
   const [captureKind, setCaptureKind] = useState("");
-  const [queueSortMode, setQueueSortMode] = useState<QueueSortMode>("priority");
-  const [queueSignalFilter, setQueueSignalFilter] = useState<QueueSignalFilter>("all");
+  const [queueSortMode, setQueueSortMode] = useState<ReviewQueueSortMode>("created");
+  const [queueSignalFilter, setQueueSignalFilter] = useState<ReviewQueueSignalFilter>("all");
+  const [queueSearchInput, setQueueSearchInput] = useState("");
+  const [queuePage, setQueuePage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [operationMessage, setOperationMessage] = useState<string | undefined>();
   const [mainView, setMainView] = useState<MainView>("review");
   const [includeArchivedNotes, setIncludeArchivedNotes] = useState(false);
+  const [noteSortMode, setNoteSortMode] = useState<NoteSortMode>("newest");
+  const [noteSearchInput, setNoteSearchInput] = useState("");
+  const [notePage, setNotePage] = useState(1);
+  const queueSearch = useDebouncedValue(queueSearchInput, searchDebounceMilliseconds);
+  const noteSearch = useDebouncedValue(noteSearchInput, searchDebounceMilliseconds);
 
   const filters: ReviewQueueFilters = useMemo(() => ({
     captureKind: captureKind.length > 0 ? captureKind : undefined,
-    reviewState
-  }), [captureKind, reviewState]);
+    reviewState,
+    search: queueSearch.length > 0 ? queueSearch : undefined,
+    sortMode: queueSortMode,
+    signalFilter: queueSignalFilter,
+    page: queuePage,
+    pageSize
+  }), [captureKind, queuePage, queueSearch, queueSignalFilter, queueSortMode, reviewState]);
 
   const queueQuery = useQuery({
     queryKey: ["review-queue", filters],
@@ -85,16 +113,32 @@ export function App() {
   });
 
   const notesQuery = useQuery({
-    queryKey: ["notes", includeArchivedNotes],
-    queryFn: () => fetchNotes(includeArchivedNotes),
+    queryKey: ["notes", includeArchivedNotes, notePage, noteSearch, noteSortMode],
+    queryFn: () => fetchNotes({
+      includeArchived: includeArchivedNotes,
+      search: noteSearch.length > 0 ? noteSearch : undefined,
+      sortMode: noteSortMode,
+      page: notePage,
+      pageSize
+    }),
     enabled: mainView === "notes"
   });
 
-  const queueItems = queueQuery.data ?? [];
-  const items = useMemo(
-    () => sortQueueItems(filterQueueItems(queueItems, queueSignalFilter), queueSortMode),
-    [queueItems, queueSignalFilter, queueSortMode]
-  );
+  const items = queueQuery.data?.items ?? [];
+
+  useEffect(() => {
+    const currentPage = queueQuery.data?.pagination.page;
+    if (currentPage !== undefined && currentPage !== queuePage) {
+      setQueuePage(currentPage);
+    }
+  }, [queuePage, queueQuery.data?.pagination.page]);
+
+  useEffect(() => {
+    const currentPage = notesQuery.data?.pagination.page;
+    if (currentPage !== undefined && currentPage !== notePage) {
+      setNotePage(currentPage);
+    }
+  }, [notePage, notesQuery.data?.pagination.page]);
 
   useEffect(() => {
     if (selectedId && items.some((item) => item.id === selectedId)) {
@@ -192,7 +236,10 @@ export function App() {
                   <select
                     className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
                     value={reviewState}
-                    onChange={(event) => setReviewState(event.target.value)}
+                    onChange={(event) => {
+                      setReviewState(event.target.value);
+                      setQueuePage(1);
+                    }}
                   >
                     {reviewStates.map((state) => (
                       <option key={state.value} value={state.value}>{state.label}</option>
@@ -204,7 +251,10 @@ export function App() {
                   <select
                     className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
                     value={captureKind}
-                    onChange={(event) => setCaptureKind(event.target.value)}
+                    onChange={(event) => {
+                      setCaptureKind(event.target.value);
+                      setQueuePage(1);
+                    }}
                   >
                     {captureKinds.map((kind) => (
                       <option key={kind.value} value={kind.value}>{kind.label}</option>
@@ -216,17 +266,20 @@ export function App() {
                 onInbox={() => {
                   setReviewState("unreviewed");
                   setQueueSignalFilter("all");
-                  setQueueSortMode("priority");
+                  setQueueSortMode("created");
+                  setQueuePage(1);
                 }}
                 onRepair={() => {
                   setReviewState("all");
                   setQueueSignalFilter("repair_attention");
                   setQueueSortMode("priority");
+                  setQueuePage(1);
                 }}
                 onPromotion={() => {
                   setReviewState("reviewed");
                   setQueueSignalFilter("all");
                   setQueueSortMode("positive_feedback");
+                  setQueuePage(1);
                 }}
               />
             </div>
@@ -236,7 +289,10 @@ export function App() {
                 type="checkbox"
                 className="rounded border-line-base text-action-base focus:ring-action-base"
                 checked={includeArchivedNotes}
-                onChange={(event) => setIncludeArchivedNotes(event.target.checked)}
+                onChange={(event) => {
+                  setIncludeArchivedNotes(event.target.checked);
+                  setNotePage(1);
+                }}
               />
               Include archived
             </label>
@@ -250,13 +306,26 @@ export function App() {
               selectedId={selectedId}
               isLoading={queueQuery.isLoading}
               error={queueQuery.error}
+              pagination={queueQuery.data?.pagination}
+              search={queueSearchInput}
               sortMode={queueSortMode}
               signalFilter={queueSignalFilter}
               selectedIds={selectedIds}
               isBulkMutating={bulkReviewMutation.isPending}
               bulkError={bulkReviewMutation.error}
-              onSortModeChange={setQueueSortMode}
-              onSignalFilterChange={setQueueSignalFilter}
+              onSearchChange={(value) => {
+                setQueueSearchInput(value);
+                setQueuePage(1);
+              }}
+              onSortModeChange={(value) => {
+                setQueueSortMode(value);
+                setQueuePage(1);
+              }}
+              onSignalFilterChange={(value) => {
+                setQueueSignalFilter(value);
+                setQueuePage(1);
+              }}
+              onPageChange={setQueuePage}
               onSelect={setSelectedId}
               onToggleSelection={(id) => setSelectedIds((currentIds) => toggleSelectedId(currentIds, id))}
               onSelectVisible={() => setSelectedIds(items.map((item) => item.id))}
@@ -287,11 +356,23 @@ export function App() {
           </section>
         ) : (
           <NotesView
-            notes={notesQuery.data ?? []}
+            notes={notesQuery.data?.notes ?? []}
             isLoading={notesQuery.isLoading}
             error={notesQuery.error}
+            pagination={notesQuery.data?.pagination}
+            search={noteSearchInput}
+            sortMode={noteSortMode}
             actionError={archiveNoteMutation.error ?? restoreNoteMutation.error}
             isMutating={archiveNoteMutation.isPending || restoreNoteMutation.isPending}
+            onSearchChange={(value) => {
+              setNoteSearchInput(value);
+              setNotePage(1);
+            }}
+            onSortModeChange={(value) => {
+              setNoteSortMode(value);
+              setNotePage(1);
+            }}
+            onPageChange={setNotePage}
             onArchive={(id) => archiveNoteMutation.mutate(id)}
             onRestore={(id) => restoreNoteMutation.mutate(id)}
           />
@@ -329,37 +410,43 @@ function NotesView(props: {
   notes: NoteRecord[];
   isLoading: boolean;
   error: Error | null;
+  pagination?: Pagination;
+  search: string;
+  sortMode: NoteSortMode;
   actionError: Error | null;
   isMutating: boolean;
+  onSearchChange: (value: string) => void;
+  onSortModeChange: (value: NoteSortMode) => void;
+  onPageChange: (page: number) => void;
   onArchive: (id: string) => void;
   onRestore: (id: string) => void;
 }) {
-  const [sortMode, setSortMode] = useState<NotesSortMode>("newest");
-  const activeCount = props.notes.filter((note) => !note.archived).length;
-  const archivedCount = props.notes.length - activeCount;
-  const sortedNotes = useMemo(() => sortNotes(props.notes, sortMode), [props.notes, sortMode]);
-
   return (
     <section className="min-h-0 flex-1 py-6">
       <div className="mb-4 flex flex-col gap-3 border-b border-line-base pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-sm font-semibold text-ink-strong">Stored notes</h2>
-          <p className="mt-1 text-xs text-ink-muted">{activeCount} active / {archivedCount} archived</p>
+          <p className="mt-1 text-xs text-ink-muted">{props.pagination?.totalItems ?? 0} matching notes</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <SearchField
+            value={props.search}
+            placeholder="Search title or body"
+            label="Search notes"
+            onChange={props.onSearchChange}
+          />
           <label className="text-sm">
             <span className="sr-only">Sort notes</span>
             <select
               className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-              value={sortMode}
-              onChange={(event) => setSortMode(readNotesSortMode(event.target.value))}
+              value={props.sortMode}
+              onChange={(event) => props.onSortModeChange(readNoteSortMode(event.target.value))}
             >
               {noteSortModes.map((mode) => (
                 <option key={mode.value} value={mode.value}>{mode.label}</option>
               ))}
             </select>
           </label>
-          <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">{props.notes.length}</span>
         </div>
       </div>
 
@@ -373,7 +460,7 @@ function NotesView(props: {
         <div className="border-y border-line-base py-8 text-sm text-ink-muted">No notes match this view.</div>
       ) : (
         <div className="divide-y divide-line-base border-y border-line-base">
-          {sortedNotes.map((note) => (
+          {props.notes.map((note) => (
             <article key={note.id} className="grid gap-4 py-4 md:grid-cols-[minmax(0,1fr)_160px]">
               <div className="min-w-0">
                 <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -401,6 +488,13 @@ function NotesView(props: {
           ))}
         </div>
       )}
+      {props.pagination ? (
+        <PaginationControls
+          pagination={props.pagination}
+          disabled={props.isLoading}
+          onPageChange={props.onPageChange}
+        />
+      ) : null}
     </section>
   );
 }
@@ -499,13 +593,17 @@ function QueueList(props: {
   selectedId?: string;
   isLoading: boolean;
   error: Error | null;
-  sortMode: QueueSortMode;
-  signalFilter: QueueSignalFilter;
+  pagination?: Pagination;
+  search: string;
+  sortMode: ReviewQueueSortMode;
+  signalFilter: ReviewQueueSignalFilter;
   selectedIds: string[];
   isBulkMutating: boolean;
   bulkError: Error | null;
-  onSortModeChange: (value: QueueSortMode) => void;
-  onSignalFilterChange: (value: QueueSignalFilter) => void;
+  onSearchChange: (value: string) => void;
+  onSortModeChange: (value: ReviewQueueSortMode) => void;
+  onSignalFilterChange: (value: ReviewQueueSignalFilter) => void;
+  onPageChange: (page: number) => void;
   onSelect: (id: string) => void;
   onToggleSelection: (id: string) => void;
   onSelectVisible: () => void;
@@ -517,8 +615,16 @@ function QueueList(props: {
       <div className="mb-4 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-ink-strong">Queued memories</h2>
-          <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">{props.items.length}</span>
+          <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">
+            {props.pagination?.totalItems ?? 0}
+          </span>
         </div>
+        <SearchField
+          value={props.search}
+          placeholder="Search title or body"
+          label="Search memories"
+          onChange={props.onSearchChange}
+        />
         <div className="grid grid-cols-2 gap-2">
           <label>
             <span className="mb-1 block text-xs font-medium text-ink-muted">Sort</span>
@@ -607,7 +713,71 @@ function QueueList(props: {
           ))}
         </div>
       )}
+      {props.pagination ? (
+        <PaginationControls
+          pagination={props.pagination}
+          disabled={props.isLoading}
+          onPageChange={props.onPageChange}
+        />
+      ) : null}
     </aside>
+  );
+}
+
+function SearchField(props: {
+  value: string;
+  label: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block min-w-0">
+      <span className="sr-only">{props.label}</span>
+      <input
+        type="search"
+        className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none placeholder:text-ink-faint focus:border-action-base focus:ring-action-base"
+        value={props.value}
+        placeholder={props.placeholder}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function PaginationControls(props: {
+  pagination: Pagination;
+  disabled: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const firstItem = props.pagination.totalItems === 0
+    ? 0
+    : (props.pagination.page - 1) * props.pagination.pageSize + 1;
+  const lastItem = Math.min(
+    props.pagination.page * props.pagination.pageSize,
+    props.pagination.totalItems
+  );
+
+  return (
+    <nav className="mt-4 flex items-center justify-between gap-3 text-xs text-ink-muted" aria-label="Pagination">
+      <span>{firstItem}-{lastItem} of {props.pagination.totalItems}</span>
+      <div className="flex items-center gap-2">
+        <SmallControlButton
+          disabled={props.disabled || props.pagination.page <= 1}
+          onClick={() => props.onPageChange(props.pagination.page - 1)}
+        >
+          Previous
+        </SmallControlButton>
+        <span className="min-w-16 text-center">
+          {props.pagination.page} / {props.pagination.totalPages}
+        </span>
+        <SmallControlButton
+          disabled={props.disabled || props.pagination.page >= props.pagination.totalPages}
+          onClick={() => props.onPageChange(props.pagination.page + 1)}
+        >
+          Next
+        </SmallControlButton>
+      </div>
+    </nav>
   );
 }
 
@@ -945,7 +1115,7 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
-function readQueueSortMode(value: string): QueueSortMode {
+function readQueueSortMode(value: string): ReviewQueueSortMode {
   if (
     value === "priority"
     || value === "created"
@@ -960,7 +1130,7 @@ function readQueueSortMode(value: string): QueueSortMode {
   throw new Error(`Invalid queue sort mode: ${value}`);
 }
 
-function readQueueSignalFilter(value: string): QueueSignalFilter {
+function readQueueSignalFilter(value: string): ReviewQueueSignalFilter {
   if (
     value === "all"
     || value === "repair_attention"
@@ -974,72 +1144,12 @@ function readQueueSignalFilter(value: string): QueueSignalFilter {
   throw new Error(`Invalid queue signal filter: ${value}`);
 }
 
-function readNotesSortMode(value: string): NotesSortMode {
+function readNoteSortMode(value: string): NoteSortMode {
   if (value === "newest" || value === "oldest") {
     return value;
   }
 
   throw new Error(`Invalid notes sort mode: ${value}`);
-}
-
-function sortNotes(notes: NoteRecord[], sortMode: NotesSortMode) {
-  return notes
-    .map((note, originalIndex) => ({ note, originalIndex }))
-    .sort((left, right) => {
-      const newestFirst = calculateTimestamp(right.note.createdAt) - calculateTimestamp(left.note.createdAt);
-      const difference = sortMode === "oldest" ? -newestFirst : newestFirst;
-      return difference === 0 ? left.originalIndex - right.originalIndex : difference;
-    })
-    .map((entry) => entry.note);
-}
-
-function filterQueueItems(items: ReviewQueueItem[], signalFilter: QueueSignalFilter) {
-  if (signalFilter === "all") {
-    return items;
-  }
-
-  return items.filter((item) => {
-    if (signalFilter === "repair_attention") {
-      return item.usageFeedback.negativeCount > 0
-        || item.reviewState === "needs_revision";
-    }
-    if (signalFilter === "with_negative_feedback") {
-      return item.usageFeedback.negativeCount > 0;
-    }
-    if (signalFilter === "with_positive_feedback") {
-      return item.usageFeedback.positiveCount > 0;
-    }
-    return calculateTimestamp(item.lastUsedAt) > 0;
-  });
-}
-
-function sortQueueItems(items: ReviewQueueItem[], sortMode: QueueSortMode) {
-  return items
-    .map((item, originalIndex) => ({ item, originalIndex }))
-    .sort((left, right) => {
-      const scoreDifference = calculateQueueSortValue(right.item, sortMode) - calculateQueueSortValue(left.item, sortMode);
-      return scoreDifference === 0 ? left.originalIndex - right.originalIndex : scoreDifference;
-    })
-    .map((entry) => entry.item);
-}
-
-function calculateQueueSortValue(item: ReviewQueueItem, sortMode: QueueSortMode) {
-  if (sortMode === "priority") {
-    return item.reviewPriorityScore;
-  }
-  if (sortMode === "created") {
-    return calculateTimestamp(item.createdAt);
-  }
-  if (sortMode === "last_used") {
-    return calculateTimestamp(item.lastUsedAt);
-  }
-  if (sortMode === "positive_feedback") {
-    return item.usageFeedback.positiveCount;
-  }
-  if (sortMode === "negative_feedback") {
-    return item.usageFeedback.negativeCount;
-  }
-  return item.useCount;
 }
 
 function toggleSelectedId(selectedIds: string[], id: string) {
@@ -1071,15 +1181,6 @@ function formatReviewActionMessage(action: ReviewAction, count: number) {
         ? "marked for revision"
         : "deprecated";
   return `${count} item${count === 1 ? "" : "s"} ${label}.`;
-}
-
-function calculateTimestamp(value: string | undefined) {
-  if (!value) {
-    return 0;
-  }
-
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function viewSwitchButtonClassName(isActive: boolean) {

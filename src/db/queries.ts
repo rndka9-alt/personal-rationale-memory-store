@@ -75,6 +75,25 @@ export type NoteInsert = {
   sourceConversation?: NoteRecord["sourceConversation"];
 };
 
+export type NoteListOptions = {
+  includeArchived: boolean;
+  search?: string;
+  sortMode: "newest" | "oldest";
+  page: number;
+  pageSize: number;
+};
+
+export type ReviewQueueMemoryListOptions = {
+  captureKind?: string;
+  reviewState?: string;
+  search?: string;
+};
+
+export type ReviewQueueMemoryPageOptions = ReviewQueueMemoryListOptions & {
+  page: number;
+  pageSize: number;
+};
+
 export type RationaleContentFingerprintClaim =
   | { status: "claimed"; entryId: string }
   | { status: "processing"; entryId: string }
@@ -517,18 +536,52 @@ export async function listActiveNotes(pool: pg.Pool) {
   return result.rows.map(mapNoteRow);
 }
 
-export async function listNotes(pool: pg.Pool, includeArchived: boolean) {
+export async function listNotes(pool: pg.Pool, options: NoteListOptions) {
   logInfo("DB list notes started.", {
-    includeArchived
+    includeArchived: options.includeArchived,
+    hasSearch: Boolean(options.search),
+    sortMode: options.sortMode,
+    page: options.page,
+    pageSize: options.pageSize
   });
-  const result = includeArchived
-    ? await pool.query("SELECT * FROM notes ORDER BY archived ASC, created_at DESC")
-    : await pool.query("SELECT * FROM notes WHERE archived = FALSE ORDER BY created_at DESC");
+
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  if (!options.includeArchived) {
+    conditions.push("archived = FALSE");
+  }
+  if (options.search) {
+    values.push(`%${escapeLikePattern(options.search)}%`);
+    conditions.push(`(topic ILIKE $${values.length} ESCAPE '!' OR content ILIKE $${values.length} ESCAPE '!')`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDirection = options.sortMode === "oldest" ? "ASC" : "DESC";
+  const pageValues = [...values, options.pageSize, (options.page - 1) * options.pageSize];
+  const [countResult, result] = await Promise.all([
+    pool.query(`SELECT COUNT(*)::int AS total_count FROM notes ${whereClause}`, values),
+    pool.query(
+      `SELECT * FROM notes
+      ${whereClause}
+      ORDER BY created_at ${orderDirection}, id ASC
+      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      pageValues
+    )
+  ]);
+  const countRow = countResult.rows[0];
+  if (!countRow) {
+    throw new Error("Note count query returned no rows.");
+  }
+  const totalItems = Number(countRow.total_count);
   logInfo("DB list notes completed.", {
-    includeArchived,
+    includeArchived: options.includeArchived,
+    totalItems,
     resultCount: result.rows.length
   });
-  return result.rows.map(mapNoteRow);
+  return {
+    notes: result.rows.map(mapNoteRow),
+    totalItems
+  };
 }
 
 export async function recordMemoryRefinementOpinion(
@@ -959,6 +1012,81 @@ export async function listAllMemoryEntriesByAcceptanceState(pool: pg.Pool, accep
     resultCount: result.rows.length
   });
   return result.rows.map(mapMemoryEntryRow);
+}
+
+export async function listReviewQueueMemoryEntries(
+  pool: pg.Pool,
+  options: ReviewQueueMemoryListOptions
+) {
+  logInfo("DB list review queue memory entries started.", {
+    captureKind: options.captureKind,
+    reviewState: options.reviewState,
+    hasSearch: Boolean(options.search)
+  });
+  const query = createReviewQueueMemoryQuery(options);
+
+  const result = await pool.query(
+    `SELECT e.*
+    FROM memory_entries e
+    WHERE ${query.conditions.join(" AND ")}
+    ORDER BY e.created_at DESC, e.id ASC`,
+    query.values
+  );
+  logInfo("DB list review queue memory entries completed.", {
+    resultCount: result.rows.length
+  });
+  return result.rows.map(mapMemoryEntryRow);
+}
+
+export async function listReviewQueueMemoryPage(
+  pool: pg.Pool,
+  options: ReviewQueueMemoryPageOptions
+) {
+  logInfo("DB list paginated review queue memory entries started.", {
+    captureKind: options.captureKind,
+    reviewState: options.reviewState,
+    hasSearch: Boolean(options.search),
+    page: options.page,
+    pageSize: options.pageSize
+  });
+  const query = createReviewQueueMemoryQuery(options);
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total_count
+    FROM memory_entries e
+    WHERE ${query.conditions.join(" AND ")}`,
+    query.values
+  );
+  const countRow = countResult.rows[0];
+  if (!countRow) {
+    throw new Error("Review queue memory count query returned no rows.");
+  }
+  const totalItems = Number(countRow.total_count);
+  const totalPages = Math.max(1, Math.ceil(totalItems / options.pageSize));
+  const page = Math.min(options.page, totalPages);
+  const pageValues = [...query.values, options.pageSize, (page - 1) * options.pageSize];
+  const result = await pool.query(
+    `SELECT e.*
+    FROM memory_entries e
+    WHERE ${query.conditions.join(" AND ")}
+    ORDER BY e.created_at DESC, e.id ASC
+    LIMIT $${query.values.length + 1} OFFSET $${query.values.length + 2}`,
+    pageValues
+  );
+  logInfo("DB list paginated review queue memory entries completed.", {
+    page,
+    pageSize: options.pageSize,
+    totalItems,
+    resultCount: result.rows.length
+  });
+  return {
+    entries: result.rows.map(mapMemoryEntryRow),
+    pagination: {
+      page,
+      pageSize: options.pageSize,
+      totalItems,
+      totalPages
+    }
+  };
 }
 
 export type RetrievalQuerySourceKind = "search" | "compose";
@@ -1395,6 +1523,38 @@ function readOptionalNoteSourceConversation(value: unknown) {
     return undefined;
   }
   return noteSourceConversationSchema.parse(value);
+}
+
+function createReviewQueueMemoryQuery(options: ReviewQueueMemoryListOptions) {
+  const conditions = ["e.acceptance_state = 'candidate'"];
+  const values: unknown[] = [];
+
+  if (options.captureKind) {
+    values.push(options.captureKind);
+    conditions.push(`e.metadata->>'capture_kind' = $${values.length}`);
+  }
+  if (options.reviewState) {
+    values.push(options.reviewState);
+    conditions.push(`e.review_state = $${values.length}`);
+  }
+  if (options.search) {
+    values.push(`%${escapeLikePattern(options.search)}%`);
+    conditions.push(`(
+      e.title ILIKE $${values.length} ESCAPE '!'
+      OR EXISTS (
+        SELECT 1
+        FROM memory_chunks c
+        WHERE c.entry_id = e.id
+          AND c.content ILIKE $${values.length} ESCAPE '!'
+      )
+    )`);
+  }
+
+  return { conditions, values };
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[!%_]/g, "!$&");
 }
 
 function readTimestamp(value: unknown, columnName: string) {
