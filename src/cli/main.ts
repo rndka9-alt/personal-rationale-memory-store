@@ -32,23 +32,22 @@ if (command === "search") {
 } else if (command === "review-candidates") {
   console.log(await rationaleService.reviewCandidates(parseLimit(rest[0])));
 } else if (command === "auto-capture") {
-  const [title, captureReason, ...rationaleParts] = rest;
-  if (!title || !captureReason || rationaleParts.length === 0) {
-    throw new Error("Usage: npm run cli -- auto-capture <title> <captureReason> <rationale>");
+  const [title, ...bodyParts] = rest;
+  if (!title || bodyParts.length === 0) {
+    throw new Error("Usage: npm run cli -- auto-capture <title> <body>");
   }
   console.log(JSON.stringify(await rationaleService.autoCaptureRationale({
     title,
-    captureReason,
-    rationale: rationaleParts.join(" ")
+    body: bodyParts.join(" ")
   }), null, 2));
 } else if (command === "record-candidate") {
-  const [title, ...rationaleParts] = rest;
-  if (!title || rationaleParts.length === 0) {
-    throw new Error("Usage: npm run cli -- record-candidate <title> <rationale>");
+  const [title, ...bodyParts] = rest;
+  if (!title || bodyParts.length === 0) {
+    throw new Error("Usage: npm run cli -- record-candidate <title> <body>");
   }
   console.log(JSON.stringify(await rationaleService.recordCandidate({
     title,
-    rationale: rationaleParts.join(" ")
+    body: bodyParts.join(" ")
   }), null, 2));
 } else if (command === "reindex") {
   const scope = parseReindexScope(rest[0]);

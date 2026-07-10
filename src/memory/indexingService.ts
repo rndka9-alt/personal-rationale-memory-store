@@ -10,7 +10,7 @@ import {
 import type { MemoryChunkInsert, QueryExecutor } from "../db/queries.js";
 import { logInfo } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
-import { toMemoryEntryRecord, type MemoryEntryRecord, type RationaleEntry } from "./schema.js";
+import { summarizeRationale, toMemoryEntryRecord, type MemoryEntryRecord, type RationaleEntry } from "./schema.js";
 import { MemoryFileStore } from "./fileStore.js";
 import { fingerprintCanonicalFile, readIndexedFileHash, withIndexMetadata } from "./fileIndex.js";
 import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
@@ -20,6 +20,8 @@ export type PreparedMemoryIndex = {
   chunks: MemoryChunkInsert[];
   contentFingerprint: string;
 };
+
+const bodyChunkMaxCharacters = 1200;
 
 type PrepareEntryIndexOptions = {
   fingerprintFile?: boolean;
@@ -183,18 +185,50 @@ export class IndexingService {
 
 export function splitRationaleIntoChunks(entry: RationaleEntry) {
   const chunks: Array<{ kind: string; content: string }> = [];
-  appendChunk(chunks, "summary", [entry.title, entry.situation, entry.goal, entry.decision].filter(isString).join("\n"));
-  appendChunk(chunks, "rationale", entry.rationale);
-  appendChunk(chunks, "constraints", entry.constraints.join("\n"));
-  appendChunk(
-    chunks,
-    "rejected_alternatives",
-    entry.rejectedAlternatives.map((alternative) => `${alternative.option}: ${alternative.reason}`).join("\n")
-  );
-  appendChunk(chunks, "tradeoff", entry.tradeoff);
-  appendChunk(chunks, "reuse_when", entry.reuseWhen.join("\n"));
-  appendChunk(chunks, "avoid_when", entry.avoidWhen.join("\n"));
+  appendChunk(chunks, "summary", `${entry.title}\n${summarizeRationale(entry)}`);
+  for (const bodyChunk of splitBodyIntoChunks(entry.body)) {
+    appendChunk(chunks, "body", bodyChunk);
+  }
   return chunks;
+}
+
+function splitBodyIntoChunks(body: string) {
+  const paragraphs = body
+    .trim()
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0);
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (const paragraph of paragraphs) {
+    const segments = splitLongParagraph(paragraph);
+    for (const segment of segments) {
+      const candidate = currentChunk.length > 0 ? `${currentChunk}\n\n${segment}` : segment;
+      if (candidate.length <= bodyChunkMaxCharacters) {
+        currentChunk = candidate;
+        continue;
+      }
+
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+      currentChunk = segment;
+    }
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+  return chunks;
+}
+
+function splitLongParagraph(paragraph: string) {
+  const segments: string[] = [];
+  for (let offset = 0; offset < paragraph.length; offset += bodyChunkMaxCharacters) {
+    segments.push(paragraph.slice(offset, offset + bodyChunkMaxCharacters));
+  }
+  return segments;
 }
 
 function appendChunk(chunks: Array<{ kind: string; content: string }>, kind: string, content: string | undefined) {
@@ -207,8 +241,4 @@ function appendChunk(chunks: Array<{ kind: string; content: string }>, kind: str
 
 function estimateTokens(text: string) {
   return Math.ceil(text.length / 4);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }

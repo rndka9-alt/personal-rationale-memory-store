@@ -73,13 +73,20 @@ describe("MCP write tool results", () => {
     }
   });
 
-  it("keeps high-level retrieval tool inputs minimal", () => {
+  it("keeps public tool inputs minimal", () => {
     const services = createToolServices();
 
     expect(Object.keys(getTool(services, "search_rationales").schema)).toEqual(["query", "project"]);
-    expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["revisionId", "reason", "patch"]);
     expect(Object.keys(getTool(services, "compose_context").schema)).toEqual(["task", "project"]);
     expect(Object.keys(getTool(services, "continue_context").schema)).toEqual(["cursor"]);
+    expect(Object.keys(getTool(services, "record_note").schema)).toEqual(["content", "sourceContext"]);
+    expect(Object.keys(getTool(services, "auto_capture_rationale").schema)).toEqual(["title", "body", "type", "project"]);
+    expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["revisionId", "reason", "title", "body"]);
+    expect(Object.keys(getTool(services, "record_usage_feedback").schema)).toEqual(["entryId", "eventType"]);
+    expect(getRequiredInputKeys(getTool(services, "record_note"))).toEqual(["content"]);
+    expect(getRequiredInputKeys(getTool(services, "auto_capture_rationale"))).toEqual(["title", "body"]);
+    expect(getRequiredInputKeys(getTool(services, "update_rationale"))).toEqual(["revisionId", "reason", "title", "body"]);
+    expect(getRequiredInputKeys(getTool(services, "record_usage_feedback"))).toEqual(["entryId", "eventType"]);
   });
 
   it("returns compact search results without internal ranking or storage metadata", async () => {
@@ -148,10 +155,7 @@ describe("MCP write tool results", () => {
     const services = createToolServices();
     const result = await getTool(services, "auto_capture_rationale").handler({
       title: "Keep write responses compact",
-      rationale: "Tool responses are fed back into the model context.",
-      captureReason: "This decision avoids context bloat.",
-      reuseWhen: ["A write tool only needs to acknowledge success."],
-      avoidWhen: ["The caller explicitly needs the full entry."]
+      body: "Tool responses are fed back into the model context."
     });
 
     const payload = parseToolJson(result);
@@ -175,10 +179,7 @@ describe("MCP write tool results", () => {
 
     const result = await getTool(services, "auto_capture_rationale").handler({
       title: "Keep duplicate responses compact",
-      rationale: "The caller only needs the existing id to verify duplicate content.",
-      captureReason: "Duplicate capture should not return the full entry.",
-      reuseWhen: ["A matching rationale already exists."],
-      avoidWhen: ["The content is distinct."]
+      body: "The caller only needs the existing id to verify duplicate content."
     });
 
     const payload = parseToolJson(result);
@@ -198,9 +199,8 @@ describe("MCP write tool results", () => {
     const result = await getTool(services, "update_rationale").handler({
       revisionId: "V20260604T000000000Z-base",
       reason: "Keep the rationale concise.",
-      patch: {
-        rationale: "Shorter MCP write responses reduce context pressure."
-      }
+      title: "Keep write responses compact",
+      body: "Shorter MCP write responses reduce context pressure."
     });
 
     const payload = parseToolJson(result);
@@ -222,9 +222,8 @@ describe("MCP write tool results", () => {
     const result = await getTool(services, "update_rationale").handler({
       revisionId: "V20260604T000000000Z-stale",
       reason: "Keep the rationale concise.",
-      patch: {
-        rationale: "Shorter MCP write responses reduce context pressure."
-      }
+      title: "Keep write responses compact",
+      body: "Shorter MCP write responses reduce context pressure."
     });
 
     const payload = parseToolJson(result);
@@ -255,6 +254,31 @@ describe("MCP write tool results", () => {
     expect(payload).not.toHaveProperty("content");
     expect(payload).not.toHaveProperty("topic");
     expect(payload).not.toHaveProperty("sourceConversation");
+  });
+
+  it("groups note provenance into one public source context", async () => {
+    const services = createToolServices();
+    let recordedInput: unknown;
+    services.noteService.recordNote = async (input) => {
+      recordedInput = input;
+      return createNoteRecord();
+    };
+
+    await getTool(services, "record_note").handler({
+      content: "Keep the source context compact.",
+      sourceContext: {
+        topic: "MCP schema design",
+        messages: [{ role: "user", text: "Group related provenance." }]
+      }
+    });
+
+    expect(recordedInput).toEqual({
+      content: "Keep the source context compact.",
+      topic: "MCP schema design",
+      sourceConversation: {
+        messages: [{ role: "user", text: "Group related provenance." }]
+      }
+    });
   });
 
   it("returns slot-scoped success metadata for note ratings", async () => {
@@ -391,11 +415,7 @@ function createRationaleEntry(id: string, title: string): RationaleEntry {
       metadata: {}
     },
     title,
-    rationale: "Full rationale body should not be returned by write tools.",
-    constraints: [],
-    rejectedAlternatives: [],
-    reuseWhen: [],
-    avoidWhen: [],
+    body: "Full rationale body should not be returned by write tools.",
     rawMarkdown: ""
   };
 }
@@ -425,6 +445,12 @@ function getTool(services: ToolServices, name: string): ToolDefinition {
     throw new Error(`Tool not found: ${name}`);
   }
   return definition;
+}
+
+function getRequiredInputKeys(definition: ToolDefinition) {
+  return Object.entries(definition.schema)
+    .filter(([, schema]) => !schema.isOptional())
+    .map(([key]) => key);
 }
 
 function parseToolJson(result: Awaited<ReturnType<ToolDefinition["handler"]>>) {

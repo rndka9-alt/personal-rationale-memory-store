@@ -148,9 +148,6 @@ function parseReviewQueueDetail(value: unknown): ReviewQueueDetail {
     review: {
       id: readRequiredString(value.review, "id"),
       title: readRequiredString(value.review, "title"),
-      score: readNumber(value.review, "score"),
-      recommendation: parseRecommendation(readRequiredString(value.review, "recommendation")),
-      missingSections: readStringArray(value.review, "missingSections"),
       strengths: readStringArray(value.review, "strengths"),
       cautions: readStringArray(value.review, "cautions")
     },
@@ -209,30 +206,9 @@ function parseRationaleEntry(value: Record<string, unknown>) {
       source: parseSource(frontmatterValue.source)
     },
     title: readRequiredString(value, "title"),
-    situation: readOptionalString(value, "situation"),
-    goal: readOptionalString(value, "goal"),
-    constraints: readStringArray(value, "constraints"),
-    decision: readOptionalString(value, "decision"),
-    rationale: readRequiredString(value, "rationale"),
-    rejectedAlternatives: readRejectedAlternatives(value.rejectedAlternatives),
-    tradeoff: readOptionalString(value, "tradeoff"),
-    reuseWhen: readStringArray(value, "reuseWhen"),
-    avoidWhen: readStringArray(value, "avoidWhen"),
+    body: readRequiredString(value, "body"),
     rawMarkdown: readRequiredString(value, "rawMarkdown")
   };
-}
-
-function readRejectedAlternatives(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .filter(isRecord)
-    .map((item) => ({
-      option: readRequiredString(item, "option"),
-      reason: readRequiredString(item, "reason")
-    }));
 }
 
 function parseSource(value: unknown) {
@@ -261,14 +237,6 @@ function parseProject(value: unknown) {
     project.root = root;
   }
   return project;
-}
-
-function parseRecommendation(value: string) {
-  if (value === "accept" || value === "revise" || value === "deprecate") {
-    return value;
-  }
-
-  throw new Error("Invalid recommendation.");
 }
 
 function readRequiredString(value: Record<string, unknown>, key: string) {

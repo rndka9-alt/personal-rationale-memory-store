@@ -31,7 +31,7 @@ describe("rationaleEntrySchema", () => {
         metadata: {}
       },
       title: "Prefer rationale over bare decisions",
-      rationale: "The reusable reason matters more than the final decision."
+      body: "The reusable reason matters more than the final decision."
     });
 
     expect(entry.frontmatter.id).toBe("R2026-04-30-001");
@@ -39,59 +39,48 @@ describe("rationaleEntrySchema", () => {
     expect(entry.frontmatter.acceptanceState).toBe("candidate");
     expect(entry.frontmatter.reviewState).toBe("unreviewed");
     expect(entry.frontmatter.decisionState).toBe("unknown");
-    expect(entry.constraints).toEqual([]);
+    expect(entry.body).toContain("reusable reason");
   });
 });
 
 describe("autoCaptureRationaleInputSchema", () => {
-  it("accepts quick captures with only title and rationale", () => {
+  it("accepts captures with a title and body", () => {
     const input = autoCaptureRationaleInputSchema.parse({
       title: "Capture reusable rationale",
-      rationale: "Boundary fields can be backfilled during review."
+      body: "Boundary information belongs in the document body when it matters."
     });
 
-    expect(input.reuseWhen).toBeUndefined();
-    expect(input.avoidWhen).toBeUndefined();
-    expect(input.captureReason).toBeUndefined();
+    expect(input.body).toContain("document body");
   });
 
-  it("still requires a rationale body", () => {
+  it("requires a non-blank body", () => {
     expect(() => autoCaptureRationaleInputSchema.parse({
-      title: "Capture without rationale"
+      title: "Capture without body"
+    })).toThrow();
+    expect(() => autoCaptureRationaleInputSchema.parse({
+      title: "Capture blank body",
+      body: "   "
     })).toThrow();
   });
 
   it("accepts agent-assignable memory types and rejects principle and note", () => {
     const input = autoCaptureRationaleInputSchema.parse({
       title: "Prefer fail-fast over silent fallback",
-      rationale: "Silent fallbacks hide corrupted data until it is expensive to repair.",
+      body: "Silent fallbacks hide corrupted data until it is expensive to repair.",
       type: "preference"
     });
 
     expect(input.type).toBe("preference");
     expect(() => autoCaptureRationaleInputSchema.parse({
       title: "Promote to principle directly",
-      rationale: "Principles must come from promoting accepted rationale.",
+      body: "Principles must come from promoting accepted rationale.",
       type: "principle"
     })).toThrow();
     expect(() => autoCaptureRationaleInputSchema.parse({
       title: "Remember a small personal detail",
-      rationale: "Notes belong in the plain note surface, not rationale memory.",
+      body: "Notes belong in the plain note surface, not rationale memory.",
       type: "note"
     })).toThrow();
-  });
-
-  it("keeps boundary fields when provided", () => {
-    const input = autoCaptureRationaleInputSchema.parse({
-      title: "Capture reusable rationale",
-      rationale: "This rationale includes enough boundary information to be queued safely.",
-      captureReason: "The decision pattern is likely reusable.",
-      reuseWhen: ["A similar constrained decision appears."],
-      avoidWhen: ["The future task is unrelated."]
-    });
-
-    expect(input.reuseWhen).toHaveLength(1);
-    expect(input.avoidWhen).toHaveLength(1);
   });
 });
 
@@ -121,8 +110,7 @@ describe("recordUsageFeedbackInputSchema", () => {
   it("accepts explicit feedback events and rejects passive retrieval events", () => {
     const feedback = recordUsageFeedbackInputSchema.parse({
       entryId: "R2026-05-19-001",
-      eventType: "user_helpful",
-      task: "Use memory in implementation"
+      eventType: "user_helpful"
     });
 
     expect(feedback.eventType).toBe("user_helpful");

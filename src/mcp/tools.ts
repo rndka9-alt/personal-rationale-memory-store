@@ -5,6 +5,8 @@ import type { RationaleService, RationaleWriteResult } from "../memory/rationale
 import {
   autoCaptureRationaleInputSchema,
   composeNotesContextInputSchema,
+  noteSourceConversationSchema,
+  noteTopicSchema,
   rateNoteInputSchema,
   recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
@@ -96,13 +98,17 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "record_note",
-      description: "Record a lightweight personal note. Use content for the note itself, with optional topic and sourceConversation for a small excerpt of the conversation that led to the note. Notes are separate from rationale memories. If a note may be inaccurate, ambiguous, or worth correcting later, mention it to the user so they can revise or remove it.",
-      schema: recordNoteInputSchema.shape,
+      description: "Record a lightweight personal note, with optional source context for later review.",
+      schema: recordNoteToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
       metadata: toolInvocationMetadata("쪽지 적는 중..", "쪽지 적엇어요!"),
-      handler: async (input: unknown) =>
-        jsonToolResult(compactNoteResult(await services.noteService.recordNote(recordNoteInputSchema.parse(input))))
+      handler: async (input: unknown) => {
+        const parsedInput = recordNoteToolInputSchema.parse(input);
+        return jsonToolResult(compactNoteResult(
+          await services.noteService.recordNote(toRecordNoteInput(parsedInput))
+        ));
+      }
     },
     {
       name: "rate_note",
@@ -127,36 +133,36 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record relevant rationale memory. Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them. Rationale memories can be referenced from other tasks and later conversations, so actively capture reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use record_note for casual thoughts, personal memories, and lightweight notes. Exact duplicates converge into the existing entry, and low-relevance memories are kept out of composed context by a similarity floor; when in doubt, capture. If a captured rationale memory may be inaccurate, outdated, or poorly scoped, mention it to the user so they can review and correct it.",
-      schema: autoCaptureRationaleInputSchema.shape,
+        "Record reusable rationale memory as a title and self-contained Markdown body. Use record_note for casual or lightweight personal notes.",
+      schema: autoCaptureRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
       metadata: toolInvocationMetadata("메모 작성 중..", "메모 완료!"),
       handler: async (input: unknown) =>
         jsonToolResult(compactRationaleWriteResult(
-          await services.rationaleService.autoCaptureRationale(autoCaptureRationaleInputSchema.parse(input))
+          await services.rationaleService.autoCaptureRationale(autoCaptureRationaleToolInputSchema.parse(input))
         ))
     },
     {
       name: "update_rationale",
-      description: "Patch a rationale memory from a base revision.",
-      schema: updateRationaleInputSchema.shape,
+      description: "Replace a rationale title and body from a base revision.",
+      schema: updateRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
       metadata: toolInvocationMetadata("메모 수정 중..", "메모 수정 완료!"),
       handler: async (input: unknown) =>
-        jsonToolResult(await services.rationaleService.updateRationaleFromRevision(updateRationaleInputSchema.parse(input)))
+        jsonToolResult(await services.rationaleService.updateRationaleFromRevision(updateRationaleToolInputSchema.parse(input)))
     },
     {
       name: "record_usage_feedback",
       description: "Record explicit feedback after a rationale memory was applied, helpful, unhelpful, or dismissed.",
-      schema: recordUsageFeedbackInputSchema.shape,
+      schema: recordUsageFeedbackToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
       metadata: toolInvocationMetadata("메모를 평가하는 중..", "평가 완료!"),
       handler: async (input: unknown) =>
         jsonToolResult(compactUsageFeedbackWriteResult(
-          await services.rationaleService.recordUsageFeedback(recordUsageFeedbackInputSchema.parse(input))
+          await services.rationaleService.recordUsageFeedback(recordUsageFeedbackToolInputSchema.parse(input))
         ))
     }
   ];
@@ -197,6 +203,52 @@ const composeInputSchema = z.object({
 const continueInputSchema = z.object({
   cursor: z.string().min(1)
 });
+
+const recordNoteToolInputSchema = z.object({
+  content: recordNoteInputSchema.shape.content,
+  sourceContext: z.object({
+    topic: noteTopicSchema,
+    messages: noteSourceConversationSchema.shape.messages.optional()
+  }).optional()
+});
+
+const autoCaptureRationaleToolInputSchema = z.object({
+  title: autoCaptureRationaleInputSchema.shape.title,
+  body: autoCaptureRationaleInputSchema.shape.body,
+  type: autoCaptureRationaleInputSchema.shape.type,
+  project: searchProjectFilterSchema.optional()
+});
+
+const updateRationaleToolInputSchema = z.object({
+  revisionId: updateRationaleInputSchema.shape.revisionId,
+  reason: updateRationaleInputSchema.shape.reason,
+  title: updateRationaleInputSchema.shape.title,
+  body: updateRationaleInputSchema.shape.body
+});
+
+const recordUsageFeedbackToolInputSchema = z.object({
+  entryId: recordUsageFeedbackInputSchema.shape.entryId,
+  eventType: recordUsageFeedbackInputSchema.shape.eventType
+});
+
+function toRecordNoteInput(input: z.infer<typeof recordNoteToolInputSchema>) {
+  if (!input.sourceContext) {
+    return { content: input.content };
+  }
+  if (!input.sourceContext.messages) {
+    return {
+      content: input.content,
+      topic: input.sourceContext.topic
+    };
+  }
+  return {
+    content: input.content,
+    topic: input.sourceContext.topic,
+    sourceConversation: {
+      messages: input.sourceContext.messages
+    }
+  };
+}
 
 function jsonToolResult(value: unknown): ToolResult {
   return {

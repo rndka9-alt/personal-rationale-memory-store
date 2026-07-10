@@ -30,15 +30,15 @@ describe("MemoryFileStore", () => {
         metadata: {}
       },
       title: "Keep rationale canonical",
-      situation: "A memory needs to survive database rebuilds.",
-      goal: "Keep a human-readable source of truth.",
-      constraints: ["Postgres is an index"],
-      decision: "Write Markdown first.",
-      rationale: "Canonical files preserve reviewable reasoning.",
-      rejectedAlternatives: [{ option: "DB-only storage", reason: "It hides memory from humans." }],
-      tradeoff: "Parsing is required.",
-      reuseWhen: ["Rebuilding indexes"],
-      avoidWhen: ["Temporary scratch notes"],
+      body: [
+        "A memory needs to survive database rebuilds.",
+        "",
+        "## Decision",
+        "Write Markdown first.",
+        "",
+        "## Extra context",
+        "Unknown headings remain part of the canonical body."
+      ].join("\n"),
       rawMarkdown: ""
     };
 
@@ -47,7 +47,7 @@ describe("MemoryFileStore", () => {
 
     expect(parsed.title).toBe(entry.title);
     expect(parsed.frontmatter.project).toEqual(entry.frontmatter.project);
-    expect(parsed.rejectedAlternatives).toEqual(entry.rejectedAlternatives);
+    expect(parsed.body).toBe(entry.body);
 
     await rm(directory, { recursive: true, force: true });
   });
@@ -75,5 +75,6 @@ Compatibility keeps older canonical memory files readable.
     expect(entry.frontmatter.acceptanceState).toBe("accepted");
     expect(entry.frontmatter.reviewState).toBe("reviewed");
     expect(entry.frontmatter.decisionState).toBe("unknown");
+    expect(entry.body).toBe("## Rationale\nCompatibility keeps older canonical memory files readable.");
   });
 });

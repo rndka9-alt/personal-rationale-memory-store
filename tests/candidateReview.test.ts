@@ -1,36 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { findMissingSections } from "../src/memory/rationaleService.js";
+import { reviewCandidateEntry } from "../src/memory/rationaleService.js";
 import { rationaleEntrySchema } from "../src/memory/schema.js";
 
-function minimalEntryOfType(type: string) {
+function entryWithBody(body: string) {
   return rationaleEntrySchema.parse({
     frontmatter: {
       id: "R-test-type-001",
-      type
+      type: "rationale",
+      domains: ["development"],
+      intents: ["review"],
+      modes: ["planning"]
     },
     title: "Minimal entry",
-    rationale: "Body only."
+    body
   });
 }
 
-describe("findMissingSections", () => {
-  it("flags decision-shaped sections for rationale entries", () => {
-    const missingSections = findMissingSections(minimalEntryOfType("rationale"));
+describe("reviewCandidateEntry", () => {
+  it("flags a short body without requiring fixed sections", () => {
+    const review = reviewCandidateEntry(entryWithBody("Body only."));
 
-    expect(missingSections).toContain("decision");
-    expect(missingSections).toContain("rejectedAlternatives");
-    expect(missingSections).toContain("tradeoff");
-    expect(missingSections).toContain("constraints");
+    expect(review.cautions).toContain("body is short");
+    expect(review.strengths).toEqual([]);
   });
 
-  it("does not flag decision-shaped sections for non-decision types", () => {
-    const missingSections = findMissingSections(minimalEntryOfType("preference"));
+  it("recognizes a substantive free-form body", () => {
+    const review = reviewCandidateEntry(entryWithBody(
+      "A reusable memory can explain its context, decision, constraints, and tradeoffs naturally without storing each idea in a separate field. ".repeat(2)
+    ));
 
-    expect(missingSections).not.toContain("decision");
-    expect(missingSections).not.toContain("rejectedAlternatives");
-    expect(missingSections).not.toContain("tradeoff");
-    expect(missingSections).not.toContain("constraints");
-    expect(missingSections).toContain("reuseWhen");
-    expect(missingSections).toContain("avoidWhen");
+    expect(review.strengths).toContain("substantive body");
+    expect(review.cautions).not.toContain("body is short");
   });
 });

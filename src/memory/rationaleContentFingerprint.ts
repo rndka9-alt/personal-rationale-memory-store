@@ -3,24 +3,11 @@ import { recordCandidateInputSchema, type RecordCandidateInput, type RationaleEn
 
 export function fingerprintRationaleContent(input: RecordCandidateInput | RationaleEntry) {
   const content = "frontmatter" in input ? rationaleEntryToContentInput(input) : recordCandidateInputSchema.parse(input);
-  // Deduplication is intentionally based on reusable body content only. The same
-  // memory should converge even when captured from a different project, source,
-  // metadata context, or memory type; those fields can be reviewed or updated on
-  // the existing entry instead of creating another copy.
+  // Provenance and classification do not make the same reusable document a new
+  // memory, so deduplication is based only on its canonical title and body.
   const canonicalContent = {
     title: normalizeContentText(content.title),
-    situation: normalizeOptionalContentText(content.situation),
-    goal: normalizeOptionalContentText(content.goal),
-    constraints: normalizeContentList(content.constraints),
-    decision: normalizeOptionalContentText(content.decision),
-    rationale: normalizeContentText(content.rationale),
-    rejectedAlternatives: (content.rejectedAlternatives ?? []).map((alternative) => ({
-      option: normalizeContentText(alternative.option),
-      reason: normalizeContentText(alternative.reason)
-    })),
-    tradeoff: normalizeOptionalContentText(content.tradeoff),
-    reuseWhen: normalizeContentList(content.reuseWhen),
-    avoidWhen: normalizeContentList(content.avoidWhen)
+    body: normalizeContentText(content.body)
   };
 
   return createHash("sha256")
@@ -31,25 +18,8 @@ export function fingerprintRationaleContent(input: RecordCandidateInput | Ration
 function rationaleEntryToContentInput(entry: RationaleEntry): RecordCandidateInput {
   return {
     title: entry.title,
-    situation: entry.situation,
-    goal: entry.goal,
-    constraints: entry.constraints,
-    decision: entry.decision,
-    rationale: entry.rationale,
-    rejectedAlternatives: entry.rejectedAlternatives,
-    tradeoff: entry.tradeoff,
-    reuseWhen: entry.reuseWhen,
-    avoidWhen: entry.avoidWhen
+    body: entry.body
   };
-}
-
-function normalizeOptionalContentText(value: string | undefined) {
-  if (typeof value === "undefined") {
-    return undefined;
-  }
-
-  const normalized = normalizeContentText(value);
-  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizeContentText(value: string) {
@@ -60,10 +30,4 @@ function normalizeContentText(value: string) {
     .map((line) => line.trim())
     .join("\n")
     .trim();
-}
-
-function normalizeContentList(values: string[] | undefined) {
-  return (values ?? [])
-    .map(normalizeContentText)
-    .filter((value) => value.length > 0);
 }

@@ -1,10 +1,5 @@
 import { z } from "zod";
 
-export const rejectedAlternativeSchema = z.object({
-  option: z.string().min(1),
-  reason: z.string().min(1)
-});
-
 export const sourceMetadataSchema = z.object({
   kind: z.string().min(1),
   ref: z.string().min(1)
@@ -59,15 +54,9 @@ export const rationaleFrontmatterSchema = z.object({
 export const rationaleEntrySchema = z.object({
   frontmatter: rationaleFrontmatterSchema,
   title: z.string().min(1),
-  situation: z.string().optional(),
-  goal: z.string().optional(),
-  constraints: z.array(z.string()).default([]),
-  decision: z.string().optional(),
-  rationale: z.string().min(1),
-  rejectedAlternatives: z.array(rejectedAlternativeSchema).default([]),
-  tradeoff: z.string().optional(),
-  reuseWhen: z.array(z.string()).default([]),
-  avoidWhen: z.array(z.string()).default([]),
+  body: z.string()
+    .min(1)
+    .refine((value) => value.trim().length > 0, "Rationale body cannot be blank."),
   rawMarkdown: z.string().default("")
 });
 
@@ -83,16 +72,8 @@ export const capturedMemoryTypeSchema = z.enum([
 
 export const recordCandidateInputSchema = z.object({
   title: z.string().min(1),
+  body: rationaleEntrySchema.shape.body,
   type: capturedMemoryTypeSchema.optional(),
-  situation: z.string().optional(),
-  goal: z.string().optional(),
-  constraints: z.array(z.string()).optional(),
-  decision: z.string().optional(),
-  rationale: z.string().min(1),
-  rejectedAlternatives: z.array(rejectedAlternativeSchema).optional(),
-  tradeoff: z.string().optional(),
-  reuseWhen: z.array(z.string()).optional(),
-  avoidWhen: z.array(z.string()).optional(),
   source: sourceMetadataSchema.optional(),
   project: projectContextSchema.optional(),
   metadata: z.record(z.unknown()).optional()
@@ -100,42 +81,16 @@ export const recordCandidateInputSchema = z.object({
 
 export const autoCaptureRationaleInputSchema = z.object({
   title: recordCandidateInputSchema.shape.title,
+  body: recordCandidateInputSchema.shape.body,
   type: recordCandidateInputSchema.shape.type,
-  situation: recordCandidateInputSchema.shape.situation,
-  goal: recordCandidateInputSchema.shape.goal,
-  constraints: recordCandidateInputSchema.shape.constraints,
-  decision: recordCandidateInputSchema.shape.decision,
-  rationale: recordCandidateInputSchema.shape.rationale,
-  rejectedAlternatives: recordCandidateInputSchema.shape.rejectedAlternatives,
-  tradeoff: recordCandidateInputSchema.shape.tradeoff,
-  reuseWhen: recordCandidateInputSchema.shape.reuseWhen,
-  avoidWhen: recordCandidateInputSchema.shape.avoidWhen,
-  source: sourceMetadataSchema.optional(),
-  project: projectContextSchema.optional(),
-  captureReason: z.string().min(1).optional(),
-  sessionRef: z.string().optional(),
-  metadata: recordCandidateInputSchema.shape.metadata
+  project: projectContextSchema.optional()
 });
-
-export const rationaleFieldPatchSchema = z.object({
-  title: recordCandidateInputSchema.shape.title.optional(),
-  type: recordCandidateInputSchema.shape.type,
-  situation: recordCandidateInputSchema.shape.situation,
-  goal: recordCandidateInputSchema.shape.goal,
-  constraints: recordCandidateInputSchema.shape.constraints,
-  decision: recordCandidateInputSchema.shape.decision,
-  rationale: recordCandidateInputSchema.shape.rationale.optional(),
-  rejectedAlternatives: recordCandidateInputSchema.shape.rejectedAlternatives,
-  tradeoff: recordCandidateInputSchema.shape.tradeoff,
-  reuseWhen: recordCandidateInputSchema.shape.reuseWhen,
-  avoidWhen: recordCandidateInputSchema.shape.avoidWhen,
-  metadata: recordCandidateInputSchema.shape.metadata
-}).refine((value) => Object.keys(value).length > 0, "Patch must include at least one field.");
 
 export const updateRationaleInputSchema = z.object({
   revisionId: z.string().min(1),
   reason: z.string().min(1).max(1000),
-  patch: rationaleFieldPatchSchema
+  title: recordCandidateInputSchema.shape.title,
+  body: recordCandidateInputSchema.shape.body
 });
 
 export const recordRefinementOpinionInputSchema = z.object({
@@ -149,10 +104,7 @@ export const recordRefinementOpinionInputSchema = z.object({
 
 export const recordUsageFeedbackInputSchema = z.object({
   entryId: z.string().min(1),
-  eventType: usageFeedbackEventTypeSchema,
-  task: z.string().min(1).optional(),
-  source: sourceMetadataSchema.optional(),
-  metadata: z.record(z.unknown()).optional()
+  eventType: usageFeedbackEventTypeSchema
 });
 
 export const noteContentSchema = z.string()
@@ -174,9 +126,11 @@ export const noteSourceConversationSchema = z.object({
   messages: z.array(noteSourceConversationMessageSchema).min(1).max(4)
 });
 
+export const noteTopicSchema = z.string().min(1).max(120);
+
 export const recordNoteInputSchema = z.object({
   content: noteContentSchema,
-  topic: z.string().min(1).max(120).optional(),
+  topic: noteTopicSchema.optional(),
   sourceConversation: noteSourceConversationSchema.optional()
 });
 
@@ -223,7 +177,6 @@ export type RationaleEntry = z.infer<typeof rationaleEntrySchema>;
 export type CapturedMemoryType = z.infer<typeof capturedMemoryTypeSchema>;
 export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
 export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
-export type RationaleFieldPatch = z.infer<typeof rationaleFieldPatchSchema>;
 export type UpdateRationaleInput = z.infer<typeof updateRationaleInputSchema>;
 export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type SearchProjectFilter = z.infer<typeof searchProjectFilterSchema>;
@@ -346,12 +299,12 @@ export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string
 }
 
 export function summarizeRationale(entry: RationaleEntry) {
-  const pieces = [entry.situation, entry.decision, entry.rationale].filter(isNonEmptyString);
-  return pieces.join(" ").slice(0, 500);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
+  return entry.body
+    .split("\n")
+    .map((line) => line.replace(/^#{1,6}\s+/, "").replace(/^[-*]\s+/, "").trim())
+    .filter((line) => line.length > 0)
+    .join(" ")
+    .slice(0, 500);
 }
 
 function readOptionalMetadataString(metadata: Record<string, unknown>, key: string) {

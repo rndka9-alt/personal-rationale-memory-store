@@ -48,6 +48,7 @@ import {
   type AutoCaptureRationaleInput,
   type MemoryEntryRecord,
   type MemoryRefinementOpinionRecord,
+  type MemoryRevisionRecord,
   type MemoryUsageEventType,
   type ProjectContext,
   type RecordCandidateInput,
@@ -60,19 +61,8 @@ import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
 import { parseRationaleMarkdown, serializeRationaleEntry } from "./fileStore.js";
 
 const rationalePatchSchema = z.object({
-  title: z.string().optional(),
-  situation: z.string().optional(),
-  goal: z.string().optional(),
-  constraints: z.array(z.string()).optional(),
-  decision: z.string().optional(),
-  rationale: z.string().optional(),
-  rejectedAlternatives: z.array(z.object({
-    option: z.string().min(1),
-    reason: z.string().min(1)
-  })).optional(),
-  tradeoff: z.string().optional(),
-  reuseWhen: z.array(z.string()).optional(),
-  avoidWhen: z.array(z.string()).optional(),
+  title: recordCandidateInputSchema.shape.title.optional(),
+  body: recordCandidateInputSchema.shape.body.optional(),
   type: z.string().optional(),
   acceptanceState: z.enum(["candidate", "accepted", "deprecated"]).optional(),
   reviewState: z.enum(["unreviewed", "reviewed", "needs_revision"]).optional(),
@@ -90,7 +80,7 @@ const rationalePatchSchema = z.object({
   }).optional(),
   project: projectContextSchema.optional(),
   metadata: z.record(z.unknown()).optional()
-});
+}).refine((value) => Object.keys(value).length > 0, "Patch must include at least one supported field.");
 
 const recordUsageEventInputSchema = z.object({
   entryId: z.string().min(1),
@@ -243,7 +233,6 @@ export class RationaleService {
     }
 
     const metadata = normalizeCandidateMetadata(validatedInput.metadata, "manual");
-    const captureTier = readStringMetadata(metadata, "capture_tier") ?? deriveCaptureTier(validatedInput);
     const project = validatedInput.project ?? readProjectMetadata(validatedInput.metadata);
     const reviewState = readReviewStateMetadata(metadata, "unreviewed");
     const inferredTags = inferRationaleTags(validatedInput);
@@ -271,7 +260,6 @@ export class RationaleService {
         project,
         metadata: {
           ...metadata,
-          capture_tier: captureTier,
           domains,
           intents,
           modes,
@@ -279,15 +267,7 @@ export class RationaleService {
         }
       },
       title: validatedInput.title,
-      situation: validatedInput.situation,
-      goal: validatedInput.goal,
-      constraints: validatedInput.constraints ?? [],
-      decision: validatedInput.decision,
-      rationale: validatedInput.rationale,
-      rejectedAlternatives: validatedInput.rejectedAlternatives ?? [],
-      tradeoff: validatedInput.tradeoff,
-      reuseWhen: validatedInput.reuseWhen ?? [],
-      avoidWhen: validatedInput.avoidWhen ?? [],
+      body: validatedInput.body,
       rawMarkdown: ""
     };
 
@@ -321,34 +301,22 @@ export class RationaleService {
   async autoCaptureRationale(input: AutoCaptureRationaleInput): Promise<RationaleWriteResult> {
     const validatedInput = autoCaptureRationaleInputSchema.parse(input);
     logInfo("Auto-capturing rationale candidate started.", {
-      title: validatedInput.title,
-      sessionRef: validatedInput.sessionRef
+      title: validatedInput.title
     });
 
     const metadata = {
-      ...validatedInput.metadata,
       capture_kind: "auto",
       review_state: "unreviewed",
-      capture_reason: validatedInput.captureReason,
-      session_ref: validatedInput.sessionRef,
       captured_at: new Date().toISOString()
     };
 
     const result = await this.recordCandidate({
       title: validatedInput.title,
+      body: validatedInput.body,
       type: validatedInput.type,
-      situation: validatedInput.situation,
-      goal: validatedInput.goal,
-      constraints: validatedInput.constraints,
-      decision: validatedInput.decision,
-      rationale: validatedInput.rationale,
-      rejectedAlternatives: validatedInput.rejectedAlternatives,
-      tradeoff: validatedInput.tradeoff,
-      reuseWhen: validatedInput.reuseWhen,
-      avoidWhen: validatedInput.avoidWhen,
-      source: validatedInput.source ?? {
+      source: {
         kind: "auto_capture",
-        ref: validatedInput.sessionRef ?? "llm-autonomous"
+        ref: "llm-autonomous"
       },
       project: validatedInput.project,
       metadata
@@ -434,11 +402,13 @@ export class RationaleService {
     if (!databaseEntry.currentRevisionId) {
       throw new Error(`Memory entry has no current revision. Run backfill-revisions before updating ${id}.`);
     }
-    const result = await this.updateRationaleFromRevision({
-      revisionId: databaseEntry.currentRevisionId,
-      reason: "Legacy rationale patch",
-      patch
-    });
+    const baseRevision = await findMemoryRevision(this.pool, databaseEntry.currentRevisionId);
+    if (!baseRevision) {
+      throw new Error(`Current memory revision not found: ${databaseEntry.currentRevisionId}`);
+    }
+    const baseEntry = parseRationaleMarkdown(baseRevision.content);
+    const patchedEntry = applyRationalePatch(baseEntry, patch);
+    const result = await this.commitRationaleRevision(baseRevision, "Legacy rationale patch", patchedEntry);
     if (!result.ok) {
       throw new Error(`Rationale update conflicted for ${id}: latest revision is ${result.latestRevisionId}`);
     }
@@ -453,13 +423,26 @@ export class RationaleService {
   async updateRationaleFromRevision(input: unknown) {
     const parsedInput = updateRationaleInputSchema.parse(input);
     logInfo("Updating rationale from revision started.", {
-      revisionId: parsedInput.revisionId,
-      patchKeys: Object.keys(parsedInput.patch)
+      revisionId: parsedInput.revisionId
     });
     const baseRevision = await findMemoryRevision(this.pool, parsedInput.revisionId);
     if (!baseRevision) {
       throw new Error(`Memory revision not found: ${parsedInput.revisionId}`);
     }
+    const baseEntry = parseRationaleMarkdown(baseRevision.content);
+    const updatedEntry: RationaleEntry = {
+      ...baseEntry,
+      title: parsedInput.title,
+      body: parsedInput.body
+    };
+    return this.commitRationaleRevision(baseRevision, parsedInput.reason, updatedEntry);
+  }
+
+  private async commitRationaleRevision(
+    baseRevision: MemoryRevisionRecord,
+    reason: string,
+    updatedEntry: RationaleEntry
+  ) {
     const databaseEntry = await findMemoryEntry(this.pool, baseRevision.entryId);
     if (!databaseEntry) {
       throw new Error(`Memory entry not found for revision: ${baseRevision.entryId}`);
@@ -477,8 +460,6 @@ export class RationaleService {
       };
     }
 
-    const baseEntry = parseRationaleMarkdown(baseRevision.content);
-    const updatedEntry = applyRationalePatch(baseEntry, parsedInput.patch);
     const canonicalPath = databaseEntry.canonicalPath;
     const revisionId = createRevisionId();
     const preparedIndex = await this.indexingService.prepareEntryIndex(updatedEntry, canonicalPath, {
@@ -509,7 +490,7 @@ export class RationaleService {
         entryId: baseRevision.entryId,
         revisionNumber: baseRevision.revisionNumber + 1,
         content: serializeRationaleRevisionContent(updatedEntry),
-        reason: parsedInput.reason,
+        reason,
         metadata: {
           base_revision_id: baseRevision.id
         }
@@ -921,10 +902,7 @@ export class RationaleService {
     await this.recordUsageEvents([{
       entryId: parsedInput.entryId,
       eventType: parsedInput.eventType,
-      sourceKind: parsedInput.source?.kind ?? "llm_feedback",
-      sourceRef: parsedInput.source?.ref,
-      task: parsedInput.task,
-      metadata: parsedInput.metadata
+      sourceKind: "llm_feedback"
     }]);
 
     const updatedEntry = await findMemoryEntry(this.pool, parsedInput.entryId);
@@ -1209,32 +1187,8 @@ function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknow
   if (typeof parsedPatch.title === "string") {
     updatedEntry.title = parsedPatch.title;
   }
-  if (typeof parsedPatch.situation === "string") {
-    updatedEntry.situation = parsedPatch.situation;
-  }
-  if (typeof parsedPatch.goal === "string") {
-    updatedEntry.goal = parsedPatch.goal;
-  }
-  if (parsedPatch.constraints) {
-    updatedEntry.constraints = parsedPatch.constraints;
-  }
-  if (typeof parsedPatch.decision === "string") {
-    updatedEntry.decision = parsedPatch.decision;
-  }
-  if (typeof parsedPatch.rationale === "string") {
-    updatedEntry.rationale = parsedPatch.rationale;
-  }
-  if (parsedPatch.rejectedAlternatives) {
-    updatedEntry.rejectedAlternatives = parsedPatch.rejectedAlternatives;
-  }
-  if (typeof parsedPatch.tradeoff === "string") {
-    updatedEntry.tradeoff = parsedPatch.tradeoff;
-  }
-  if (parsedPatch.reuseWhen) {
-    updatedEntry.reuseWhen = parsedPatch.reuseWhen;
-  }
-  if (parsedPatch.avoidWhen) {
-    updatedEntry.avoidWhen = parsedPatch.avoidWhen;
+  if (typeof parsedPatch.body === "string") {
+    updatedEntry.body = parsedPatch.body;
   }
   if (typeof parsedPatch.type === "string") {
     updatedEntry.frontmatter.type = parsedPatch.type;
@@ -1297,7 +1251,7 @@ function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknow
 
 export function inferRationaleTags(input: Pick<
   RecordCandidateInput,
-  "title" | "situation" | "goal" | "constraints" | "decision" | "rationale" | "tradeoff" | "reuseWhen" | "avoidWhen"
+  "title" | "body"
 >) {
   const classification = classifyTask(formatRationaleForClassification(input));
   return {
@@ -1342,106 +1296,34 @@ function inferMissingRationaleTags(entry: RationaleEntry) {
 
 function formatRationaleForClassification(input: Pick<
   RecordCandidateInput,
-  "title" | "situation" | "goal" | "constraints" | "decision" | "rationale" | "tradeoff" | "reuseWhen" | "avoidWhen"
+  "title" | "body"
 >) {
-  return [
-    input.title,
-    input.situation,
-    input.goal,
-    input.decision,
-    input.rationale,
-    input.tradeoff,
-    ...(input.constraints ?? []),
-    ...(input.reuseWhen ?? []),
-    ...(input.avoidWhen ?? [])
-  ].filter(isNonEmptyString).join("\n");
+  return `${input.title}\n${input.body}`;
 }
 
 type CandidateReview = {
   id: string;
   title: string;
-  score: number;
-  recommendation: "accept" | "revise" | "deprecate";
-  missingSections: string[];
   strengths: string[];
   cautions: string[];
 };
 
-function reviewCandidateEntry(entry: RationaleEntry): CandidateReview {
-  const missingSections = findMissingSections(entry);
+export function reviewCandidateEntry(entry: RationaleEntry): CandidateReview {
   const strengths = findStrengths(entry);
   const cautions = findCautions(entry);
-  const score = Math.max(0, Math.min(100, 100 - missingSections.length * 12 - cautions.length * 6 + strengths.length * 4));
-  const recommendation = score >= 78
-    ? "accept"
-    : score >= 45
-      ? "revise"
-      : "deprecate";
 
   return {
     id: entry.frontmatter.id,
     title: entry.title,
-    score,
-    recommendation,
-    missingSections,
     strengths,
     cautions
   };
 }
 
-const decisionShapedSections = new Set(["constraints", "decision", "rejectedAlternatives", "tradeoff"]);
-
-export function findMissingSections(entry: RationaleEntry) {
-  const missingSections: string[] = [];
-  if (!entry.situation) {
-    missingSections.push("situation");
-  }
-  if (!entry.goal) {
-    missingSections.push("goal");
-  }
-  if (entry.constraints.length === 0) {
-    missingSections.push("constraints");
-  }
-  if (!entry.decision) {
-    missingSections.push("decision");
-  }
-  if (entry.rejectedAlternatives.length === 0) {
-    missingSections.push("rejectedAlternatives");
-  }
-  if (!entry.tradeoff) {
-    missingSections.push("tradeoff");
-  }
-  if (entry.reuseWhen.length === 0) {
-    missingSections.push("reuseWhen");
-  }
-  if (entry.avoidWhen.length === 0) {
-    missingSections.push("avoidWhen");
-  }
-  if (expectsDecisionSections(entry.frontmatter.type)) {
-    return missingSections;
-  }
-  return missingSections.filter((section) => !decisionShapedSections.has(section));
-}
-
-// Non-decision memory types (preference, convention, constraint, known_failure) describe
-// standing knowledge rather than a choice, so decision-shaped sections are not gaps for them.
-function expectsDecisionSections(type: string) {
-  return type === "rationale" || type === "principle";
-}
-
 function findStrengths(entry: RationaleEntry) {
   const strengths: string[] = [];
-  if (entry.rationale.length > 120) {
-    strengths.push("substantive rationale");
-  }
-  if (entry.constraints.length > 0) {
-    strengths.push("captures constraints");
-  }
-  if (entry.rejectedAlternatives.length > 0) {
-    strengths.push("captures rejected alternatives");
-  }
-  if (entry.reuseWhen.length > 0 && entry.avoidWhen.length > 0) {
-    strengths.push("has reuse and avoid boundaries");
+  if (entry.body.length > 120) {
+    strengths.push("substantive body");
   }
   return strengths;
 }
@@ -1457,8 +1339,8 @@ function findCautions(entry: RationaleEntry) {
   if (entry.frontmatter.modes.length === 0) {
     cautions.push("no modes tagged");
   }
-  if (entry.rationale.length < 80) {
-    cautions.push("rationale is short");
+  if (entry.body.length < 80) {
+    cautions.push("body is short");
   }
   return cautions;
 }
@@ -1475,9 +1357,6 @@ function formatCandidateReview(reviews: CandidateReview[]) {
     lines.push(
       `## ${review.title}`,
       `- id: ${review.id}`,
-      `- score: ${review.score}`,
-      `- recommendation: ${review.recommendation}`,
-      `- missing sections: ${review.missingSections.length > 0 ? review.missingSections.join(", ") : "none"}`,
       `- strengths: ${review.strengths.length > 0 ? review.strengths.join(", ") : "none"}`,
       `- cautions: ${review.cautions.length > 0 ? review.cautions.join(", ") : "none"}`,
       ""
@@ -1910,23 +1789,8 @@ function normalizeCandidateMetadata(metadata: Record<string, unknown> | undefine
   };
 }
 
-// Quick captures intentionally skip reuse boundaries; the tier lets review flows and
-// batch enrichment target them for backfill without affecting search ranking.
-export function deriveCaptureTier(input: Pick<RecordCandidateInput, "reuseWhen" | "avoidWhen">) {
-  const hasBoundaries =
-    input.reuseWhen !== undefined &&
-    input.reuseWhen.length > 0 &&
-    input.avoidWhen !== undefined &&
-    input.avoidWhen.length > 0;
-  return hasBoundaries ? "full" : "quick";
-}
-
 function isString(value: unknown): value is string {
   return typeof value === "string";
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
 function createRationaleId() {

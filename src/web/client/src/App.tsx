@@ -838,26 +838,16 @@ function DetailPanel(props: {
             <MetadataPill value={entry.frontmatter.acceptanceState} />
             <MetadataPill value={entry.frontmatter.decisionState} />
             <MetadataPill value={readMetadataString(entry.frontmatter.metadata, "capture_kind") ?? "manual"} />
-            <MetadataPill value={`score ${review.score}`} />
             <MetadataPill value={`use count ${usage.useCount}`} />
           </div>
           <h2 className="mt-3 text-xl font-semibold text-ink-strong">{entry.title}</h2>
           <p className="mt-2 text-sm text-ink-muted">{entry.frontmatter.id}</p>
         </div>
-        <p className="text-sm text-ink-muted">Recommendation: <span className="font-medium text-ink-strong">{review.recommendation}</span></p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <article className="space-y-6">
-          <Section title="Rationale">{entry.rationale}</Section>
-          <Section title="Situation">{entry.situation}</Section>
-          <Section title="Goal">{entry.goal}</Section>
-          <Section title="Decision">{entry.decision}</Section>
-          <ListSection title="Constraints" items={entry.constraints} />
-          <Section title="Tradeoff">{entry.tradeoff}</Section>
-          <ListSection title="Reuse when" items={entry.reuseWhen} />
-          <ListSection title="Avoid when" items={entry.avoidWhen} />
-          <RejectedAlternatives items={entry.rejectedAlternatives} />
+          <Section title="Body">{entry.body}</Section>
         </article>
 
         <aside className="space-y-5 border-t border-line-base pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
@@ -887,7 +877,6 @@ function DetailPanel(props: {
             lastUsedAt={usage.lastUsedAt}
             usageFeedback={usage.feedback}
           />
-          <ReviewFacts title="Missing" items={review.missingSections} tone="warning" />
           <ReviewFacts title="Strengths" items={review.strengths} tone="success" />
           <ReviewFacts title="Cautions" items={review.cautions} tone="danger" />
           <MetadataDetails metadata={entry.frontmatter.metadata} />
@@ -932,47 +921,10 @@ function Section(props: { title: string; children?: string }) {
   );
 }
 
-function ListSection(props: { title: string; items: string[] }) {
-  return (
-    <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">{props.title}</h3>
-      {props.items.length === 0 ? (
-        <p className="text-sm text-ink-muted">Not provided.</p>
-      ) : (
-        <ul className="space-y-2 text-sm leading-6 text-ink-base">
-          {props.items.map((item) => <li key={item}>- {item}</li>)}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function RejectedAlternatives(props: { items: Array<{ option: string; reason: string }> }) {
-  return (
-    <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Rejected alternatives</h3>
-      {props.items.length === 0 ? (
-        <p className="text-sm text-ink-muted">Not provided.</p>
-      ) : (
-        <div className="space-y-3">
-          {props.items.map((item) => (
-            <div key={`${item.option}:${item.reason}`} className="border-l border-line-strong pl-3">
-              <p className="text-sm font-medium text-ink-strong">{item.option}</p>
-              <p className="mt-1 text-sm leading-6 text-ink-muted">{item.reason}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ReviewFacts(props: { title: string; items: string[]; tone: "warning" | "success" | "danger" }) {
+function ReviewFacts(props: { title: string; items: string[]; tone: "success" | "danger" }) {
   const toneClass = props.tone === "success"
     ? "bg-success-faint text-success-base"
-    : props.tone === "warning"
-      ? "bg-warning-faint text-warning-base"
-      : "bg-danger-faint text-danger-base";
+    : "bg-danger-faint text-danger-base";
 
   return (
     <section>

@@ -183,7 +183,7 @@ npm run cli -- search "why store rationale"
 npm run cli -- compose "Design a memory retrieval strategy"
 npm run cli -- candidates
 npm run cli -- review-queue
-npm run cli -- auto-capture "Keep DB private" "This is reusable for tunnel-backed Docker services" "When an app and Postgres run in the same Compose project, keep the database private on the Docker network."
+npm run cli -- auto-capture "Keep DB private" "When an app and Postgres run in the same Compose project, keep the database private on the Docker network."
 npm run cli -- review-candidates
 npm run cli -- reindex
 npm run cli -- reindex changed
@@ -224,7 +224,7 @@ EMBEDDING_DTYPE=float
 EMBEDDING_MODE=contextualized
 ```
 
-Use `voyage-context-3` with `EMBEDDING_MODE=contextualized` for contextualized chunk embeddings. Chunks from the same canonical rationale file are sent together, in order, to `/v1/contextualizedembeddings`.
+Use `voyage-context-3` with `EMBEDDING_MODE=contextualized` for contextualized chunk embeddings. Search chunks are derived from the single stored Markdown body by paragraph and bounded length, then chunks from the same canonical rationale file are sent together, in order, to `/v1/contextualizedembeddings`.
 
 Use `voyage-4-large` with `EMBEDDING_MODE=standard` for high-quality independent text embeddings through `/v1/embeddings`:
 
@@ -270,21 +270,11 @@ Prompts:
 
 ## Data Model
 
-Rationale revision content uses YAML frontmatter plus Markdown sections:
-
-- situation
-- goal
-- constraints
-- decision
-- rationale
-- rejected alternatives
-- tradeoff
-- reuse when
-- avoid when
-- project context
-- source metadata
+Rationale revision content uses YAML frontmatter plus a title and one free-form Markdown body. Existing section headings remain ordinary body Markdown, but they are not required storage fields. Identity, lifecycle, project context, source metadata, and inferred retrieval tags stay structured in frontmatter because they support filtering, ranking, or state transitions.
 
 Postgres stores full rationale revisions, queryable metadata, and pgvector embeddings. Markdown files are a readable cache/export format; use `npm run cli -- backfill-revisions` after deploying the revision schema to seed revision 0 snapshots from existing files before serving writes.
+
+After upgrading from the former section-based body model, run `npm run cli -- reindex all` before serving new writes. Existing Markdown and revision content remain readable without rewriting, but body-derived chunks and content fingerprints must be regenerated under the new model.
 
 Lifecycle is represented by explicit frontmatter fields:
 
@@ -298,7 +288,7 @@ Search uses a hybrid ranking pass over vector results, lexical results, lifecycl
 
 Every `search_rationales` and `compose_context` retrieval records a query event (source kind, query, result count, top score, warning kinds, caller project name) in `retrieval_query_events`. Zero-hit queries surface through `/status` under `retrieval` as a backlog of memories that were needed but never captured, including a per-project zero-hit breakdown so capture gaps are visible per repository; a null project means the caller did not pass one. Query events are observability-only and never affect ranking.
 
-New candidate memories infer missing `domains`, `intents`, and `modes` from their rationale content while preserving any explicit metadata tags supplied by the caller. Use `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
+New candidate memories infer missing `domains`, `intents`, and `modes` from their title and body while preserving any explicit metadata tags supplied by the caller. Use `npm run cli -- reindex untagged` to backfill canonical Markdown files that still have empty or incomplete tag arrays.
 
 Project context is stored as explicit frontmatter (`project.name`, optional `project.repo`, optional `project.root`) and mirrored into indexed metadata for display. It is intended to make repository-specific rationale recognizable to reviewers and downstream LLMs. `search_rationales` and `compose_context` accept an optional `project` argument; when the caller passes the active project, entries whose `project.name` or `project.repo` matches (case-insensitively, since different clients report the same project with different casing) receive a `project-match` ranking boost. Project context is never used as a penalty: memories from other projects keep their relevance-based ranking so cross-project rationale stays discoverable.
 
@@ -308,7 +298,7 @@ Use `record_usage_feedback` after a memory is actually applied, judged helpful, 
 
 The Review UI surfaces aggregated feedback counts for `applied`, `user_helpful`, `user_unhelpful`, and `dismissed` events. These aggregates are displayed for review context and are intended as the basis for later ranking weight tuning.
 
-Rationale body changes are versioned in `memory_revisions`. `update_rationale` accepts a base `revisionId`, a minimal field patch, and a required reason; successful updates create a new full-content revision and return only `{ ok, revisionId }`. If the base revision is stale, it returns `{ ok: false, latestRevisionId }` without applying the patch. Refinement opinions remain in `memory_refinement_opinions` for migration and audit, but they are deprecated and no longer part of the MCP surface or composed rationale context.
+Rationale body changes are versioned in `memory_revisions`. `update_rationale` accepts a base `revisionId`, a required reason, and the complete replacement title and body; successful updates create a new full-content revision and return only `{ ok, revisionId }`. If the base revision is stale, it returns `{ ok: false, latestRevisionId }` without applying the replacement. Refinement opinions remain in `memory_refinement_opinions` for migration and audit, but they are deprecated and no longer part of the MCP surface or composed rationale context.
 
 When more relevant candidates exist than fit the initial context, it appends a compact continuation manifest with an in-memory cursor and omitted count. `continue_context` uses that cursor to return the next retrieved candidates without rerunning the search; cursors are process-local and kept in a small FIFO cache, so evicted cursors require rerunning `compose_context`.
 
@@ -322,26 +312,25 @@ reviewState: unreviewed
 decisionState: unknown
 capture_kind: auto
 review_state: unreviewed
-capture_reason: ...
 ```
 
-Only `title` and `rationale` are required for capture. Each new candidate records a `capture_tier` in its metadata: `full` when both `reuseWhen` and `avoidWhen` are present, `quick` otherwise. The tier never affects search ranking; it marks entries whose boundary sections still need backfill during review or batch enrichment.
+`auto_capture_rationale` requires only `title` and a self-contained Markdown `body`. Related context, constraints, decisions, tradeoffs, and reuse boundaries belong in that body when they matter instead of being separate storage fields.
 
-Capture inputs accept an optional `type`: `rationale` (default), `known_failure`, `preference`, `convention`, or `constraint`. `principle` is reserved for promotion from accepted rationale and cannot be set at capture time. Non-decision types are not flagged for missing decision-shaped sections (constraints, decision, rejected alternatives, tradeoff) during candidate review, so preferences and conventions stay first-class memories without pretending to be decisions.
+Capture inputs accept an optional `type`: `rationale` (default), `known_failure`, `preference`, `convention`, or `constraint`. `principle` is reserved for promotion from accepted rationale and cannot be set at capture time.
 
 Rationale memories and plain notes are separate concepts. Rationale memories are structured, reusable task context: decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned. Use `compose_context` to retrieve rationale memory for the current task.
 
-Plain notes are lightweight personal records, not rationale memory. `record_note` accepts `content` plus optional `topic` and `sourceConversation` context for the conversation that led to the note; the extra context is stored for web display and is not returned by compact MCP write responses or `compose_notes_context`. Note content is limited to 1000 characters. `compose_notes_context` returns original note text with no selection metadata, summarization, or rewriting — only slot headers per note and a trailing `rate_note` nudge — and internally selects up to 5000 characters by filling roughly 60% of the budget with weighted random notes before filling the rest by `upvotes - downvotes` and newest-first tiebreaks. Downvotes reduce random exposure but do not ban a note; archived notes and notes over the per-note limit are excluded.
+Plain notes are lightweight personal records, not rationale memory. `record_note` accepts `content` plus one optional `sourceContext` object containing a required topic and optional conversation messages; the extra context is stored for web display and is not returned by compact MCP write responses or `compose_notes_context`. Note content is limited to 1000 characters. `compose_notes_context` returns original note text with no selection metadata, summarization, or rewriting — only slot headers per note and a trailing `rate_note` nudge — and internally selects up to 5000 characters by filling roughly 60% of the budget with weighted random notes before filling the rest by `upvotes - downvotes` and newest-first tiebreaks. Downvotes reduce random exposure but do not ban a note; archived notes and notes over the per-note limit are excluded.
 
 Auto-captured unreviewed candidates remain searchable and rank purely on relevance and lifecycle boosts; they carry `candidate`/`unreviewed` lifecycle fields in search results so callers can weigh trust themselves, and the larger `accepted`/`reviewed` boosts keep human-accepted rationale ahead. Use the administrative review flow later to accept, keep as candidate, mark as needing revision, or deprecate entries.
 
-The internal review output is Markdown and highlights missing sections, strengths, cautions, and an accept/revise/deprecate recommendation. Review reports do not mutate candidates by themselves; explicit lifecycle operations perform the mutation.
+The internal review output highlights simple body and tag strengths or cautions without scoring memories by template completeness. Review reports do not mutate candidates by themselves; explicit lifecycle operations perform the mutation.
 
 Recommended LLM guidance:
 
 ```text
 Record relevant rationale memory with auto_capture_rationale.
-Only title and rationale are required — add constraints, tradeoffs, reuseWhen, and avoidWhen when you know them.
+Provide a concise title and a self-contained Markdown body.
 Rationale memories can be referenced from other tasks and later conversations, so actively capture
 reusable decisions, reasoning, preferences, conventions, constraints, known failures, and lessons learned.
 Use record_note for casual thoughts, personal memories, and lightweight notes.

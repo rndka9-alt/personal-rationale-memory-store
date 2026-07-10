@@ -60,27 +60,13 @@ export type RationaleEntry = {
     };
   };
   title: string;
-  situation?: string;
-  goal?: string;
-  constraints: string[];
-  decision?: string;
-  rationale: string;
-  rejectedAlternatives: Array<{
-    option: string;
-    reason: string;
-  }>;
-  tradeoff?: string;
-  reuseWhen: string[];
-  avoidWhen: string[];
+  body: string;
   rawMarkdown: string;
 };
 
 export type CandidateReview = {
   id: string;
   title: string;
-  score: number;
-  recommendation: "accept" | "revise" | "deprecate";
-  missingSections: string[];
   strengths: string[];
   cautions: string[];
 };
