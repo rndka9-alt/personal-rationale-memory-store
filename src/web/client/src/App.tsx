@@ -10,6 +10,15 @@ import {
   YAxis
 } from "recharts";
 import {
+  digestLayers,
+  fetchDigest,
+  fetchDigestRuns,
+  type DigestClaim,
+  type DigestLayer,
+  type DigestOperation,
+  type DigestRun
+} from "./api/digest";
+import {
   fetchLlmRequests,
   fetchLlmRequestSummary,
   type LlmRequestRecord,
@@ -34,6 +43,7 @@ import {
   ArrowLeftIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  DigestIcon,
   LlmIcon,
   MemoryIcon,
   NoteIcon,
@@ -45,7 +55,7 @@ import type { NoteRecord } from "./types/note";
 import type { Pagination } from "./types/pagination";
 import type { ProjectContext, UsageFeedbackCounts } from "./types/review";
 
-type MainView = "memories" | "notes" | "llm";
+type MainView = "memories" | "notes" | "digest" | "llm";
 
 type ToastState = {
   message: string;
@@ -71,6 +81,20 @@ const noteSortModes: Array<{ value: NoteSortMode; label: string }> = [
   { value: "oldest", label: "Oldest first" }
 ];
 
+const digestLayerDetails: Record<DigestLayer, { label: string; eyebrow: string }> = {
+  now: { label: "요즘 관심사", eyebrow: "Now" },
+  recent: { label: "최근", eyebrow: "Recent" },
+  longterm: { label: "장기", eyebrow: "Long term" },
+  about: { label: "나에 대해", eyebrow: "About" }
+};
+
+const digestOperationLabels: Record<DigestOperation["type"], string> = {
+  add: "추가",
+  strengthen: "강화",
+  revise: "수정",
+  retire: "은퇴"
+};
+
 function useDebouncedValue(value: string, delayMilliseconds: number) {
   const [debouncedValue, setDebouncedValue] = useState(value);
 
@@ -91,6 +115,7 @@ export function App() {
       <AppHeader mainView={mainView} onViewChange={setMainView} />
       {mainView === "memories" ? <MemoryLibrary /> : null}
       {mainView === "notes" ? <NotesLibrary /> : null}
+      {mainView === "digest" ? <DigestDashboard /> : null}
       {mainView === "llm" ? <LlmDashboard /> : null}
     </main>
   );
@@ -126,6 +151,12 @@ function AppHeader(props: {
             onClick={() => props.onViewChange("notes")}
           />
           <NavigationButton
+            active={props.mainView === "digest"}
+            icon={<DigestIcon className="h-4 w-4" />}
+            label="Digest"
+            onClick={() => props.onViewChange("digest")}
+          />
+          <NavigationButton
             active={props.mainView === "llm"}
             icon={<LlmIcon className="h-4 w-4" />}
             label="LLM"
@@ -149,11 +180,12 @@ function NavigationButton(props: {
       className={`flex h-9 items-center gap-1.5 rounded-full px-2 text-xs font-semibold transition-all sm:gap-2 sm:px-4 ${
         props.active ? "bg-white text-ink shadow-soft" : "text-muted hover:text-ink"
       }`}
+      aria-label={props.label}
       aria-current={props.active ? "page" : undefined}
       onClick={props.onClick}
     >
       {props.icon}
-      <span>{props.label}</span>
+      <span className="hidden sm:inline">{props.label}</span>
     </button>
   );
 }
@@ -722,6 +754,335 @@ function NotesLibrary() {
       ) : null}
     </section>
   );
+}
+
+function DigestDashboard() {
+  const digestQuery = useQuery({
+    queryKey: ["digest"],
+    queryFn: fetchDigest
+  });
+  const runsQuery = useQuery({
+    queryKey: ["digest-runs", 20],
+    queryFn: () => fetchDigestRuns(20)
+  });
+
+  if (digestQuery.isLoading || runsQuery.isLoading) {
+    return <DigestSkeleton />;
+  }
+
+  const queryError = digestQuery.error ?? runsQuery.error;
+  if (queryError) {
+    return (
+      <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <InlineError message={queryError.message} />
+      </section>
+    );
+  }
+
+  const digest = digestQuery.data;
+  const runs = runsQuery.data;
+  if (!digest || !runs) {
+    throw new Error("Digest queries completed without data.");
+  }
+  const digestState = digest.state;
+
+  return (
+    <section className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+      <DigestHeader />
+
+      {!digestState ? (
+        <EmptyState
+          title="아직 합성된 Digest가 없어요"
+          description="첫 합성이 완료되면 4개 레이어의 프로즈와 claim 원장이 여기에 나타납니다."
+        />
+      ) : (
+        <>
+          <div className="mb-8 flex w-fit max-w-full flex-wrap items-center gap-2 rounded-2xl border border-stroke bg-white px-3.5 py-2 text-xs text-muted shadow-soft sm:mb-10 sm:rounded-full">
+            <span className="h-1.5 w-1.5 rounded-full bg-sage" />
+            <span className="font-medium text-ink">{formatDigestDateTime(digestState.synthesizedAt)} 합성</span>
+            <span aria-hidden="true" className="text-stroke-strong">·</span>
+            <span>이후 신규 노트 {digestState.newNoteCount}개 미반영</span>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            {digestLayers.map((layer, index) => (
+              <DigestProseCard
+                key={layer}
+                index={index}
+                layer={layer}
+                text={digestState.prose[layer]}
+              />
+            ))}
+          </div>
+
+          <DigestClaimLedger claims={digest.claims} />
+          <DigestRunHistory runs={runs} />
+        </>
+      )}
+    </section>
+  );
+}
+
+function DigestHeader() {
+  return (
+    <header className="mb-8 sm:mb-10">
+      <p className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.17em] text-muted">Living synthesis</p>
+      <h1 className="font-display text-[2.7rem] leading-none tracking-[-0.045em] text-ink sm:text-5xl">Digest</h1>
+      <p className="mt-3 max-w-xl text-sm leading-6 text-muted">흩어진 기록에서 지금의 흐름과 오래 남은 맥락을 읽습니다.</p>
+    </header>
+  );
+}
+
+function DigestProseCard(props: { index: number; layer: DigestLayer; text: string }) {
+  const details = digestLayerDetails[props.layer];
+  return (
+    <article className="rounded-3xl border border-stroke bg-white px-5 py-6 shadow-soft sm:px-8 sm:py-8">
+      <div className="mb-5 flex items-baseline justify-between gap-4 border-b border-stroke pb-4">
+        <div>
+          <p className="text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-faint">{details.eyebrow}</p>
+          <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">{details.label}</h2>
+        </div>
+        <span className="font-display text-sm italic text-stroke-strong">0{props.index + 1}</span>
+      </div>
+      <p className="whitespace-pre-wrap break-words text-[0.94rem] leading-8 text-ink/90 sm:text-base sm:leading-8">
+        {props.text}
+      </p>
+    </article>
+  );
+}
+
+function DigestClaimLedger(props: { claims: DigestClaim[] }) {
+  return (
+    <section className="mt-16 sm:mt-20">
+      <SectionHeading
+        eyebrow="Evidence ledger"
+        title="Claim 원장"
+        detail={`활성 claim ${props.claims.length}개`}
+      />
+
+      {props.claims.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-stroke-strong px-6 py-10 text-center text-sm text-muted">
+          아직 활성 claim이 없습니다.
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {digestLayers.map((layer) => (
+            <DigestClaimGroup
+              key={layer}
+              layer={layer}
+              claims={props.claims.filter((claim) => claim.layer === layer)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DigestClaimGroup(props: { layer: DigestLayer; claims: DigestClaim[] }) {
+  const details = digestLayerDetails[props.layer];
+  return (
+    <article className="overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
+      <header className="flex items-center justify-between border-b border-stroke px-5 py-4 sm:px-6">
+        <div className="flex items-baseline gap-2.5">
+          <h3 className="font-display text-xl tracking-[-0.025em] text-ink">{details.label}</h3>
+          <span className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-faint">{details.eyebrow}</span>
+        </div>
+        <span className="text-xs tabular-nums text-faint">{props.claims.length}</span>
+      </header>
+      {props.claims.length === 0 ? (
+        <p className="px-5 py-7 text-xs text-faint sm:px-6">이 레이어의 활성 claim이 없습니다.</p>
+      ) : (
+        <ul className="divide-y divide-stroke">
+          {props.claims.map((claim) => (
+            <li key={claim.id} className="px-5 py-5 sm:px-6">
+              <p className="break-words text-sm leading-6 text-ink">{claim.text}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.67rem] text-faint">
+                <span className={`rounded-full px-2.5 py-1 font-semibold tabular-nums ${evidenceBadgeClassName(claim.evidenceCount)}`}>
+                  근거 ×{claim.evidenceCount}
+                </span>
+                <span>{formatDigestDate(claim.updatedAt)} 갱신</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </article>
+  );
+}
+
+function DigestRunHistory(props: { runs: DigestRun[] }) {
+  return (
+    <section className="mt-16 sm:mt-20">
+      <SectionHeading
+        eyebrow="Synthesis history"
+        title="합성 히스토리"
+        detail={`최근 ${props.runs.length}건`}
+      />
+      {props.runs.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-stroke-strong px-6 py-10 text-center text-sm text-muted">
+          아직 기록된 합성 run이 없습니다.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
+          {props.runs.map((run) => <DigestRunItem key={run.id} run={run} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DigestRunItem(props: { run: DigestRun }) {
+  const run = props.run;
+  return (
+    <details className="group border-b border-stroke last:border-b-0">
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-5 py-4 transition-colors hover:bg-canvas/60 sm:px-6">
+        <ChevronRightIcon className="h-4 w-4 shrink-0 text-faint transition-transform group-open:rotate-90" />
+        <div className="min-w-0 flex-1 sm:flex sm:items-center sm:justify-between sm:gap-5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${run.status === "succeeded" ? "bg-sage" : "bg-danger"}`} />
+            <span className="truncate text-sm font-medium text-ink">{formatDigestDateTime(run.runAt)}</span>
+          </div>
+          <div className="mt-1.5 flex items-center gap-3 pl-4 text-[0.68rem] text-faint sm:mt-0 sm:pl-0">
+            <span className={run.status === "succeeded" ? "text-sage" : "text-danger"}>
+              {run.status === "succeeded" ? "성공" : "실패"}
+            </span>
+            <span>신규 노트 {run.newNoteCount}개</span>
+            <span>ops {run.ops.length}개</span>
+          </div>
+        </div>
+      </summary>
+      <div className="border-t border-stroke bg-canvas/55 px-5 py-5 sm:px-10 sm:py-6">
+        {run.error ? (
+          <div className="mb-4 rounded-2xl border border-danger/15 bg-danger-soft px-4 py-3 text-xs leading-5 text-danger">
+            {run.error}
+          </div>
+        ) : null}
+        {run.ops.length === 0 ? (
+          <p className="text-xs text-faint">적용된 operation이 없습니다.</p>
+        ) : (
+          <ol className="space-y-2.5">
+            {run.ops.map((operation, index) => (
+              <DigestOperationItem key={`${operation.type}-${index}`} operation={operation} />
+            ))}
+          </ol>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function DigestOperationItem(props: { operation: DigestOperation }) {
+  const operation = props.operation;
+  return (
+    <li className="flex items-start gap-3 rounded-2xl border border-stroke bg-white px-4 py-3.5">
+      <span className={`mt-0.5 shrink-0 rounded-full px-2 py-1 text-[0.62rem] font-semibold ${digestOperationBadgeClassName(operation.type)}`}>
+        {digestOperationLabels[operation.type]}
+      </span>
+      <DigestOperationContent operation={operation} />
+    </li>
+  );
+}
+
+function DigestOperationContent(props: { operation: DigestOperation }) {
+  const operation = props.operation;
+  if (operation.type === "add") {
+    return (
+      <div className="min-w-0">
+        <p className="break-words text-sm leading-5 text-ink">{operation.text}</p>
+        <p className="mt-1 text-[0.67rem] text-faint">{digestLayerDetails[operation.layer].label} · 근거 {operation.noteIds.length}개</p>
+      </div>
+    );
+  }
+  if (operation.type === "strengthen") {
+    return (
+      <div className="min-w-0">
+        <p className="break-all font-mono text-xs leading-5 text-ink">{operation.claimId}</p>
+        <p className="mt-1 text-[0.67rem] text-faint">신규 근거 {operation.noteIds.length}개</p>
+      </div>
+    );
+  }
+  if (operation.type === "revise") {
+    return (
+      <div className="min-w-0">
+        <p className={`break-words leading-5 text-ink ${operation.text ? "text-sm" : "font-mono text-xs"}`}>
+          {operation.text ?? operation.claimId}
+        </p>
+        <p className="mt-1 break-all text-[0.67rem] leading-5 text-faint">
+          대상 {operation.claimId}
+          {operation.layer ? ` · ${digestLayerDetails[operation.layer].label}로 이동` : ""}
+          {operation.noteIds ? ` · 근거 ${operation.noteIds.length}개` : ""}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="min-w-0">
+      <p className="break-all font-mono text-xs leading-5 text-ink">{operation.claimId}</p>
+      <p className="mt-1 text-[0.67rem] text-faint">활성 원장에서 제외</p>
+    </div>
+  );
+}
+
+function SectionHeading(props: { eyebrow: string; title: string; detail: string }) {
+  return (
+    <header className="mb-5 flex items-end justify-between gap-4">
+      <div>
+        <p className="text-[0.66rem] font-semibold uppercase tracking-[0.15em] text-muted">{props.eyebrow}</p>
+        <h2 className="mt-1 font-display text-3xl tracking-[-0.035em] text-ink">{props.title}</h2>
+      </div>
+      <p className="pb-1 text-xs text-faint">{props.detail}</p>
+    </header>
+  );
+}
+
+function DigestSkeleton() {
+  return (
+    <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8" aria-label="Loading digest">
+      <div className="h-12 w-52 animate-pulse rounded-xl bg-stroke" />
+      <div className="mt-10 h-8 w-72 animate-pulse rounded-full bg-stroke" />
+      <div className="mt-8 grid gap-4 lg:grid-cols-2">
+        {[0, 1, 2, 3].map((item) => <div key={item} className="h-64 animate-pulse rounded-3xl bg-white shadow-soft" />)}
+      </div>
+    </section>
+  );
+}
+
+function evidenceBadgeClassName(evidenceCount: number) {
+  if (evidenceCount >= 5) {
+    return "bg-sage text-white";
+  }
+  if (evidenceCount >= 3) {
+    return "bg-sage-soft text-sage";
+  }
+  return "bg-canvas text-muted";
+}
+
+function digestOperationBadgeClassName(type: DigestOperation["type"]) {
+  if (type === "retire") {
+    return "bg-danger-soft text-danger";
+  }
+  if (type === "strengthen") {
+    return "bg-sage-soft text-sage";
+  }
+  return "bg-canvas text-muted";
+}
+
+function formatDigestDateTime(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error(`Invalid digest timestamp: ${value}`);
+  }
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function formatDigestDate(value: string) {
+  return formatDigestDateTime(value).slice(0, 10);
 }
 
 type DailyCostPoint = {

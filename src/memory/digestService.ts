@@ -996,7 +996,7 @@ async function listNewDigestNotes(executor: DigestQueryExecutor, noteCursor: str
   });
 }
 
-async function countNewDigestNotes(executor: DigestQueryExecutor, noteCursor: string | null) {
+export async function countNewDigestNotes(executor: DigestQueryExecutor, noteCursor: string | null) {
   const result = await executor.query(
     `SELECT COUNT(*)::int AS new_note_count
       FROM notes

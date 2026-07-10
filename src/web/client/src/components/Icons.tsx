@@ -55,6 +55,15 @@ export function ChevronRightIcon(props: IconProps) {
   );
 }
 
+export function DigestIcon(props: IconProps) {
+  return (
+    <IconFrame {...props}>
+      <path d="M5 5.5h14M5 10h9M5 14.5h14M5 19h9" />
+      <path d="M18 9.5v5" />
+    </IconFrame>
+  );
+}
+
 export function MemoryIcon(props: IconProps) {
   return (
     <IconFrame {...props}>

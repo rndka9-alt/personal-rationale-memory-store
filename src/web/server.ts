@@ -6,6 +6,7 @@ import { createPool } from "../db/pool.js";
 import { runMigrations } from "../db/migrations.js";
 import { createEmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "../memory/fileStore.js";
+import { DigestViewService } from "../memory/digestViewService.js";
 import { IndexingService } from "../memory/indexingService.js";
 import { LlmRequestLogService } from "../memory/llmRequestLogService.js";
 import { NoteService } from "../memory/noteService.js";
@@ -21,6 +22,8 @@ const defaultPageSize = 25;
 const maximumPageSize = 100;
 const defaultLlmRequestLimit = 50;
 const maximumLlmRequestLimit = 200;
+const defaultDigestRunLimit = 20;
+const maximumDigestRunLimit = 100;
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl);
@@ -30,6 +33,7 @@ const indexingService = new IndexingService(pool, fileStore, embeddingProvider, 
 const rationaleService = new RationaleService(pool, fileStore, indexingService, embeddingProvider, config);
 const noteService = new NoteService(pool);
 const llmRequestLogService = new LlmRequestLogService(pool);
+const digestViewService = new DigestViewService(pool);
 const clientDirectory = path.resolve(process.cwd(), "dist/web/client");
 
 await runMigrations(pool);
@@ -145,6 +149,19 @@ async function routeApiRequest(
   if (method === "GET" && url.pathname === "/api/llm-requests/summary") {
     const summary = await llmRequestLogService.getSummary();
     writeJson(response, 200, summary);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/digest") {
+    const digest = await digestViewService.getDigest();
+    writeJson(response, 200, digest);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/digest/runs") {
+    const requestedLimit = readPositiveInteger(url.searchParams.get("limit"), defaultDigestRunLimit, "limit");
+    const runs = await digestViewService.listRuns(Math.min(requestedLimit, maximumDigestRunLimit));
+    writeJson(response, 200, runs);
     return;
   }
 
