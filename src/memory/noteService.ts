@@ -9,6 +9,7 @@ import {
 } from "../db/queries.js";
 import type { NoteListOptions } from "../db/queries.js";
 import { logInfo } from "../diagnostics/index.js";
+import type { DigestService } from "./digestService.js";
 import {
   archiveNoteInputSchema,
   composeNotesContextInputSchema,
@@ -66,11 +67,16 @@ type SelectNotesOptions = {
   randomRatio: number;
 };
 
+type NoteDigestService = Pick<DigestService, "getDigestSection" | "maybeRefreshInBackground">;
+
 export class NoteService {
   // 슬롯 캐시는 NoteService 수명 동안 유지되어야 compose에서 발급한 슬롯을 rate에서 되찾을 수 있다.
   private readonly slotCache = new NoteSlotCache();
 
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly digestService?: NoteDigestService
+  ) {}
 
   async recordNote(input: RecordNoteInput) {
     const validatedInput = recordNoteInputSchema.parse(input);
@@ -158,7 +164,23 @@ export class NoteService {
       slot: this.slotCache.assign(selectedNote.note.id),
       content: selectedNote.note.content
     }));
-    return formatNotesContext(slottedNotes);
+    const notesContext = formatNotesContext(slottedNotes);
+    const digestService = this.digestService;
+    if (!digestService) {
+      return notesContext;
+    }
+
+    const digestSection = await digestService.getDigestSection();
+    // 응답 경로가 refresh 조건 조회나 LLM 호출을 기다리지 않도록 다음 event-loop turn으로 넘긴다.
+    setImmediate(() => {
+      void digestService.maybeRefreshInBackground();
+    });
+    if (!digestSection) {
+      return notesContext;
+    }
+    return notesContext.length > 0
+      ? `${digestSection}\n\n${notesContext}`
+      : digestSection;
   }
 }
 

@@ -4,8 +4,10 @@ import { z } from "zod";
 const embeddingModeSchema = z.enum(["standard", "contextualized", "mock"]);
 const embeddingDtypeSchema = z.enum(["float", "int8", "uint8", "binary", "ubinary"]);
 const mcpTransportSchema = z.enum(["stdio", "http", "https"]);
+const digestLlmProviderSchema = z.enum(["anthropic", "openai", "vercel"]);
 const optionalUrlSchema = z.preprocess(emptyStringToUndefined, z.string().url().optional());
 const optionalEmailSchema = z.preprocess(emptyStringToUndefined, z.string().email().optional());
+const optionalStringSchema = z.preprocess(emptyStringToUndefined, z.string().min(1).optional());
 
 const environmentSchema = z.object({
   DATABASE_URL: z.string().default("postgres://rationale:rationale@localhost:54329/rationale_memory"),
@@ -40,7 +42,14 @@ const environmentSchema = z.object({
   EMBEDDING_MODEL: z.string().default("mock"),
   EMBEDDING_DIMENSION: z.coerce.number().int().positive().default(1024),
   EMBEDDING_DTYPE: embeddingDtypeSchema.default("float"),
-  EMBEDDING_MODE: embeddingModeSchema.default("mock")
+  EMBEDDING_MODE: embeddingModeSchema.default("mock"),
+  DIGEST_ENABLED: z.string().default("false"),
+  DIGEST_LLM_PROVIDER: z.preprocess(emptyStringToUndefined, digestLlmProviderSchema.optional()),
+  DIGEST_LLM_MODEL: optionalStringSchema,
+  DIGEST_LLM_API_KEY: optionalStringSchema,
+  DIGEST_LLM_MAX_TOKENS: z.coerce.number().int().positive().default(8192),
+  DIGEST_IMMEDIATE_NOTES: z.coerce.number().int().positive().default(10),
+  DIGEST_MIN_INTERVAL_HOURS: z.coerce.number().positive().default(24)
 });
 
 export type AppConfig = ReturnType<typeof loadConfig>;
@@ -51,6 +60,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   const mode = parsedEnvironment.EMBEDDING_MODE;
   const shouldUseVoyageDefaults = provider === "voyage" && mode !== "mock";
   const oauthEnabled = parseBoolean(parsedEnvironment.MCP_OAUTH_ENABLED, "MCP_OAUTH_ENABLED");
+  const digestEnabled = parseBoolean(parsedEnvironment.DIGEST_ENABLED, "DIGEST_ENABLED");
   const oauthRedirectUris = resolveOAuthRedirectUris(
     parsedEnvironment.MCP_OAUTH_REDIRECT_URI,
     parsedEnvironment.MCP_OAUTH_ALLOWED_REDIRECT_URIS
@@ -70,6 +80,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
       throw new Error("Set only one of MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH or MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM.");
     }
   }
+
+  const digest = resolveDigestConfig(parsedEnvironment, digestEnabled);
 
   return {
     databaseUrl: parsedEnvironment.DATABASE_URL,
@@ -113,7 +125,44 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
       dtype: parsedEnvironment.EMBEDDING_DTYPE,
       mode,
       voyageApiKey: parsedEnvironment.VOYAGE_API_KEY
-    }
+    },
+    digest
+  };
+}
+
+function resolveDigestConfig(
+  environment: z.infer<typeof environmentSchema>,
+  enabled: boolean
+) {
+  const sharedConfig = {
+    immediateNotes: environment.DIGEST_IMMEDIATE_NOTES,
+    minIntervalHours: environment.DIGEST_MIN_INTERVAL_HOURS
+  };
+
+  if (!enabled) {
+    return {
+      enabled: false as const,
+      ...sharedConfig
+    };
+  }
+
+  if (!environment.DIGEST_LLM_PROVIDER) {
+    throw new Error("DIGEST_LLM_PROVIDER is required when DIGEST_ENABLED=true.");
+  }
+  if (!environment.DIGEST_LLM_MODEL) {
+    throw new Error("DIGEST_LLM_MODEL is required when DIGEST_ENABLED=true.");
+  }
+  if (!environment.DIGEST_LLM_API_KEY) {
+    throw new Error("DIGEST_LLM_API_KEY is required when DIGEST_ENABLED=true.");
+  }
+
+  return {
+    enabled: true as const,
+    provider: environment.DIGEST_LLM_PROVIDER,
+    model: environment.DIGEST_LLM_MODEL,
+    apiKey: environment.DIGEST_LLM_API_KEY,
+    maxTokens: environment.DIGEST_LLM_MAX_TOKENS,
+    ...sharedConfig
   };
 }
 

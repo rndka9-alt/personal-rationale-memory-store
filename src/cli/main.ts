@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { loadConfig } from "../config.js";
 import { createPool } from "../db/pool.js";
 import { runMigrations } from "../db/migrations.js";
@@ -6,6 +8,7 @@ import { MemoryFileStore } from "../memory/fileStore.js";
 import { IndexingService } from "../memory/indexingService.js";
 import { RationaleService } from "../memory/rationaleService.js";
 import { ContextComposer } from "../memory/contextComposer.js";
+import { digestSeedInputSchema, seedDigest } from "../memory/digestService.js";
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl);
@@ -58,8 +61,21 @@ if (command === "search") {
   }, null, 2));
 } else if (command === "backfill-revisions") {
   console.log(JSON.stringify(await rationaleService.backfillMemoryRevisions(), null, 2));
+} else if (command === "digest-seed") {
+  const force = rest.includes("--force");
+  const fileArguments = rest.filter((argument) => argument !== "--force");
+  if (fileArguments.length !== 1) {
+    throw new Error("Usage: npm run cli -- digest-seed <json-file> [--force]");
+  }
+  const filePath = fileArguments[0];
+  if (!filePath) {
+    throw new Error("Usage: npm run cli -- digest-seed <json-file> [--force]");
+  }
+  const inputText = await readFile(path.resolve(filePath), "utf8");
+  const input: unknown = JSON.parse(inputText);
+  console.log(JSON.stringify(await seedDigest(pool, digestSeedInputSchema.parse(input), force), null, 2));
 } else {
-  throw new Error("Usage: npm run cli -- <search|compose|candidates|review-queue|review-candidates|auto-capture|record-candidate|reindex|backfill-fingerprints|backfill-revisions> ...");
+  throw new Error("Usage: npm run cli -- <search|compose|candidates|review-queue|review-candidates|auto-capture|record-candidate|reindex|backfill-fingerprints|backfill-revisions|digest-seed> ...");
 }
 
 function parseReindexScope(value: string | undefined) {

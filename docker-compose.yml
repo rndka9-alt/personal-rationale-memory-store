@@ -28,6 +28,13 @@ services:
       MCP_OAUTH_USER_NAME: ${MCP_OAUTH_USER_NAME:-Rationale Memory Owner}
       MCP_OAUTH_SCOPES: ${MCP_OAUTH_SCOPES:-openid email profile rationale:read rationale:write}
       MCP_OAUTH_REQUIRED_SCOPES: ${MCP_OAUTH_REQUIRED_SCOPES:-rationale:read rationale:write}
+      DIGEST_ENABLED: ${DIGEST_ENABLED:-false}
+      DIGEST_LLM_PROVIDER: ${DIGEST_LLM_PROVIDER:-}
+      DIGEST_LLM_MODEL: ${DIGEST_LLM_MODEL:-}
+      DIGEST_LLM_API_KEY: ${DIGEST_LLM_API_KEY:-}
+      DIGEST_LLM_MAX_TOKENS: ${DIGEST_LLM_MAX_TOKENS:-8192}
+      DIGEST_IMMEDIATE_NOTES: ${DIGEST_IMMEDIATE_NOTES:-10}
+      DIGEST_MIN_INTERVAL_HOURS: ${DIGEST_MIN_INTERVAL_HOURS:-24}
     command: ["npm", "run", "start:mcp"]
     stdin_open: true
     tty: true

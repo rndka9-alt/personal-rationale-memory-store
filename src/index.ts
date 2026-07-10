@@ -4,6 +4,7 @@ import { runMigrations } from "./db/migrations.js";
 import { createEmbeddingProvider } from "./embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "./memory/fileStore.js";
 import { IndexingService } from "./memory/indexingService.js";
+import { DigestService } from "./memory/digestService.js";
 import { NoteService } from "./memory/noteService.js";
 import { RationaleService } from "./memory/rationaleService.js";
 import { ContextComposer } from "./memory/contextComposer.js";
@@ -35,7 +36,10 @@ const fileStore = new MemoryFileStore(config.dataDirectory);
 const embeddingProvider = createEmbeddingProvider(config);
 const indexingService = new IndexingService(pool, fileStore, embeddingProvider, config);
 const rationaleService = new RationaleService(pool, fileStore, indexingService, embeddingProvider, config);
-const noteService = new NoteService(pool);
+const digestService = config.digest.enabled
+  ? new DigestService(pool, config.digest)
+  : undefined;
+const noteService = new NoteService(pool, digestService);
 const ontologyService = new OntologyService(pool, config.dataDirectory);
 const contextComposer = new ContextComposer(config.dataDirectory, rationaleService);
 const statusService = new StatusService(pool, fileStore, indexingService, config);
