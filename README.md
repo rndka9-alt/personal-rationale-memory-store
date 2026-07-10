@@ -298,7 +298,7 @@ Use `record_usage_feedback` after a memory is actually applied, judged helpful, 
 
 The Review UI surfaces aggregated feedback counts for `applied`, `user_helpful`, `user_unhelpful`, and `dismissed` events. These aggregates are displayed for review context and are intended as the basis for later ranking weight tuning.
 
-Rationale body changes are versioned in `memory_revisions`. `update_rationale` accepts a base `revisionId`, a required reason, and the complete replacement title and body; successful updates create a new full-content revision and return only `{ ok, revisionId }`. If the base revision is stale, it returns `{ ok: false, latestRevisionId }` without applying the replacement. Refinement opinions remain in `memory_refinement_opinions` for migration and audit, but they are deprecated and no longer part of the MCP surface or composed rationale context.
+Rationale body changes are versioned in `memory_revisions`. `update_rationale` accepts a base `revisionId`, a required reason, and the complete replacement title and body; successful updates create a new full-content revision and return only `{ ok, revisionId }`. If the base revision is stale, it returns `{ ok: false, latestRevisionId }` without applying the replacement.
 
 When more relevant candidates exist than fit the initial context, it appends a compact continuation manifest with an in-memory cursor and omitted count. `continue_context` uses that cursor to return the next retrieved candidates without rerunning the search; cursors are process-local and kept in a small FIFO cache, so evicted cursors require rerunning `compose_context`.
 

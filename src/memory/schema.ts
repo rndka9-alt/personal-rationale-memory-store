@@ -28,8 +28,6 @@ export const usageFeedbackEventTypeSchema = z.enum([
   "user_helpful",
   "user_unhelpful"
 ]);
-export const refinementOpinionTypeSchema = z.enum(["opinion", "patch_request", "correction", "question"]);
-export const refinementOpinionStatusSchema = z.enum(["open", "resolved", "rejected"]);
 
 export const rationaleFrontmatterSchema = z.object({
   id: z.string().min(1),
@@ -91,15 +89,6 @@ export const updateRationaleInputSchema = z.object({
   reason: z.string().min(1).max(1000),
   title: recordCandidateInputSchema.shape.title,
   body: recordCandidateInputSchema.shape.body
-});
-
-export const recordRefinementOpinionInputSchema = z.object({
-  entryId: z.string().min(1),
-  opinionType: refinementOpinionTypeSchema.default("opinion"),
-  body: z.string().min(1).max(2000),
-  suggestedPatch: z.record(z.unknown()).optional(),
-  source: sourceMetadataSchema.optional(),
-  metadata: z.record(z.unknown()).optional()
 });
 
 export const recordUsageFeedbackInputSchema = z.object({
@@ -183,9 +172,6 @@ export type SearchProjectFilter = z.infer<typeof searchProjectFilterSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
 export type MemoryUsageEventType = z.infer<typeof memoryUsageEventTypeSchema>;
 export type UsageFeedbackEventType = z.infer<typeof usageFeedbackEventTypeSchema>;
-export type RefinementOpinionType = z.infer<typeof refinementOpinionTypeSchema>;
-export type RefinementOpinionStatus = z.infer<typeof refinementOpinionStatusSchema>;
-export type RecordRefinementOpinionInput = z.infer<typeof recordRefinementOpinionInputSchema>;
 export type RecordUsageFeedbackInput = z.infer<typeof recordUsageFeedbackInputSchema>;
 export type NoteSourceConversation = z.infer<typeof noteSourceConversationSchema>;
 export type RecordNoteInput = z.infer<typeof recordNoteInputSchema>;
@@ -202,20 +188,6 @@ export type NoteRecord = {
   upvotes: number;
   downvotes: number;
   archived: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type MemoryRefinementOpinionRecord = {
-  id: string;
-  entryId: string;
-  opinionType: RefinementOpinionType;
-  status: RefinementOpinionStatus;
-  body: string;
-  suggestedPatch?: Record<string, unknown>;
-  sourceKind: string;
-  sourceRef?: string;
-  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 };

@@ -3,7 +3,6 @@ import {
   autoCaptureRationaleInputSchema,
   memoryUsageEventTypeSchema,
   rateNoteInputSchema,
-  recordRefinementOpinionInputSchema,
   recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
   rationaleEntrySchema
@@ -88,21 +87,6 @@ describe("memoryUsageEventTypeSchema", () => {
   it("accepts composed usage and rejects unknown event types", () => {
     expect(memoryUsageEventTypeSchema.parse("composed")).toBe("composed");
     expect(() => memoryUsageEventTypeSchema.parse("previewed")).toThrow();
-  });
-});
-
-describe("recordRefinementOpinionInputSchema", () => {
-  it("defaults opinion type and bounds body length", () => {
-    const opinion = recordRefinementOpinionInputSchema.parse({
-      entryId: "R2026-05-19-001",
-      body: "This memory should mention the operational caveat before reuse."
-    });
-
-    expect(opinion.opinionType).toBe("opinion");
-    expect(() => recordRefinementOpinionInputSchema.parse({
-      entryId: "R2026-05-19-001",
-      body: "x".repeat(2001)
-    })).toThrow();
   });
 });
 

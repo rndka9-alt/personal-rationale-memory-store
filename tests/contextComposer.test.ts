@@ -93,7 +93,6 @@ function createRationaleServiceStub(results: MemoryEntryRecord[]) {
   const stub = {
     searchWithDiagnostics: async () => ({ results, warnings: [] }),
     getRationale: async (id: string) => ({ rawMarkdown: `# ${id}\nFull entry body.` }),
-    listOpenRefinementOpinions: async () => new Map(),
     recordUsageEvents: async (events: RecordedUsageEvent[]) => {
       recordedEvents.push(...events);
       return events.length;

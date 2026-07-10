@@ -5,11 +5,8 @@ import {
   acceptanceStateSchema,
   decisionStateSchema,
   memoryUsageEventTypeSchema,
-  refinementOpinionStatusSchema,
-  refinementOpinionTypeSchema,
   reviewStateSchema,
   type MemoryEntryRecord,
-  type MemoryRefinementOpinionRecord,
   type MemoryRevisionRecord,
   type MemorySearchFilters,
   type MemoryUsageEventType,
@@ -47,16 +44,6 @@ export type MemoryUsageFeedbackCounts = {
   dismissedCount: number;
   positiveCount: number;
   negativeCount: number;
-};
-
-export type MemoryRefinementOpinionInsert = {
-  entryId: string;
-  opinionType: MemoryRefinementOpinionRecord["opinionType"];
-  body: string;
-  suggestedPatch?: Record<string, unknown>;
-  sourceKind: string;
-  sourceRef?: string;
-  metadata: Record<string, unknown>;
 };
 
 export type MemoryRevisionInsert = {
@@ -584,129 +571,6 @@ export async function listNotes(pool: pg.Pool, options: NoteListOptions) {
   };
 }
 
-export async function recordMemoryRefinementOpinion(
-  pool: pg.Pool,
-  opinion: MemoryRefinementOpinionInsert
-) {
-  const id = randomUUID();
-  logInfo("DB record memory refinement opinion started.", {
-    opinionId: id,
-    entryId: opinion.entryId,
-    opinionType: opinion.opinionType
-  });
-
-  const result = await pool.query(
-    `INSERT INTO memory_refinement_opinions (
-      id, entry_id, opinion_type, body, suggested_patch, source_kind, source_ref, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    RETURNING *`,
-    [
-      id,
-      opinion.entryId,
-      opinion.opinionType,
-      opinion.body,
-      opinion.suggestedPatch,
-      opinion.sourceKind,
-      opinion.sourceRef,
-      opinion.metadata
-    ]
-  );
-
-  const row = result.rows[0];
-  if (!row) {
-    throw new Error("Memory refinement opinion insert returned no row.");
-  }
-
-  logInfo("DB record memory refinement opinion completed.", {
-    opinionId: id,
-    entryId: opinion.entryId
-  });
-  return mapMemoryRefinementOpinionRow(row);
-}
-
-export async function findMemoryRefinementOpinion(pool: pg.Pool, id: string) {
-  logInfo("DB find memory refinement opinion started.", {
-    opinionId: id
-  });
-  const result = await pool.query(
-    "SELECT * FROM memory_refinement_opinions WHERE id = $1",
-    [id]
-  );
-  const row = result.rows[0];
-  logInfo("DB find memory refinement opinion completed.", {
-    opinionId: id,
-    found: Boolean(row)
-  });
-  return row ? mapMemoryRefinementOpinionRow(row) : undefined;
-}
-
-export async function updateMemoryRefinementOpinionStatus(
-  pool: pg.Pool,
-  id: string,
-  status: MemoryRefinementOpinionRecord["status"],
-  metadataPatch: Record<string, unknown>
-) {
-  logInfo("DB update memory refinement opinion status started.", {
-    opinionId: id,
-    status
-  });
-  const result = await pool.query(
-    `UPDATE memory_refinement_opinions
-      SET status = $2,
-          metadata = metadata || $3::jsonb,
-          updated_at = now()
-      WHERE id = $1
-      RETURNING *`,
-    [id, status, metadataPatch]
-  );
-  const row = result.rows[0];
-  if (!row) {
-    throw new Error(`Memory refinement opinion not found: ${id}`);
-  }
-  logInfo("DB update memory refinement opinion status completed.", {
-    opinionId: id,
-    status
-  });
-  return mapMemoryRefinementOpinionRow(row);
-}
-
-export async function listOpenMemoryRefinementOpinions(
-  pool: pg.Pool,
-  entryIds: string[],
-  limitPerEntry: number
-) {
-  if (entryIds.length === 0) {
-    return [];
-  }
-
-  logInfo("DB list open memory refinement opinions started.", {
-    entryCount: entryIds.length,
-    limitPerEntry
-  });
-
-  const result = await pool.query(
-    `WITH ranked_opinions AS (
-      SELECT
-        *,
-        ROW_NUMBER() OVER (PARTITION BY entry_id ORDER BY created_at DESC) AS row_rank
-      FROM memory_refinement_opinions
-      WHERE entry_id = ANY($1)
-        AND status = 'open'
-    )
-    SELECT *
-    FROM ranked_opinions
-    WHERE row_rank <= $2
-    ORDER BY entry_id, created_at DESC`,
-    [entryIds, limitPerEntry]
-  );
-
-  logInfo("DB list open memory refinement opinions completed.", {
-    entryCount: entryIds.length,
-    resultCount: result.rows.length
-  });
-  return result.rows.map(mapMemoryRefinementOpinionRow);
-}
-
 export async function recordMemoryUsageEvents(pool: pg.Pool, events: MemoryUsageEventInsert[]) {
   if (events.length === 0) {
     return 0;
@@ -875,36 +739,6 @@ async function findRationaleContentFingerprint(
   }
 
   throw new Error(`Unexpected rationale content fingerprint status: ${String(row.fingerprint_status)}`);
-}
-
-export async function countOpenMemoryRefinementOpinions(pool: pg.Pool, entryIds: string[]) {
-  if (entryIds.length === 0) {
-    return new Map<string, number>();
-  }
-
-  logInfo("DB count open memory refinement opinions started.", {
-    entryCount: entryIds.length
-  });
-
-  const result = await pool.query(
-    `SELECT entry_id, COUNT(*)::int AS open_count
-    FROM memory_refinement_opinions
-    WHERE entry_id = ANY($1)
-      AND status = 'open'
-    GROUP BY entry_id`,
-    [entryIds]
-  );
-
-  const counts = new Map<string, number>();
-  for (const row of result.rows) {
-    counts.set(String(row.entry_id), Number(row.open_count));
-  }
-
-  logInfo("DB count open memory refinement opinions completed.", {
-    entryCount: entryIds.length,
-    resultCount: result.rows.length
-  });
-  return counts;
 }
 
 export async function updateMemoryStatus(
@@ -1195,7 +1029,6 @@ export async function getDatabaseStatus(pool: pg.Pool) {
       (SELECT COUNT(*)::int FROM ontology_terms) AS ontology_term_count,
       (SELECT COUNT(*)::int FROM ontology_proposals) AS ontology_proposal_count,
       (SELECT COUNT(*)::int FROM memory_usage_events) AS memory_usage_event_count,
-      (SELECT COUNT(*)::int FROM memory_refinement_opinions) AS memory_refinement_opinion_count,
       (SELECT COUNT(*)::int FROM notes) AS note_count`
   );
   const row = result.rows[0];
@@ -1209,7 +1042,6 @@ export async function getDatabaseStatus(pool: pg.Pool) {
     ontologyTermCount: Number(row.ontology_term_count),
     ontologyProposalCount: Number(row.ontology_proposal_count),
     memoryUsageEventCount: Number(row.memory_usage_event_count),
-    memoryRefinementOpinionCount: Number(row.memory_refinement_opinion_count),
     noteCount: Number(row.note_count)
   };
   logInfo("DB status query completed.", status);
@@ -1225,24 +1057,6 @@ function mapNoteRow(row: pg.QueryResultRow): NoteRecord {
     upvotes: Number(row.upvotes),
     downvotes: Number(row.downvotes),
     archived: Boolean(row.archived),
-    createdAt: readTimestamp(row.created_at, "created_at"),
-    updatedAt: readTimestamp(row.updated_at, "updated_at")
-  };
-}
-
-function mapMemoryRefinementOpinionRow(row: pg.QueryResultRow): MemoryRefinementOpinionRecord {
-  const opinionType = refinementOpinionTypeSchema.parse(row.opinion_type);
-  const status = refinementOpinionStatusSchema.parse(row.status);
-  return {
-    id: String(row.id),
-    entryId: String(row.entry_id),
-    opinionType,
-    status,
-    body: String(row.body),
-    suggestedPatch: readOptionalRecord(row.suggested_patch, "suggested_patch"),
-    sourceKind: String(row.source_kind),
-    sourceRef: typeof row.source_ref === "string" ? row.source_ref : undefined,
-    metadata: readRecord(row.metadata, "metadata"),
     createdAt: readTimestamp(row.created_at, "created_at"),
     updatedAt: readTimestamp(row.updated_at, "updated_at")
   };

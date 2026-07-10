@@ -156,7 +156,6 @@ describe("MCP write tool results", () => {
     expect(payload.results[0]).not.toHaveProperty("metadata");
     expect(payload.results[0]).not.toHaveProperty("searchScore");
     expect(payload.results[0]).not.toHaveProperty("searchReasons");
-    expect(payload.results[0]).not.toHaveProperty("refinementOpinions");
     expect(payload.warnings[0]).not.toHaveProperty("details");
   });
 

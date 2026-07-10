@@ -17,10 +17,3 @@ CREATE INDEX IF NOT EXISTS memory_revisions_entry_revision_idx
 
 CREATE INDEX IF NOT EXISTS memory_entries_current_revision_idx
   ON memory_entries(current_revision_id);
-
-UPDATE memory_refinement_opinions
-SET metadata = metadata || jsonb_build_object(
-  'deprecated_by', 'memory_revisions',
-  'deprecated_at', now()
-)
-WHERE NOT (metadata ? 'deprecated_by');

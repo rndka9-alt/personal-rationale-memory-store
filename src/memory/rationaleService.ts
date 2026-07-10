@@ -3,28 +3,23 @@ import { z } from "zod";
 import {
   claimRationaleContentFingerprint,
   completeRationaleContentFingerprint,
-  countOpenMemoryRefinementOpinions,
   countMemoryUsageFeedback,
   failRationaleContentFingerprint,
   findMemoryEntry,
-  findMemoryRefinementOpinion,
   findMemoryRevision,
   findLatestMemoryRevision,
   insertMemoryRevision,
   listAllMemoryEntriesByAcceptanceState,
   listMemoryEntriesByAcceptanceState,
-  listOpenMemoryRefinementOpinions,
   listRecentMemoryEntries,
   listReviewQueueMemoryEntries,
   listReviewQueueMemoryPage,
   lockMemoryEntryForUpdate,
-  recordMemoryRefinementOpinion,
   recordMemoryUsageEvents,
   recordRetrievalQueryEvent,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
   setMemoryEntryCurrentRevision,
-  updateMemoryRefinementOpinionStatus,
   updateMemoryStatus
 } from "../db/queries.js";
 import type { MemoryUsageFeedbackCounts, RetrievalQuerySourceKind } from "../db/queries.js";
@@ -40,19 +35,16 @@ import {
   memoryUsageEventTypeSchema,
   projectContextSchema,
   recordCandidateInputSchema,
-  recordRefinementOpinionInputSchema,
   recordUsageFeedbackInputSchema,
   reviewStateSchema,
   searchInputSchema,
   updateRationaleInputSchema,
   type AutoCaptureRationaleInput,
   type MemoryEntryRecord,
-  type MemoryRefinementOpinionRecord,
   type MemoryRevisionRecord,
   type MemoryUsageEventType,
   type ProjectContext,
   type RecordCandidateInput,
-  type RecordRefinementOpinionInput,
   type RecordUsageFeedbackInput,
   type RationaleEntry,
   type SearchProjectFilter
@@ -153,10 +145,6 @@ export type MemoryRevisionBackfillResult = {
   linked: number;
   skipped: number;
 };
-
-const refinementOpinionLimitSchema = z.number().int().positive().max(5);
-const refinementOpinionActionSchema = z.enum(["resolve", "reject", "apply_patch"]);
-type RefinementOpinionAction = z.infer<typeof refinementOpinionActionSchema>;
 
 // Vector similarity stays the dominant term on purpose: it is the only relevance
 // signal, while every other weight is a trust/affinity signal. The compose-side
@@ -924,47 +912,6 @@ export class RationaleService {
     };
   }
 
-  async recordRefinementOpinion(input: RecordRefinementOpinionInput) {
-    const parsedInput = recordRefinementOpinionInputSchema.parse(input);
-    logInfo("Recording rationale refinement opinion started.", {
-      entryId: parsedInput.entryId,
-      opinionType: parsedInput.opinionType
-    });
-
-    const databaseEntry = await findMemoryEntry(this.pool, parsedInput.entryId);
-    if (!databaseEntry) {
-      throw new Error(`Cannot attach refinement opinion to unknown memory entry: ${parsedInput.entryId}`);
-    }
-
-    const opinion = await recordMemoryRefinementOpinion(this.pool, {
-      entryId: parsedInput.entryId,
-      opinionType: parsedInput.opinionType,
-      body: parsedInput.body,
-      suggestedPatch: parsedInput.suggestedPatch,
-      sourceKind: parsedInput.source?.kind ?? "llm_opinion",
-      sourceRef: parsedInput.source?.ref,
-      metadata: parsedInput.metadata ?? {}
-    });
-
-    logInfo("Recording rationale refinement opinion completed.", {
-      entryId: parsedInput.entryId,
-      opinionId: opinion.id
-    });
-    return opinion;
-  }
-
-  async listOpenRefinementOpinions(entryIds: string[], limitPerEntry = 3) {
-    const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
-    const parsedLimit = refinementOpinionLimitSchema.parse(limitPerEntry);
-    const opinions = await listOpenMemoryRefinementOpinions(this.pool, parsedEntryIds, parsedLimit);
-    return groupRefinementOpinionsByEntryId(opinions);
-  }
-
-  async countOpenRefinementOpinions(entryIds: string[]) {
-    const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
-    return countOpenMemoryRefinementOpinions(this.pool, parsedEntryIds);
-  }
-
   async countUsageFeedback(entryIds: string[]) {
     const parsedEntryIds = z.array(z.string().min(1)).parse(entryIds);
     const counts = await countMemoryUsageFeedback(this.pool, parsedEntryIds);
@@ -974,55 +921,6 @@ export class RationaleService {
       }
     }
     return counts;
-  }
-
-  async markRefinementOpinion(id: string, action: RefinementOpinionAction, note?: string) {
-    const parsedId = z.string().min(1).parse(id);
-    const parsedAction = refinementOpinionActionSchema.parse(action);
-    logInfo("Marking rationale refinement opinion started.", {
-      opinionId: parsedId,
-      action: parsedAction
-    });
-
-    const opinion = await findMemoryRefinementOpinion(this.pool, parsedId);
-    if (!opinion) {
-      throw new Error(`Memory refinement opinion not found: ${parsedId}`);
-    }
-    if (opinion.status !== "open") {
-      throw new Error(`Memory refinement opinion is already ${opinion.status}: ${parsedId}`);
-    }
-
-    if (parsedAction === "apply_patch") {
-      if (!opinion.suggestedPatch) {
-        throw new Error(`Memory refinement opinion has no suggested patch: ${parsedId}`);
-      }
-
-      await this.updateRationale(opinion.entryId, opinion.suggestedPatch);
-      const updatedOpinion = await updateMemoryRefinementOpinionStatus(this.pool, parsedId, "resolved", {
-        resolved_by_action: parsedAction,
-        resolved_at: new Date().toISOString(),
-        resolution_note: note
-      });
-      logInfo("Marking rationale refinement opinion completed.", {
-        opinionId: parsedId,
-        action: parsedAction,
-        status: updatedOpinion.status
-      });
-      return updatedOpinion;
-    }
-
-    const status = parsedAction === "resolve" ? "resolved" : "rejected";
-    const updatedOpinion = await updateMemoryRefinementOpinionStatus(this.pool, parsedId, status, {
-      resolved_by_action: parsedAction,
-      resolved_at: new Date().toISOString(),
-      resolution_note: note
-    });
-    logInfo("Marking rationale refinement opinion completed.", {
-      opinionId: parsedId,
-      action: parsedAction,
-      status: updatedOpinion.status
-    });
-    return updatedOpinion;
   }
 
   async reindexMemory(scope: "all" | "changed" | "untagged" = "all", ids?: string[]) {
@@ -1165,19 +1063,6 @@ export class RationaleService {
     });
     return repairedCount;
   }
-}
-
-function groupRefinementOpinionsByEntryId(opinions: MemoryRefinementOpinionRecord[]) {
-  const groupedOpinions = new Map<string, MemoryRefinementOpinionRecord[]>();
-  for (const opinion of opinions) {
-    const existingOpinions = groupedOpinions.get(opinion.entryId);
-    if (existingOpinions) {
-      existingOpinions.push(opinion);
-    } else {
-      groupedOpinions.set(opinion.entryId, [opinion]);
-    }
-  }
-  return groupedOpinions;
 }
 
 function applyRationalePatch(entry: RationaleEntry, patch: Record<string, unknown>) {
