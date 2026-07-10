@@ -30,6 +30,7 @@ export type QueryExecutor = Pick<pg.Pool, "query">;
 
 export type MemoryUsageEventInsert = {
   entryId: string;
+  revisionId: string;
   eventType: MemoryUsageEventType;
   sourceKind: string;
   sourceRef?: string;
@@ -598,11 +599,12 @@ export async function recordMemoryUsageEvents(pool: pg.Pool, events: MemoryUsage
     for (const event of events) {
       await client.query(
         `INSERT INTO memory_usage_events (
-          id, entry_id, event_type, source_kind, source_ref, task, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          id, entry_id, revision_id, event_type, source_kind, source_ref, task, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           randomUUID(),
           event.entryId,
+          event.revisionId,
           event.eventType,
           event.sourceKind,
           event.sourceRef,

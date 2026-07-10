@@ -81,6 +81,7 @@ const rationalePatchSchema = z.object({
 
 const recordUsageEventInputSchema = z.object({
   entryId: z.string().min(1),
+  revisionId: z.string().min(1),
   eventType: memoryUsageEventTypeSchema,
   sourceKind: z.string().min(1),
   sourceRef: z.string().min(1).optional(),
@@ -90,6 +91,7 @@ const recordUsageEventInputSchema = z.object({
 
 type RecordUsageEventInput = {
   entryId: string;
+  revisionId: string;
   eventType: MemoryUsageEventType;
   sourceKind: string;
   sourceRef?: string;
@@ -137,6 +139,7 @@ export type ReviewQueuePageOptions = {
 
 export type RationaleWriteResult = {
   id: string;
+  revisionId?: string;
   canonicalPath: string;
   entry?: RationaleEntry;
   status?: "duplicate" | "processing";
@@ -195,12 +198,17 @@ export class RationaleService {
     const fingerprintClaim = await claimRationaleContentFingerprint(this.pool, contentFingerprint, id);
 
     if (fingerprintClaim.status === "completed") {
+      const revisionId = fingerprintClaim.entry.currentRevisionId;
+      if (!revisionId) {
+        throw new Error(`Duplicate rationale has no current revision: ${fingerprintClaim.entry.id}`);
+      }
       logInfo("Recording rationale candidate skipped duplicate content.", {
         entryId: fingerprintClaim.entry.id,
         title: validatedInput.title
       });
       return {
         id: fingerprintClaim.entry.id,
+        revisionId,
         canonicalPath: fingerprintClaim.entry.canonicalPath,
         entry: await this.getRationale(fingerprintClaim.entry.id),
         status: "duplicate",
@@ -284,7 +292,7 @@ export class RationaleService {
         entryId: id,
         canonicalPath
       });
-      return { id, canonicalPath, entry };
+      return { id, revisionId: revision.id, canonicalPath, entry };
     } catch (error) {
       await failRationaleContentFingerprint(this.pool, contentFingerprint, id, formatErrorMessage(error));
       throw error;
@@ -362,6 +370,41 @@ export class RationaleService {
     return entry;
   }
 
+  async getRationaleRevision(id: string) {
+    logInfo("Reading rationale revision started.", {
+      revisionId: id
+    });
+    const revision = await findMemoryRevision(this.pool, id);
+    if (!revision) {
+      throw new Error(`Memory revision not found: ${id}`);
+    }
+    const entry = parseRationaleMarkdown(revision.content);
+    logInfo("Reading rationale revision completed.", {
+      entryId: revision.entryId,
+      revisionId: id
+    });
+    return {
+      id: revision.id,
+      entryId: revision.entryId,
+      revisionNumber: revision.revisionNumber,
+      entry
+    };
+  }
+
+  async getLatestRationaleFromRevision(id: string) {
+    const requestedRevision = await findMemoryRevision(this.pool, id);
+    // Existing conversations can retain pre-migration entry ids. Resolve them as
+    // read-only aliases without exposing entry identity in new MCP responses.
+    const databaseEntry = await findMemoryEntry(this.pool, requestedRevision?.entryId ?? id);
+    if (!databaseEntry) {
+      throw new Error(`Memory revision or legacy entry not found: ${id}`);
+    }
+    if (!databaseEntry.currentRevisionId) {
+      throw new Error(`Memory entry has no current revision: ${databaseEntry.id}`);
+    }
+    return this.getRationaleRevision(databaseEntry.currentRevisionId);
+  }
+
   async acceptCandidate(id: string) {
     logInfo("Accepting rationale candidate started.", {
       entryId: id
@@ -416,11 +459,11 @@ export class RationaleService {
   async updateRationaleFromRevision(input: unknown) {
     const parsedInput = updateRationaleInputSchema.parse(input);
     logInfo("Updating rationale from revision started.", {
-      revisionId: parsedInput.revisionId
+      revisionId: parsedInput.id
     });
-    const baseRevision = await findMemoryRevision(this.pool, parsedInput.revisionId);
+    const baseRevision = await findMemoryRevision(this.pool, parsedInput.id);
     if (!baseRevision) {
-      throw new Error(`Memory revision not found: ${parsedInput.revisionId}`);
+      throw new Error(`Memory revision not found: ${parsedInput.id}`);
     }
     const baseEntry = parseRationaleMarkdown(baseRevision.content);
     const updatedEntry: RationaleEntry = {
@@ -428,7 +471,18 @@ export class RationaleService {
       title: parsedInput.title,
       body: parsedInput.body
     };
-    return this.commitRationaleRevision(baseRevision, parsedInput.reason, updatedEntry);
+    const result = await this.commitRationaleRevision(baseRevision, parsedInput.reason, updatedEntry);
+    if (!result.ok) {
+      return {
+        ok: false as const,
+        reason: "stale" as const,
+        latestId: result.latestRevisionId
+      };
+    }
+    return {
+      ok: true as const,
+      id: result.revisionId
+    };
   }
 
   private async commitRationaleRevision(
@@ -887,33 +941,40 @@ export class RationaleService {
   async recordUsageFeedback(input: RecordUsageFeedbackInput) {
     const parsedInput = recordUsageFeedbackInputSchema.parse(input);
     logInfo("Recording rationale usage feedback started.", {
-      entryId: parsedInput.entryId,
+      revisionId: parsedInput.id,
       eventType: parsedInput.eventType
     });
 
-    const databaseEntry = await findMemoryEntry(this.pool, parsedInput.entryId);
+    const revision = await findMemoryRevision(this.pool, parsedInput.id);
+    if (!revision) {
+      throw new Error(`Cannot record usage feedback for unknown memory revision: ${parsedInput.id}`);
+    }
+    const databaseEntry = await findMemoryEntry(this.pool, revision.entryId);
     if (!databaseEntry) {
-      throw new Error(`Cannot record usage feedback for unknown memory entry: ${parsedInput.entryId}`);
+      throw new Error(`Cannot record usage feedback for missing memory entry: ${revision.entryId}`);
     }
 
     await this.recordUsageEvents([{
-      entryId: parsedInput.entryId,
+      entryId: revision.entryId,
+      revisionId: revision.id,
       eventType: parsedInput.eventType,
       sourceKind: "llm_feedback"
     }]);
 
-    const updatedEntry = await findMemoryEntry(this.pool, parsedInput.entryId);
+    const updatedEntry = await findMemoryEntry(this.pool, revision.entryId);
     if (!updatedEntry) {
-      throw new Error(`Memory entry disappeared after usage feedback: ${parsedInput.entryId}`);
+      throw new Error(`Memory entry disappeared after usage feedback: ${revision.entryId}`);
     }
 
     logInfo("Recording rationale usage feedback completed.", {
-      entryId: parsedInput.entryId,
+      entryId: revision.entryId,
+      revisionId: revision.id,
       eventType: parsedInput.eventType,
       useCount: updatedEntry.useCount
     });
 
     return {
+      id: revision.id,
       entryId: updatedEntry.id,
       eventType: parsedInput.eventType,
       useCount: updatedEntry.useCount,

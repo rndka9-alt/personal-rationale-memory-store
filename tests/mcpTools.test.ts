@@ -81,12 +81,12 @@ describe("MCP write tool results", () => {
     expect(Object.keys(getTool(services, "continue_context").schema)).toEqual(["cursor"]);
     expect(Object.keys(getTool(services, "record_note").schema)).toEqual(["content", "sourceContext"]);
     expect(Object.keys(getTool(services, "auto_capture_rationale").schema)).toEqual(["title", "body", "type", "project"]);
-    expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["revisionId", "reason", "title", "body"]);
-    expect(Object.keys(getTool(services, "record_usage_feedback").schema)).toEqual(["entryId", "eventType"]);
+    expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["id", "reason", "title", "body"]);
+    expect(Object.keys(getTool(services, "record_usage_feedback").schema)).toEqual(["id", "eventType"]);
     expect(getRequiredInputKeys(getTool(services, "record_note"))).toEqual(["content"]);
     expect(getRequiredInputKeys(getTool(services, "auto_capture_rationale"))).toEqual(["title", "body"]);
-    expect(getRequiredInputKeys(getTool(services, "update_rationale"))).toEqual(["revisionId", "reason", "title", "body"]);
-    expect(getRequiredInputKeys(getTool(services, "record_usage_feedback"))).toEqual(["entryId", "eventType"]);
+    expect(getRequiredInputKeys(getTool(services, "update_rationale"))).toEqual(["id", "reason", "title", "body"]);
+    expect(getRequiredInputKeys(getTool(services, "record_usage_feedback"))).toEqual(["id", "eventType"]);
   });
 
   it("explains when note conversation provenance should be captured", () => {
@@ -95,6 +95,13 @@ describe("MCP write tool results", () => {
     expect(recordNoteTool.description).toContain("current conversation");
     expect(recordNoteTool.description).toContain("original language, roles, text, and order");
     expect(recordNoteTool.schema.sourceContext.description).toContain("Conversation provenance");
+  });
+
+  it("explains that stale get ids resolve to the latest snapshot", () => {
+    const getToolDefinition = getTool(createToolServices(), "get_rationale");
+
+    expect(getToolDefinition.description).toContain("latest rationale");
+    expect(getToolDefinition.description).toContain("supplied revision is stale");
   });
 
   it("guides embedding-relevant natural-language inputs to Korean", () => {
@@ -120,6 +127,7 @@ describe("MCP write tool results", () => {
     services.rationaleService.searchWithDiagnostics = async () => ({
       results: [{
         id: "R20260604T000000000Z-search",
+        currentRevisionId: "V20260604T000000000Z-search",
         type: "rationale",
         status: "candidate",
         acceptanceState: "candidate",
@@ -155,7 +163,7 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       results: [{
-        id: "R20260604T000000000Z-search",
+        id: "V20260604T000000000Z-search",
         title: "Keep search responses compact",
         type: "rationale",
         acceptanceState: "candidate",
@@ -176,6 +184,19 @@ describe("MCP write tool results", () => {
     expect(payload.warnings[0]).not.toHaveProperty("details");
   });
 
+  it("resolves stale get ids to the latest compact snapshot", async () => {
+    const services = createToolServices();
+    const result = await getTool(services, "get_rationale").handler({
+      id: "V20260604T000000000Z-stale"
+    });
+
+    expect(parseToolJson(result)).toEqual({
+      id: "V20260604T000000000Z-current",
+      title: "Keep write responses compact",
+      body: "Full rationale body should not be returned by write tools."
+    });
+  });
+
   it("returns compact success metadata for auto-captured rationales", async () => {
     const services = createToolServices();
     const result = await getTool(services, "auto_capture_rationale").handler({
@@ -187,7 +208,7 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      id: "R20260604T000000000Z-compact"
+      id: "V20260604T000000000Z-current"
     });
     expect(payload).not.toHaveProperty("canonicalPath");
     expect(payload).not.toHaveProperty("entry");
@@ -197,6 +218,7 @@ describe("MCP write tool results", () => {
     const services = createToolServices();
     services.rationaleService.autoCaptureRationale = async () => ({
       id: "R20260604T000000000Z-existing",
+      revisionId: "V20260604T000000000Z-existing",
       canonicalPath: "/memory/R20260604T000000000Z-existing.md",
       status: "duplicate",
       existingId: "R20260604T000000000Z-existing"
@@ -211,7 +233,7 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      id: "R20260604T000000000Z-existing",
+      id: "V20260604T000000000Z-existing",
       status: "duplicate"
     });
     expect(payload).not.toHaveProperty("canonicalPath");
@@ -219,10 +241,30 @@ describe("MCP write tool results", () => {
     expect(payload).not.toHaveProperty("entry");
   });
 
+  it("does not expose internal entry ids while a duplicate capture is processing", async () => {
+    const services = createToolServices();
+    services.rationaleService.autoCaptureRationale = async () => ({
+      id: "R20260604T000000000Z-processing",
+      canonicalPath: "/memory/R20260604T000000000Z-processing.md",
+      status: "processing",
+      existingId: "R20260604T000000000Z-processing"
+    });
+
+    const result = await getTool(services, "auto_capture_rationale").handler({
+      title: "Keep processing responses compact",
+      body: "A revision id does not exist until the first capture finishes."
+    });
+
+    expect(parseToolJson(result)).toEqual({
+      ok: false,
+      reason: "processing"
+    });
+  });
+
   it("returns compact success metadata for rationale updates", async () => {
     const services = createToolServices();
     const result = await getTool(services, "update_rationale").handler({
-      revisionId: "V20260604T000000000Z-base",
+      id: "V20260604T000000000Z-base",
       reason: "Keep the rationale concise.",
       title: "Keep write responses compact",
       body: "Shorter MCP write responses reduce context pressure."
@@ -232,7 +274,7 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      revisionId: "V20260604T000000000Z-next"
+      id: "V20260604T000000000Z-next"
     });
     expect(payload).not.toHaveProperty("entry");
   });
@@ -241,11 +283,12 @@ describe("MCP write tool results", () => {
     const services = createToolServices();
     services.rationaleService.updateRationaleFromRevision = async () => ({
       ok: false as const,
-      latestRevisionId: "V20260604T000000000Z-latest"
+      reason: "stale" as const,
+      latestId: "V20260604T000000000Z-latest"
     });
 
     const result = await getTool(services, "update_rationale").handler({
-      revisionId: "V20260604T000000000Z-stale",
+      id: "V20260604T000000000Z-stale",
       reason: "Keep the rationale concise.",
       title: "Keep write responses compact",
       body: "Shorter MCP write responses reduce context pressure."
@@ -255,7 +298,8 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: false,
-      latestRevisionId: "V20260604T000000000Z-latest"
+      reason: "stale",
+      latestId: "V20260604T000000000Z-latest"
     });
   });
 
@@ -347,7 +391,7 @@ describe("MCP write tool results", () => {
   it("returns compact success metadata for usage feedback", async () => {
     const services = createToolServices();
     const result = await getTool(services, "record_usage_feedback").handler({
-      entryId: "R20260604T000000000Z-compact",
+      id: "V20260604T000000000Z-current",
       eventType: "user_helpful"
     });
 
@@ -355,7 +399,7 @@ describe("MCP write tool results", () => {
 
     expect(payload).toEqual({
       ok: true,
-      entryId: "R20260604T000000000Z-compact",
+      id: "V20260604T000000000Z-current",
       eventType: "user_helpful"
     });
     expect(payload).not.toHaveProperty("useCount");
@@ -369,32 +413,24 @@ function createToolServices(): ToolServices {
   return {
     rationaleService: {
       searchWithDiagnostics: unusedServiceMethod,
-      getRationale: unusedServiceMethod,
-      getMemoryEntryRecord: async () => ({
-        id: recordedEntry.frontmatter.id,
-        type: "rationale",
-        status: "candidate",
-        acceptanceState: "candidate",
-        reviewState: "unreviewed",
-        decisionState: "unknown",
-        title: recordedEntry.title,
-        canonicalPath: "/memory/R20260604T000000000Z-compact.md",
-        currentRevisionId: "V20260604T000000000Z-current",
-        scope: "general",
-        confidence: 0.5,
-        useCount: 0,
-        metadata: {}
+      getLatestRationaleFromRevision: async () => ({
+        id: "V20260604T000000000Z-current",
+        entryId: recordedEntry.frontmatter.id,
+        revisionNumber: 1,
+        entry: recordedEntry
       }),
       updateRationaleFromRevision: async () => ({
         ok: true as const,
-        revisionId: "V20260604T000000000Z-next"
+        id: "V20260604T000000000Z-next"
       }),
       autoCaptureRationale: async () => ({
         id: recordedEntry.frontmatter.id,
+        revisionId: "V20260604T000000000Z-current",
         canonicalPath: "/memory/R20260604T000000000Z-compact.md",
         entry: recordedEntry
       }),
       recordUsageFeedback: async () => ({
+        id: "V20260604T000000000Z-current",
         entryId: recordedEntry.frontmatter.id,
         eventType: "user_helpful",
         useCount: 1,

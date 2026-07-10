@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
 import type { RationaleSearchWarning, RationaleService } from "./rationaleService.js";
-import type { MemoryEntryRecord, SearchProjectFilter } from "./schema.js";
+import type { MemoryEntryRecord, RationaleEntry, SearchProjectFilter } from "./schema.js";
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
 // Historical note-typed memory entries predate the separate plain note store.
@@ -89,11 +89,12 @@ export class ContextComposer {
     const usageEvents: UsageEventInput[] = [];
 
     for (const result of relevantResults) {
-      const entry = await this.rationaleService.getRationale(result.id);
+      const revisionId = readCurrentRevisionId(result);
+      const rationaleSnapshot = await this.rationaleService.getRationaleRevision(revisionId);
       const includeKind = index < includeFullTopK ? "full" : "summary";
       const fullText = includeKind === "full"
-        ? formatFullEntry(entry.rawMarkdown)
-        : formatSummary(result);
+        ? formatFullEntry(rationaleSnapshot.entry, result, revisionId)
+        : formatSummary(result, revisionId);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context stopped at token budget.", {
@@ -108,6 +109,7 @@ export class ContextComposer {
       lines.push(fullText);
       usedTokens += nextTokens;
       usageEvents.push(createComposedUsageEvent(result, {
+        revisionId,
         sourceKind: "compose_context",
         task: input.task,
         includeKind,
@@ -175,11 +177,12 @@ export class ContextComposer {
         throw new Error(`Continuation snapshot position ${position} is invalid.`);
       }
 
-      const entry = await this.rationaleService.getRationale(result.id);
+      const revisionId = readCurrentRevisionId(result);
+      const rationaleSnapshot = await this.rationaleService.getRationaleRevision(revisionId);
       const includeKind = includedCount < includeFullTopK ? "full" : "summary";
       const fullText = includeKind === "full"
-        ? formatFullEntry(entry.rawMarkdown)
-        : formatSummary(result);
+        ? formatFullEntry(rationaleSnapshot.entry, result, revisionId)
+        : formatSummary(result, revisionId);
       const nextTokens = estimateTokens(fullText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context continuation stopped at token budget.", {
@@ -196,6 +199,7 @@ export class ContextComposer {
       lines.push(fullText);
       usedTokens += nextTokens;
       usageEvents.push(createComposedUsageEvent(result, {
+        revisionId,
         sourceKind: "continue_context",
         sourceRef: input.cursor,
         task: snapshot.task,
@@ -264,10 +268,10 @@ function formatSummary(result: {
   acceptanceState: string;
   reviewState: string;
   decisionState: string;
-}) {
+}, revisionId: string) {
   return [
     `### ${result.title}`,
-    `- id: ${result.id}`,
+    `- id: ${revisionId}`,
     `- type: ${result.type}`,
     `- acceptance state: ${result.acceptanceState}`,
     `- review state: ${result.reviewState}`,
@@ -287,17 +291,26 @@ function formatContinuationManifest(cursor: string, candidates: MemoryEntryRecor
   ].join("\n");
 }
 
-function formatFullEntry(markdown: string) {
+function formatFullEntry(entry: RationaleEntry, result: MemoryEntryRecord, revisionId: string) {
   return [
     "### Retrieved full rationale",
     "",
-    markdown.trim()
+    `- id: ${revisionId}`,
+    `- type: ${result.type}`,
+    `- acceptance state: ${result.acceptanceState}`,
+    `- review state: ${result.reviewState}`,
+    `- decision state: ${result.decisionState}`,
+    "",
+    `# ${entry.title}`,
+    "",
+    entry.body.trim()
   ].join("\n");
 }
 
 function createComposedUsageEvent(
   result: MemoryEntryRecord,
   options: {
+    revisionId: string;
     sourceKind: string;
     sourceRef?: string;
     task: string;
@@ -309,6 +322,7 @@ function createComposedUsageEvent(
 ): UsageEventInput {
   return {
     entryId: result.id,
+    revisionId: options.revisionId,
     eventType: "composed",
     sourceKind: options.sourceKind,
     sourceRef: options.sourceRef,
@@ -322,6 +336,13 @@ function createComposedUsageEvent(
       search_reasons: result.searchReasons ?? []
     }
   };
+}
+
+function readCurrentRevisionId(entry: MemoryEntryRecord) {
+  if (!entry.currentRevisionId) {
+    throw new Error(`Memory entry has no current revision: ${entry.id}`);
+  }
+  return entry.currentRevisionId;
 }
 
 function truncateToTokens(text: string, maxTokens: number) {

@@ -19,8 +19,7 @@ export type ToolServices = {
   rationaleService: Pick<
     RationaleService,
     | "searchWithDiagnostics"
-    | "getRationale"
-    | "getMemoryEntryRecord"
+    | "getLatestRationaleFromRevision"
     | "updateRationaleFromRevision"
     | "autoCaptureRationale"
     | "recordUsageFeedback"
@@ -52,7 +51,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
   const definitions: ToolDefinition[] = [
     {
       name: "search_rationales",
-      description: "Search rationale memories with lexical, vector, and metadata signals. Write natural-language queries in Korean while keeping code identifiers, exact search terms, and proper nouns unchanged. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
+      description: "Search rationale memories with lexical, vector, and metadata signals. Result ids identify the current revision snapshot. Write natural-language queries in Korean while keeping code identifiers, exact search terms, and proper nouns unchanged. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
       schema: searchToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -63,18 +62,18 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "get_rationale",
-      description: "Read a rationale by id from canonical Markdown.",
+      description: "Read the latest rationale for the memory identified by a revision id. If the supplied revision is stale, returns the latest revision's content and id.",
       schema: { id: z.string().min(1) },
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
       metadata: toolInvocationMetadata("특정 메모 확인하는 중..", "메모 확인 완료!"),
       handler: async (input) => {
         const id = z.string().parse(input.id);
-        const entry = await services.rationaleService.getRationale(id);
-        const entryRecord = await services.rationaleService.getMemoryEntryRecord(id);
+        const snapshot = await services.rationaleService.getLatestRationaleFromRevision(id);
         return jsonToolResult({
-          ...entry,
-          revisionId: entryRecord.currentRevisionId
+          id: snapshot.id,
+          title: snapshot.entry.title,
+          body: snapshot.entry.body
         });
       }
     },
@@ -146,7 +145,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "update_rationale",
-      description: "Replace a rationale title and body from a base revision. Write reason, title, and body in Korean while keeping code identifiers and proper nouns unchanged.",
+      description: "Replace a rationale title and body from a base revision snapshot id. A stale id returns the latest id without applying the replacement. Write reason, title, and body in Korean while keeping code identifiers and proper nouns unchanged.",
       schema: updateRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -156,7 +155,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "record_usage_feedback",
-      description: "Record explicit feedback after a rationale memory was applied, helpful, unhelpful, or dismissed.",
+      description: "Record explicit feedback for the revision snapshot that was applied, helpful, unhelpful, or dismissed. Ranking aggregates feedback across the whole memory entry.",
       schema: recordUsageFeedbackToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -234,7 +233,7 @@ const autoCaptureRationaleToolInputSchema = z.object({
 });
 
 const updateRationaleToolInputSchema = z.object({
-  revisionId: updateRationaleInputSchema.shape.revisionId,
+  id: updateRationaleInputSchema.shape.id,
   reason: updateRationaleInputSchema.shape.reason
     .describe("Reason for the update in Korean; keep code identifiers and proper nouns unchanged."),
   title: updateRationaleInputSchema.shape.title
@@ -244,7 +243,7 @@ const updateRationaleToolInputSchema = z.object({
 });
 
 const recordUsageFeedbackToolInputSchema = z.object({
-  entryId: recordUsageFeedbackInputSchema.shape.entryId,
+  id: recordUsageFeedbackInputSchema.shape.id,
   eventType: recordUsageFeedbackInputSchema.shape.eventType
 });
 
@@ -291,6 +290,7 @@ function toolInvocationMetadata(invoking: string, invoked: string) {
 function compactSearchResult(result: {
   results: Array<{
     id: string;
+    currentRevisionId?: string;
     title: string;
     summary?: string;
     type: string;
@@ -336,6 +336,7 @@ function compactSearchResult(result: {
 
 function compactSearchEntry(entry: {
   id: string;
+  currentRevisionId?: string;
   title: string;
   summary?: string;
   type: string;
@@ -343,6 +344,7 @@ function compactSearchEntry(entry: {
   reviewState: string;
   decisionState: string;
 }) {
+  const revisionId = readCurrentRevisionId(entry);
   const response: {
     id: string;
     title: string;
@@ -352,7 +354,7 @@ function compactSearchEntry(entry: {
     decisionState: string;
     summary?: string;
   } = {
-    id: entry.id,
+    id: revisionId,
     title: entry.title,
     type: entry.type,
     acceptanceState: entry.acceptanceState,
@@ -368,13 +370,22 @@ function compactSearchEntry(entry: {
 }
 
 function compactRationaleWriteResult(result: RationaleWriteResult) {
+  if (result.status === "processing") {
+    return {
+      ok: false as const,
+      reason: "processing" as const
+    };
+  }
+  if (!result.revisionId) {
+    throw new Error(`Rationale write result has no revision id: ${result.id}`);
+  }
   const response: {
     ok: true;
     id: string;
     status?: RationaleWriteResult["status"];
   } = {
     ok: true,
-    id: result.id
+    id: result.revisionId
   };
 
   if (result.status) {
@@ -392,14 +403,21 @@ function compactNoteResult(result: { id: string }) {
 }
 
 function compactUsageFeedbackWriteResult(result: {
-  entryId: string;
+  id: string;
   eventType: string;
 }) {
   return {
     ok: true,
-    entryId: result.entryId,
+    id: result.id,
     eventType: result.eventType
   };
+}
+
+function readCurrentRevisionId(entry: { id: string; currentRevisionId?: string }) {
+  if (!entry.currentRevisionId) {
+    throw new Error(`Memory entry has no current revision: ${entry.id}`);
+  }
+  return entry.currentRevisionId;
 }
 
 function withToolLogging(definition: ToolDefinition): ToolDefinition {

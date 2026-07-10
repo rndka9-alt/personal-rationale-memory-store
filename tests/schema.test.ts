@@ -93,13 +93,13 @@ describe("memoryUsageEventTypeSchema", () => {
 describe("recordUsageFeedbackInputSchema", () => {
   it("accepts explicit feedback events and rejects passive retrieval events", () => {
     const feedback = recordUsageFeedbackInputSchema.parse({
-      entryId: "R2026-05-19-001",
+      id: "V2026-05-19-001",
       eventType: "user_helpful"
     });
 
     expect(feedback.eventType).toBe("user_helpful");
     expect(() => recordUsageFeedbackInputSchema.parse({
-      entryId: "R2026-05-19-001",
+      id: "V2026-05-19-001",
       eventType: "composed"
     })).toThrow();
   });

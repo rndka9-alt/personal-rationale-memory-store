@@ -85,14 +85,14 @@ export const autoCaptureRationaleInputSchema = z.object({
 });
 
 export const updateRationaleInputSchema = z.object({
-  revisionId: z.string().min(1),
+  id: z.string().min(1),
   reason: z.string().min(1).max(1000),
   title: recordCandidateInputSchema.shape.title,
   body: recordCandidateInputSchema.shape.body
 });
 
 export const recordUsageFeedbackInputSchema = z.object({
-  entryId: z.string().min(1),
+  id: z.string().min(1),
   eventType: usageFeedbackEventTypeSchema
 });
 

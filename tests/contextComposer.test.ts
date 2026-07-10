@@ -30,10 +30,12 @@ describe("compose context relevance floor", () => {
     const composer = new ContextComposer(dataDirectory, service);
     const context = await composer.compose({ task: "test task" });
 
-    expect(context).toContain("R-relevant");
-    expect(context).toContain("R-lexical");
-    expect(context).not.toContain("R-unrelated");
+    expect(context).toContain("V-relevant");
+    expect(context).toContain("V-lexical");
+    expect(context).not.toContain("V-unrelated");
+    expect(context).not.toContain("- id: R-");
     expect(recordedEvents.map((event) => event.entryId)).toEqual(["R-relevant", "R-lexical"]);
+    expect(recordedEvents.map((event) => event.revisionId)).toEqual(["V-relevant", "V-lexical"]);
   });
 
   it("appends a feedback footer so clients have an in-context trigger", async () => {
@@ -70,6 +72,7 @@ function createSearchResult(id: string, title: string, vectorScore: number | und
     reviewState: "unreviewed",
     decisionState: "unknown",
     title,
+    currentRevisionId: id.replace(/^R-/, "V-"),
     canonicalPath: `/memory/${id}.md`,
     scope: "general",
     confidence: 0.5,
@@ -92,7 +95,30 @@ function createRationaleServiceStub(results: MemoryEntryRecord[]) {
   const recordedEvents: RecordedUsageEvent[] = [];
   const stub = {
     searchWithDiagnostics: async () => ({ results, warnings: [] }),
-    getRationale: async (id: string) => ({ rawMarkdown: `# ${id}\nFull entry body.` }),
+    getRationaleRevision: async (id: string) => ({
+      id,
+      entryId: "R-internal",
+      revisionNumber: 0,
+      entry: {
+        frontmatter: {
+          id: "R-internal",
+          type: "rationale",
+          status: "candidate",
+          acceptanceState: "candidate",
+          reviewState: "unreviewed",
+          decisionState: "unknown",
+          scope: "general",
+          domains: [],
+          intents: [],
+          modes: [],
+          confidence: 0.5,
+          metadata: {}
+        },
+        title: `Title for ${id}`,
+        body: "Full entry body.",
+        rawMarkdown: ""
+      }
+    }),
     recordUsageEvents: async (events: RecordedUsageEvent[]) => {
       recordedEvents.push(...events);
       return events.length;
