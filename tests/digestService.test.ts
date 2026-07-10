@@ -53,6 +53,24 @@ describe("digest operations", () => {
     expect(skippedOperations).toEqual(["strengthen"]);
     expect([...result.dirtyLayers]).toEqual(expect.arrayContaining(["now", "recent", "about"]));
   });
+
+  it("does not mark layers dirty for evidence-only operations", () => {
+    const result = applyDigestOperations([
+      createClaim("strengthen", "now", ["n1"]),
+      createClaim("evidence-revise", "about", ["n1"])
+    ], [
+      { type: "strengthen", claimId: "strengthen", noteIds: ["n2"] },
+      { type: "revise", claimId: "evidence-revise", noteIds: ["n3"] }
+    ], {
+      now: new Date("2026-07-10T12:00:00.000Z")
+    });
+
+    // strengthen과 근거만 추가하는 revise는 프로즈 내용이 변하지 않으므로,
+    // dirty로 잡으면 prose를 생략한 (정당한) LLM 출력이 run 실패로 이어진다.
+    expect(result.dirtyLayers.size).toBe(0);
+    expect(result.claims.find((claim) => claim.id === "strengthen")?.evidenceCount).toBe(2);
+    expect(result.claims.find((claim) => claim.id === "evidence-revise")?.evidenceCount).toBe(2);
+  });
 });
 
 describe("digest refresh trigger", () => {
@@ -131,7 +149,7 @@ describe("digest prose repair", () => {
     const generator = {
       generate: vi.fn()
         .mockResolvedValueOnce(JSON.stringify({
-          ops: [{ type: "strengthen", claimId: "claim-1", noteIds: ["note-2"] }],
+          ops: [{ type: "revise", claimId: "claim-1", text: "고친 claim", noteIds: ["note-2"] }],
           prose: { now: "가".repeat(900) }
         }))
         .mockResolvedValueOnce("나".repeat(850))
@@ -160,7 +178,7 @@ describe("digest prose repair", () => {
     const generator = {
       generate: vi.fn()
         .mockResolvedValueOnce(JSON.stringify({
-          ops: [{ type: "strengthen", claimId: "claim-1", noteIds: ["note-2"] }],
+          ops: [{ type: "revise", claimId: "claim-1", text: "고친 claim", noteIds: ["note-2"] }],
           prose: { now: "가".repeat(900) }
         }))
         .mockResolvedValueOnce("나".repeat(850))
