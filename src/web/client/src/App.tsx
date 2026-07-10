@@ -1,6 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
+import {
+  fetchLlmRequests,
+  fetchLlmRequestSummary,
+  type LlmRequestRecord,
+  type LlmRequestSummary
+} from "./api/llmRequests";
+import {
   fetchMemories,
   type MemoryCatalogItem,
   type MemoryCatalogSortMode,
@@ -19,6 +34,7 @@ import {
   ArrowLeftIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  LlmIcon,
   MemoryIcon,
   NoteIcon,
   RestoreIcon,
@@ -29,7 +45,7 @@ import type { NoteRecord } from "./types/note";
 import type { Pagination } from "./types/pagination";
 import type { ProjectContext, UsageFeedbackCounts } from "./types/review";
 
-type MainView = "memories" | "notes";
+type MainView = "memories" | "notes" | "llm";
 
 type ToastState = {
   message: string;
@@ -73,7 +89,9 @@ export function App() {
   return (
     <main className="min-h-screen bg-canvas text-ink">
       <AppHeader mainView={mainView} onViewChange={setMainView} />
-      {mainView === "memories" ? <MemoryLibrary /> : <NotesLibrary />}
+      {mainView === "memories" ? <MemoryLibrary /> : null}
+      {mainView === "notes" ? <NotesLibrary /> : null}
+      {mainView === "llm" ? <LlmDashboard /> : null}
     </main>
   );
 }
@@ -89,7 +107,7 @@ function AppHeader(props: {
           <span className="grid h-9 w-9 place-items-center rounded-full bg-ink text-sm font-semibold tracking-[-0.04em] text-white">
             M
           </span>
-          <div>
+          <div className="hidden sm:block">
             <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-muted">Rationale</p>
             <p className="text-sm font-semibold tracking-[-0.02em] text-ink">Memory</p>
           </div>
@@ -107,6 +125,12 @@ function AppHeader(props: {
             label="Notes"
             onClick={() => props.onViewChange("notes")}
           />
+          <NavigationButton
+            active={props.mainView === "llm"}
+            icon={<LlmIcon className="h-4 w-4" />}
+            label="LLM"
+            onClick={() => props.onViewChange("llm")}
+          />
         </nav>
       </div>
     </header>
@@ -122,7 +146,7 @@ function NavigationButton(props: {
   return (
     <button
       type="button"
-      className={`flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold transition-all sm:px-4 ${
+      className={`flex h-9 items-center gap-1.5 rounded-full px-2 text-xs font-semibold transition-all sm:gap-2 sm:px-4 ${
         props.active ? "bg-white text-ink shadow-soft" : "text-muted hover:text-ink"
       }`}
       aria-current={props.active ? "page" : undefined}
@@ -700,6 +724,250 @@ function NotesLibrary() {
   );
 }
 
+type DailyCostPoint = {
+  date: string;
+  costUsd: number;
+  requestCount: number;
+};
+
+function LlmDashboard() {
+  const summaryQuery = useQuery({
+    queryKey: ["llm-request-summary"],
+    queryFn: fetchLlmRequestSummary
+  });
+  const requestsQuery = useQuery({
+    queryKey: ["llm-requests", 50],
+    queryFn: () => fetchLlmRequests(50)
+  });
+
+  const daily = useMemo(
+    () => fillDailyCostSeries(summaryQuery.data?.daily ?? []),
+    [summaryQuery.data?.daily]
+  );
+
+  if (summaryQuery.isLoading || requestsQuery.isLoading) {
+    return (
+      <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <div className="h-12 w-52 animate-pulse rounded-xl bg-stroke" />
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((item) => <div key={item} className="h-28 animate-pulse rounded-3xl bg-white shadow-soft" />)}
+        </div>
+      </section>
+    );
+  }
+
+  const queryError = summaryQuery.error ?? requestsQuery.error;
+  if (queryError) {
+    return (
+      <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <InlineError message={queryError.message} />
+      </section>
+    );
+  }
+
+  const summary = summaryQuery.data;
+  const requests = requestsQuery.data;
+  if (!summary || !requests) {
+    throw new Error("LLM dashboard queries completed without data.");
+  }
+
+  return (
+    <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+      <header className="mb-8 sm:mb-12">
+        <p className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.17em] text-muted">Inference ledger</p>
+        <h1 className="font-display text-[2.7rem] leading-none tracking-[-0.045em] text-ink sm:text-5xl">LLM</h1>
+        <p className="mt-3 max-w-xl text-sm leading-6 text-muted">Request-level usage and gateway cost history.</p>
+      </header>
+
+      {summary.total.requestCount === 0 ? (
+        <EmptyState
+          title="No LLM requests yet"
+          description="Digest synthesis and repair requests will appear here after the first run."
+        />
+      ) : (
+        <>
+          <LlmSummaryTiles summary={summary} />
+
+          <section className="mt-6 rounded-3xl border border-stroke bg-white p-5 shadow-soft sm:p-7">
+            <div className="mb-7 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted">Last 30 days</p>
+                <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">Daily cost</h2>
+              </div>
+              <p className="text-xs text-faint">USD</p>
+            </div>
+            <div className="h-72 w-full" aria-label="Daily LLM cost chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={daily} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <CartesianGrid stroke="#e4e4df" strokeDasharray="2 5" vertical={false} />
+                  <XAxis
+                    axisLine={false}
+                    dataKey="date"
+                    interval={4}
+                    tick={{ fill: "#a2a49f", fontSize: 10 }}
+                    tickFormatter={(date: string) => date.slice(5)}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tick={{ fill: "#a2a49f", fontSize: 10 }}
+                    tickFormatter={formatUsd}
+                    tickLine={false}
+                    width={64}
+                  />
+                  <Tooltip
+                    content={<CostChartTooltip />}
+                    cursor={{ fill: "#eef3ee" }}
+                  />
+                  <Bar dataKey="costUsd" fill="#59715e" maxBarSize={22} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <LlmSubtotalTable
+              title="By purpose"
+              labelTitle="Purpose"
+              rows={summary.byPurpose.map((row) => ({ ...row, label: formatPurpose(row.purpose) }))}
+            />
+            <LlmSubtotalTable
+              title="By model"
+              labelTitle="Model"
+              rows={summary.byModel.map((row) => ({ ...row, label: row.model }))}
+            />
+          </div>
+
+          <LlmRequestTable requests={requests} />
+        </>
+      )}
+    </section>
+  );
+}
+
+function LlmSummaryTiles(props: { summary: LlmRequestSummary }) {
+  const failureRate = props.summary.total.requestCount === 0
+    ? 0
+    : props.summary.total.failedCount / props.summary.total.requestCount;
+  const tiles = [
+    { label: "This month", value: formatUsd(props.summary.thisMonth.costUsd), detail: `${props.summary.thisMonth.requestCount} requests` },
+    { label: "Last 7 days", value: formatUsd(props.summary.last7Days.costUsd), detail: `${props.summary.last7Days.requestCount} requests` },
+    { label: "Total requests", value: formatInteger(props.summary.total.requestCount), detail: "all recorded time" },
+    { label: "Failure rate", value: formatPercentage(failureRate), detail: `${props.summary.total.failedCount} failed` }
+  ];
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {tiles.map((tile) => (
+        <article key={tile.label} className="rounded-3xl border border-stroke bg-white p-5 shadow-soft sm:p-6">
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted">{tile.label}</p>
+          <p className="mt-4 font-display text-[2rem] leading-none tracking-[-0.04em] text-ink">{tile.value}</p>
+          <p className="mt-3 text-xs text-faint">{tile.detail}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function CostChartTooltip(props: {
+  active?: boolean;
+  payload?: Array<{ payload?: DailyCostPoint }>;
+}) {
+  const point = props.payload?.[0]?.payload;
+  if (!props.active || !point) {
+    return null;
+  }
+  return (
+    <div className="rounded-2xl border border-stroke bg-white px-4 py-3 shadow-toast">
+      <p className="text-[0.68rem] font-semibold text-muted">{formatChartDate(point.date)}</p>
+      <p className="mt-1 text-sm font-semibold text-ink">{formatUsd(point.costUsd)}</p>
+      <p className="mt-0.5 text-[0.68rem] text-faint">{point.requestCount} requests</p>
+    </div>
+  );
+}
+
+function LlmSubtotalTable(props: {
+  title: string;
+  labelTitle: string;
+  rows: Array<{ label: string; costUsd: number; requestCount: number }>;
+}) {
+  return (
+    <section className="overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
+      <div className="border-b border-stroke px-5 py-5 sm:px-7">
+        <h2 className="font-display text-xl tracking-[-0.025em] text-ink">{props.title}</h2>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[28rem] text-left text-xs">
+          <thead className="text-[0.62rem] uppercase tracking-[0.12em] text-faint">
+            <tr>
+              <th className="px-5 py-3 font-semibold sm:px-7">{props.labelTitle}</th>
+              <th className="px-4 py-3 text-right font-semibold">Requests</th>
+              <th className="px-5 py-3 text-right font-semibold sm:px-7">Cost</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stroke">
+            {props.rows.map((row) => (
+              <tr key={row.label}>
+                <td className="max-w-xs break-words px-5 py-4 font-medium text-ink sm:px-7">{row.label}</td>
+                <td className="px-4 py-4 text-right tabular-nums text-muted">{formatInteger(row.requestCount)}</td>
+                <td className="px-5 py-4 text-right font-semibold tabular-nums text-ink sm:px-7">{formatUsd(row.costUsd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function LlmRequestTable(props: { requests: LlmRequestRecord[] }) {
+  return (
+    <section className="mt-6 overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
+      <div className="flex items-end justify-between gap-4 border-b border-stroke px-5 py-5 sm:px-7">
+        <div>
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted">Latest activity</p>
+          <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">Recent requests</h2>
+        </div>
+        <p className="text-xs text-faint">{props.requests.length} shown</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[58rem] text-left text-xs">
+          <thead className="text-[0.62rem] uppercase tracking-[0.12em] text-faint">
+            <tr>
+              <th className="px-5 py-3 font-semibold sm:px-7">Time</th>
+              <th className="px-4 py-3 font-semibold">Purpose</th>
+              <th className="px-4 py-3 font-semibold">Model</th>
+              <th className="px-4 py-3 text-right font-semibold">In</th>
+              <th className="px-4 py-3 text-right font-semibold">Out</th>
+              <th className="px-4 py-3 text-right font-semibold">Cost</th>
+              <th className="px-5 py-3 text-right font-semibold sm:px-7">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stroke">
+            {props.requests.map((request) => (
+              <tr key={request.id}>
+                <td className="whitespace-nowrap px-5 py-4 text-muted sm:px-7">{formatRequestDateTime(request.requestedAt)}</td>
+                <td className="px-4 py-4 font-medium text-ink">{formatPurpose(request.purpose)}</td>
+                <td className="max-w-xs break-words px-4 py-4 text-muted">{request.model}</td>
+                <td className="px-4 py-4 text-right tabular-nums text-muted">{formatOptionalInteger(request.inputTokens)}</td>
+                <td className="px-4 py-4 text-right tabular-nums text-muted">{formatOptionalInteger(request.outputTokens)}</td>
+                <td className="px-4 py-4 text-right font-semibold tabular-nums text-ink">{formatOptionalUsd(request.costUsd)}</td>
+                <td className="px-5 py-4 text-right sm:px-7">
+                  <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.08em] ${
+                    request.status === "succeeded" ? "bg-sage-soft text-sage" : "bg-danger-soft text-danger"
+                  }`}>
+                    {request.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function NoteCard(props: {
   note: NoteRecord;
   disabled: boolean;
@@ -926,6 +1194,76 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
 
 function formatProjectLabel(project: ProjectContext) {
   return project.repo ? `${project.name} / ${project.repo}` : project.name;
+}
+
+function fillDailyCostSeries(daily: DailyCostPoint[]) {
+  const valuesByDate = new Map(daily.map((point) => [point.date, point]));
+  const today = new Date();
+  const points: DailyCostPoint[] = [];
+  for (let daysAgo = 29; daysAgo >= 0; daysAgo -= 1) {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysAgo);
+    const dateKey = formatLocalDateKey(date);
+    points.push(valuesByDate.get(dateKey) ?? { date: dateKey, costUsd: 0, requestCount: 0 });
+  }
+  return points;
+}
+
+function formatLocalDateKey(date: Date) {
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatUsd(value: number) {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid USD amount: ${value}`);
+  }
+  return `$${new Intl.NumberFormat("en-US", {
+    maximumSignificantDigits: 3,
+    useGrouping: true
+  }).format(value)}`;
+}
+
+function formatOptionalUsd(value: number | null) {
+  return value === null ? "—" : formatUsd(value);
+}
+
+function formatInteger(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatOptionalInteger(value: number | null) {
+  return value === null ? "—" : formatInteger(value);
+}
+
+function formatPercentage(value: number) {
+  return `${new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 }).format(value * 100)}%`;
+}
+
+function formatPurpose(value: string) {
+  return value.replaceAll("_", " ");
+}
+
+function formatChartDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  if (!Number.isFinite(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatRequestDateTime(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "Unknown time";
+  }
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function formatRelativeDate(value: string | undefined) {

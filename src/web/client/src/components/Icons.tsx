@@ -64,6 +64,14 @@ export function MemoryIcon(props: IconProps) {
   );
 }
 
+export function LlmIcon(props: IconProps) {
+  return (
+    <IconFrame {...props}>
+      <path d="M4 16V9M8 19V5M12 16V9M16 20V4M20 16V8" />
+    </IconFrame>
+  );
+}
+
 export function NoteIcon(props: IconProps) {
   return (
     <IconFrame {...props}>

@@ -7,6 +7,7 @@ import { runMigrations } from "../db/migrations.js";
 import { createEmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { MemoryFileStore } from "../memory/fileStore.js";
 import { IndexingService } from "../memory/indexingService.js";
+import { LlmRequestLogService } from "../memory/llmRequestLogService.js";
 import { NoteService } from "../memory/noteService.js";
 import { RationaleService } from "../memory/rationaleService.js";
 import type {
@@ -18,6 +19,8 @@ import type { MemoryCatalogSortMode, MemoryCatalogStatus } from "../db/queries.j
 
 const defaultPageSize = 25;
 const maximumPageSize = 100;
+const defaultLlmRequestLimit = 50;
+const maximumLlmRequestLimit = 200;
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl);
@@ -26,6 +29,7 @@ const embeddingProvider = createEmbeddingProvider(config);
 const indexingService = new IndexingService(pool, fileStore, embeddingProvider, config);
 const rationaleService = new RationaleService(pool, fileStore, indexingService, embeddingProvider, config);
 const noteService = new NoteService(pool);
+const llmRequestLogService = new LlmRequestLogService(pool);
 const clientDirectory = path.resolve(process.cwd(), "dist/web/client");
 
 await runMigrations(pool);
@@ -125,6 +129,22 @@ async function routeApiRequest(
       pageSize: readPageSize(url.searchParams.get("pageSize"))
     });
     writeJson(response, 200, result);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/llm-requests") {
+    const limit = readPositiveInteger(url.searchParams.get("limit"), defaultLlmRequestLimit, "limit");
+    if (limit > maximumLlmRequestLimit) {
+      throw new Error(`limit cannot exceed ${maximumLlmRequestLimit}.`);
+    }
+    const requests = await llmRequestLogService.listRequests(limit);
+    writeJson(response, 200, { requests });
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/llm-requests/summary") {
+    const summary = await llmRequestLogService.getSummary();
+    writeJson(response, 200, summary);
     return;
   }
 
