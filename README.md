@@ -190,24 +190,20 @@ npm run cli -- reindex changed
 npm run cli -- reindex untagged
 ```
 
-## Review UI
+## Memory UI
 
-The web UI is a light, minimal review surface for queued rationale candidates. It intentionally starts with focused workflows:
+The web UI is a private, reading-first catalog for the stored memories and notes. It uses React, Tailwind CSS, TanStack Query, and a small fetch wrapper, and talks to the separate `web` server API rather than the MCP transport.
 
-- list queued memories
-- inspect and review a selected memory
-- inspect usage feedback and lifecycle state for a selected memory
+The main memory workflow is intentionally narrow:
 
-Review actions available in the first UI pass:
+- browse current, deprecated, or all memories
+- search titles and bodies
+- sort by creation time, last use, or use count
+- read canonical Markdown in a responsive document view
+- deprecate an unwanted memory and continue to the next item
+- inspect lifecycle, usage, tags, and raw metadata only when needed
 
-- accept
-- keep as candidate
-- needs revision
-- deprecate
-
-The UI uses React, Tailwind CSS, TanStack Query, and a small fetch wrapper. It talks to the separate `web` server API, not directly to the MCP transport.
-
-Queued memories are sorted by review priority instead of raw update time by default. `needs_revision`, negative feedback that needs review attention, explicit positive use count, recent positive use, and positive feedback contribute to the queue score. The queue includes the priority score and signed score contribution reasons so reviewers can see why an item rose to the top. Reviewers can also sort by last used, positive feedback, negative feedback, or use count, and filter the list to entries with repair attention, feedback, or recent usage. Review actions advance the detail pane to the next queued item, and the queue supports selecting visible entries for bulk accept, keep, revise, or deprecate actions. Quick views switch between the unreviewed inbox, repair-focused work, and reviewed promotion candidates.
+The notes view supports search, newest/oldest sorting, and archive/restore actions. Review notes, review scoring, promotion shortcuts, and accept/revise controls are not exposed in the primary UI because they are not part of the normal personal workflow. The older review API remains available for compatibility with existing callers.
 
 ## Embeddings
 

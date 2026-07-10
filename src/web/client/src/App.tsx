@@ -1,75 +1,65 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchReviewQueue,
-  fetchReviewQueueDetail,
-  submitReviewAction,
-  type ReviewQueueFilters,
-  type ReviewQueueSignalFilter,
-  type ReviewQueueSortMode
-} from "./api/reviewQueue";
+  fetchMemories,
+  type MemoryCatalogItem,
+  type MemoryCatalogSortMode,
+  type MemoryCatalogStatus
+} from "./api/memories";
 import {
   archiveNote,
   fetchNotes,
   restoreNote,
   type NoteSortMode
 } from "./api/notes";
+import { fetchReviewQueueDetail, submitReviewAction } from "./api/reviewQueue";
+import { MarkdownContent } from "./components/MarkdownContent";
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  MemoryIcon,
+  NoteIcon,
+  RestoreIcon,
+  SearchIcon,
+  XIcon
+} from "./components/Icons";
 import type { NoteRecord } from "./types/note";
 import type { Pagination } from "./types/pagination";
-import type {
-  ProjectContext,
-  ReviewAction,
-  ReviewQueueItem,
-  UsageFeedbackCounts
-} from "./types/review";
-import { namedStatusColor } from "./theme/tokens";
+import type { ProjectContext, UsageFeedbackCounts } from "./types/review";
 
-const reviewStates = [
-  { value: "unreviewed", label: "Unreviewed" },
-  { value: "needs_revision", label: "Needs revision" },
-  { value: "reviewed", label: "Reviewed" },
-  { value: "all", label: "All states" }
-];
+type MainView = "memories" | "notes";
 
-const captureKinds = [
-  { value: "", label: "All sources" },
-  { value: "auto", label: "Auto" },
-  { value: "manual", label: "Manual" },
-  { value: "session", label: "Session" }
-];
-
-const queueSortModes = [
-  { value: "created", label: "Newest" },
-  { value: "priority", label: "Priority" },
-  { value: "last_used", label: "Last used" },
-  { value: "positive_feedback", label: "Positive feedback" },
-  { value: "negative_feedback", label: "Negative feedback" },
-  { value: "uses", label: "Use count" }
-];
-
-const queueSignalFilters = [
-  { value: "all", label: "All signals" },
-  { value: "repair_attention", label: "Repair attention" },
-  { value: "with_negative_feedback", label: "Negative feedback" },
-  { value: "with_positive_feedback", label: "Positive feedback" },
-  { value: "recently_used", label: "Recently used" }
-];
-
-const noteSortModes = [
-  { value: "newest", label: "Newest" },
-  { value: "oldest", label: "Oldest" }
-];
-
-type MainView = "review" | "notes";
+type ToastState = {
+  message: string;
+};
 
 const pageSize = 25;
 const searchDebounceMilliseconds = 300;
+
+const memoryStatuses: Array<{ value: MemoryCatalogStatus; label: string }> = [
+  { value: "current", label: "Current" },
+  { value: "deprecated", label: "Deprecated" },
+  { value: "all", label: "All" }
+];
+
+const memorySortModes: Array<{ value: MemoryCatalogSortMode; label: string }> = [
+  { value: "created", label: "Recently added" },
+  { value: "last_used", label: "Recently used" },
+  { value: "uses", label: "Most used" }
+];
+
+const noteSortModes: Array<{ value: NoteSortMode; label: string }> = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" }
+];
 
 function useDebouncedValue(value: string, delayMilliseconds: number) {
   const [debouncedValue, setDebouncedValue] = useState(value);
 
   useEffect(() => {
-    // 검색어를 입력하는 동안 매 키 입력마다 서버 조회가 발생하지 않도록 짧게 지연한다.
+    // 검색 중인 미완성 문자열이 매 키 입력마다 서버 쿼리가 되는 것을 피한다.
     const timeout = window.setTimeout(() => setDebouncedValue(value.trim()), delayMilliseconds);
     return () => window.clearTimeout(timeout);
   }, [delayMilliseconds, value]);
@@ -78,371 +68,259 @@ function useDebouncedValue(value: string, delayMilliseconds: number) {
 }
 
 export function App() {
+  const [mainView, setMainView] = useState<MainView>("memories");
+
+  return (
+    <main className="min-h-screen bg-canvas text-ink">
+      <AppHeader mainView={mainView} onViewChange={setMainView} />
+      {mainView === "memories" ? <MemoryLibrary /> : <NotesLibrary />}
+    </main>
+  );
+}
+
+function AppHeader(props: {
+  mainView: MainView;
+  onViewChange: (view: MainView) => void;
+}) {
+  return (
+    <header className="sticky top-0 z-30 border-b border-stroke bg-white/95 backdrop-blur-md">
+      <div className="mx-auto flex h-[4.5rem] max-w-[1500px] items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-ink text-sm font-semibold tracking-[-0.04em] text-white">
+            M
+          </span>
+          <div>
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-muted">Rationale</p>
+            <p className="text-sm font-semibold tracking-[-0.02em] text-ink">Memory</p>
+          </div>
+        </div>
+        <nav className="flex items-center rounded-full bg-canvas p-1" aria-label="Main navigation">
+          <NavigationButton
+            active={props.mainView === "memories"}
+            icon={<MemoryIcon className="h-4 w-4" />}
+            label="Memories"
+            onClick={() => props.onViewChange("memories")}
+          />
+          <NavigationButton
+            active={props.mainView === "notes"}
+            icon={<NoteIcon className="h-4 w-4" />}
+            label="Notes"
+            onClick={() => props.onViewChange("notes")}
+          />
+        </nav>
+      </div>
+    </header>
+  );
+}
+
+function NavigationButton(props: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold transition-all sm:px-4 ${
+        props.active ? "bg-white text-ink shadow-soft" : "text-muted hover:text-ink"
+      }`}
+      aria-current={props.active ? "page" : undefined}
+      onClick={props.onClick}
+    >
+      {props.icon}
+      <span>{props.label}</span>
+    </button>
+  );
+}
+
+function MemoryLibrary() {
   const queryClient = useQueryClient();
-  const [reviewState, setReviewState] = useState("unreviewed");
-  const [captureKind, setCaptureKind] = useState("");
-  const [queueSortMode, setQueueSortMode] = useState<ReviewQueueSortMode>("created");
-  const [queueSignalFilter, setQueueSignalFilter] = useState<ReviewQueueSignalFilter>("all");
-  const [queueSearchInput, setQueueSearchInput] = useState("");
-  const [queuePage, setQueuePage] = useState(1);
+  const [status, setStatus] = useState<MemoryCatalogStatus>("current");
+  const [sortMode, setSortMode] = useState<MemoryCatalogSortMode>("created");
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | undefined>();
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [notes, setNotes] = useState("");
-  const [operationMessage, setOperationMessage] = useState<string | undefined>();
-  const [mainView, setMainView] = useState<MainView>("review");
-  const [includeArchivedNotes, setIncludeArchivedNotes] = useState(false);
-  const [noteSortMode, setNoteSortMode] = useState<NoteSortMode>("newest");
-  const [noteSearchInput, setNoteSearchInput] = useState("");
-  const [notePage, setNotePage] = useState(1);
-  const queueSearch = useDebouncedValue(queueSearchInput, searchDebounceMilliseconds);
-  const noteSearch = useDebouncedValue(noteSearchInput, searchDebounceMilliseconds);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [toast, setToast] = useState<ToastState | undefined>();
+  const search = useDebouncedValue(searchInput, searchDebounceMilliseconds);
 
-  const filters: ReviewQueueFilters = useMemo(() => ({
-    captureKind: captureKind.length > 0 ? captureKind : undefined,
-    reviewState,
-    search: queueSearch.length > 0 ? queueSearch : undefined,
-    sortMode: queueSortMode,
-    signalFilter: queueSignalFilter,
-    page: queuePage,
+  const filters = useMemo(() => ({
+    status,
+    sortMode,
+    search: search.length > 0 ? search : undefined,
+    page,
     pageSize
-  }), [captureKind, queuePage, queueSearch, queueSignalFilter, queueSortMode, reviewState]);
+  }), [page, search, sortMode, status]);
 
-  const queueQuery = useQuery({
-    queryKey: ["review-queue", filters],
-    queryFn: () => fetchReviewQueue(filters)
+  const memoriesQuery = useQuery({
+    queryKey: ["memories", filters],
+    queryFn: () => fetchMemories(filters)
   });
-
-  const notesQuery = useQuery({
-    queryKey: ["notes", includeArchivedNotes, notePage, noteSearch, noteSortMode],
-    queryFn: () => fetchNotes({
-      includeArchived: includeArchivedNotes,
-      search: noteSearch.length > 0 ? noteSearch : undefined,
-      sortMode: noteSortMode,
-      page: notePage,
-      pageSize
-    }),
-    enabled: mainView === "notes"
-  });
-
-  const items = queueQuery.data?.items ?? [];
+  const entries = memoriesQuery.data?.entries ?? [];
 
   useEffect(() => {
-    const currentPage = queueQuery.data?.pagination.page;
-    if (currentPage !== undefined && currentPage !== queuePage) {
-      setQueuePage(currentPage);
+    const responsePage = memoriesQuery.data?.pagination.page;
+    if (responsePage !== undefined && responsePage !== page) {
+      setPage(responsePage);
     }
-  }, [queuePage, queueQuery.data?.pagination.page]);
+  }, [memoriesQuery.data?.pagination.page, page]);
 
   useEffect(() => {
-    const currentPage = notesQuery.data?.pagination.page;
-    if (currentPage !== undefined && currentPage !== notePage) {
-      setNotePage(currentPage);
-    }
-  }, [notePage, notesQuery.data?.pagination.page]);
-
-  useEffect(() => {
-    if (selectedId && items.some((item) => item.id === selectedId)) {
+    if (selectedId && entries.some((entry) => entry.id === selectedId)) {
       return;
     }
-
-    setSelectedId(items[0]?.id);
-  }, [items, selectedId]);
+    setSelectedId(entries[0]?.id);
+  }, [entries, selectedId]);
 
   useEffect(() => {
-    setSelectedIds((currentIds) => currentIds.filter((id) => items.some((item) => item.id === id)));
-  }, [items]);
+    if (!toast) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setToast(undefined), 4500);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   const detailQuery = useQuery({
-    queryKey: ["review-queue-detail", selectedId],
+    queryKey: ["memory-detail", selectedId],
     queryFn: () => {
       if (!selectedId) {
-        throw new Error("No selected item.");
+        throw new Error("No memory selected.");
       }
       return fetchReviewQueueDetail(selectedId);
     },
     enabled: Boolean(selectedId)
   });
 
-  const reviewMutation = useMutation({
-    mutationFn: (input: { id: string; action: ReviewAction }) => {
-      return submitReviewAction({
-        id: input.id,
-        action: input.action,
-        notes,
-        reason: notes || "Reviewed from web UI."
-      });
-    },
-    onSuccess: async (_, input) => {
-      setNotes("");
-      setOperationMessage(formatReviewActionMessage(input.action, 1));
-      setSelectedId(findNextQueuedItemId(items, input.id));
-      await queryClient.invalidateQueries({ queryKey: ["review-queue"] });
-      await queryClient.invalidateQueries({ queryKey: ["review-queue-detail"] });
+  const deprecateMutation = useMutation({
+    mutationFn: (id: string) => submitReviewAction({
+      id,
+      action: "deprecate",
+      reason: "Deprecated from the memory library."
+    }),
+    onSuccess: async (_, deprecatedId) => {
+      setSelectedId(findNextMemoryId(entries, deprecatedId));
+      setMobileDetailOpen(false);
+      setToast({ message: "Memory deprecated" });
+      await queryClient.invalidateQueries({ queryKey: ["memories"] });
+      await queryClient.invalidateQueries({ queryKey: ["memory-detail"] });
     }
   });
 
-  const bulkReviewMutation = useMutation({
-    mutationFn: async (input: { ids: string[]; action: ReviewAction }) => {
-      for (const id of input.ids) {
-        await submitReviewAction({
-          id,
-          action: input.action,
-          notes,
-          reason: notes || "Reviewed from web UI."
-        });
-      }
-      return input.ids.length;
-    },
-    onSuccess: async (count, input) => {
-      setNotes("");
-      setSelectedIds([]);
-      setOperationMessage(formatReviewActionMessage(input.action, count));
-      if (selectedId && input.ids.includes(selectedId)) {
-        setSelectedId(findNextQueuedItemIdExcluding(items, input.ids));
-      }
-      await queryClient.invalidateQueries({ queryKey: ["review-queue"] });
-      await queryClient.invalidateQueries({ queryKey: ["review-queue-detail"] });
-    }
-  });
-
-  const archiveNoteMutation = useMutation({
-    mutationFn: archiveNote,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["notes"] });
-    }
-  });
-
-  const restoreNoteMutation = useMutation({
-    mutationFn: restoreNote,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["notes"] });
-    }
-  });
+  function resetListPosition() {
+    setPage(1);
+    setMobileDetailOpen(false);
+  }
 
   return (
-    <main className="min-h-screen bg-surface-page text-ink-base">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 py-5 lg:px-8">
-        <header className="flex flex-col gap-5 border-b border-line-base pb-5 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Rationale Memory Store</p>
-            <h1 className="text-2xl font-semibold text-ink-strong">{mainView === "review" ? "Review Queue" : "Notes"}</h1>
-            <ViewSwitch value={mainView} onChange={setMainView} />
-          </div>
-          {mainView === "review" ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
-                <label className="text-sm">
-                  <span className="mb-1 block text-xs font-medium text-ink-muted">State</span>
-                  <select
-                    className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-                    value={reviewState}
-                    onChange={(event) => {
-                      setReviewState(event.target.value);
-                      setQueuePage(1);
-                    }}
-                  >
-                    {reviewStates.map((state) => (
-                      <option key={state.value} value={state.value}>{state.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="text-sm">
-                  <span className="mb-1 block text-xs font-medium text-ink-muted">Source</span>
-                  <select
-                    className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-                    value={captureKind}
-                    onChange={(event) => {
-                      setCaptureKind(event.target.value);
-                      setQueuePage(1);
-                    }}
-                  >
-                    {captureKinds.map((kind) => (
-                      <option key={kind.value} value={kind.value}>{kind.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <QuickViewControls
-                onInbox={() => {
-                  setReviewState("unreviewed");
-                  setQueueSignalFilter("all");
-                  setQueueSortMode("created");
-                  setQueuePage(1);
-                }}
-                onRepair={() => {
-                  setReviewState("all");
-                  setQueueSignalFilter("repair_attention");
-                  setQueueSortMode("priority");
-                  setQueuePage(1);
-                }}
-                onPromotion={() => {
-                  setReviewState("reviewed");
-                  setQueueSignalFilter("all");
-                  setQueueSortMode("positive_feedback");
-                  setQueuePage(1);
-                }}
-              />
-            </div>
-          ) : (
-            <label className="flex items-center gap-2 text-sm font-medium text-ink-base">
-              <input
-                type="checkbox"
-                className="rounded border-line-base text-action-base focus:ring-action-base"
-                checked={includeArchivedNotes}
-                onChange={(event) => {
-                  setIncludeArchivedNotes(event.target.checked);
-                  setNotePage(1);
-                }}
-              />
-              Include archived
-            </label>
-          )}
-        </header>
-
-        {mainView === "review" ? (
-          <section className="grid min-h-0 flex-1 gap-6 py-6 lg:grid-cols-[380px_minmax(0,1fr)]">
-            <QueueList
-              items={items}
-              selectedId={selectedId}
-              isLoading={queueQuery.isLoading}
-              error={queueQuery.error}
-              pagination={queueQuery.data?.pagination}
-              search={queueSearchInput}
-              sortMode={queueSortMode}
-              signalFilter={queueSignalFilter}
-              selectedIds={selectedIds}
-              isBulkMutating={bulkReviewMutation.isPending}
-              bulkError={bulkReviewMutation.error}
-              onSearchChange={(value) => {
-                setQueueSearchInput(value);
-                setQueuePage(1);
-              }}
-              onSortModeChange={(value) => {
-                setQueueSortMode(value);
-                setQueuePage(1);
-              }}
-              onSignalFilterChange={(value) => {
-                setQueueSignalFilter(value);
-                setQueuePage(1);
-              }}
-              onPageChange={setQueuePage}
-              onSelect={setSelectedId}
-              onToggleSelection={(id) => setSelectedIds((currentIds) => toggleSelectedId(currentIds, id))}
-              onSelectVisible={() => setSelectedIds(items.map((item) => item.id))}
-              onClearSelection={() => setSelectedIds([])}
-              onBulkAction={(action) => {
-                if (selectedIds.length === 0) {
-                  throw new Error("No selected items.");
-                }
-                bulkReviewMutation.mutate({ ids: selectedIds, action });
-              }}
-            />
-            <DetailPanel
-              item={detailQuery.data}
-              isLoading={detailQuery.isLoading}
-              error={detailQuery.error}
-              notes={notes}
-              operationMessage={operationMessage}
-              actionError={reviewMutation.error}
-              onNotesChange={setNotes}
-              onAction={(action) => {
-                if (!selectedId) {
-                  throw new Error("No selected item.");
-                }
-                reviewMutation.mutate({ id: selectedId, action });
-              }}
-              isMutating={reviewMutation.isPending}
-            />
-          </section>
-        ) : (
-          <NotesView
-            notes={notesQuery.data?.notes ?? []}
-            isLoading={notesQuery.isLoading}
-            error={notesQuery.error}
-            pagination={notesQuery.data?.pagination}
-            search={noteSearchInput}
-            sortMode={noteSortMode}
-            actionError={archiveNoteMutation.error ?? restoreNoteMutation.error}
-            isMutating={archiveNoteMutation.isPending || restoreNoteMutation.isPending}
-            onSearchChange={(value) => {
-              setNoteSearchInput(value);
-              setNotePage(1);
-            }}
-            onSortModeChange={(value) => {
-              setNoteSortMode(value);
-              setNotePage(1);
-            }}
-            onPageChange={setNotePage}
-            onArchive={(id) => archiveNoteMutation.mutate(id)}
-            onRestore={(id) => restoreNoteMutation.mutate(id)}
-          />
-        )}
-      </div>
-    </main>
+    <>
+      <section className="mx-auto grid min-w-0 max-w-[1500px] grid-cols-1 md:min-h-[calc(100dvh-4.5rem)] md:grid-cols-[minmax(20rem,25rem)_minmax(0,1fr)]">
+        <MemoryListPane
+          entries={entries}
+          error={memoriesQuery.error}
+          isLoading={memoriesQuery.isLoading}
+          mobileDetailOpen={mobileDetailOpen}
+          pagination={memoriesQuery.data?.pagination}
+          search={searchInput}
+          selectedId={selectedId}
+          sortMode={sortMode}
+          status={status}
+          onPageChange={(nextPage) => {
+            setPage(nextPage);
+            setMobileDetailOpen(false);
+          }}
+          onSearchChange={(value) => {
+            setSearchInput(value);
+            resetListPosition();
+          }}
+          onSelect={(id) => {
+            setSelectedId(id);
+            setMobileDetailOpen(true);
+          }}
+          onSortModeChange={(value) => {
+            setSortMode(value);
+            resetListPosition();
+          }}
+          onStatusChange={(value) => {
+            setStatus(value);
+            resetListPosition();
+          }}
+        />
+        <MemoryDetailPane
+          actionError={deprecateMutation.error}
+          detail={detailQuery.data}
+          error={detailQuery.error}
+          isLoading={detailQuery.isLoading}
+          isMutating={deprecateMutation.isPending}
+          mobileDetailOpen={mobileDetailOpen}
+          onBack={() => setMobileDetailOpen(false)}
+          onDeprecate={() => {
+            if (!selectedId) {
+              throw new Error("No memory selected.");
+            }
+            deprecateMutation.mutate(selectedId);
+          }}
+        />
+      </section>
+      {toast ? <Toast message={toast.message} onDismiss={() => setToast(undefined)} /> : null}
+    </>
   );
 }
 
-function ViewSwitch(props: {
-  value: MainView;
-  onChange: (value: MainView) => void;
-}) {
-  return (
-    <div className="inline-grid grid-cols-2 rounded-md border border-line-base bg-surface-panel p-1">
-      <button
-        type="button"
-        className={viewSwitchButtonClassName(props.value === "review")}
-        onClick={() => props.onChange("review")}
-      >
-        Review
-      </button>
-      <button
-        type="button"
-        className={viewSwitchButtonClassName(props.value === "notes")}
-        onClick={() => props.onChange("notes")}
-      >
-        Notes
-      </button>
-    </div>
-  );
-}
-
-function NotesView(props: {
-  notes: NoteRecord[];
-  isLoading: boolean;
+function MemoryListPane(props: {
+  entries: MemoryCatalogItem[];
   error: Error | null;
+  isLoading: boolean;
+  mobileDetailOpen: boolean;
   pagination?: Pagination;
   search: string;
-  sortMode: NoteSortMode;
-  actionError: Error | null;
-  isMutating: boolean;
-  onSearchChange: (value: string) => void;
-  onSortModeChange: (value: NoteSortMode) => void;
+  selectedId?: string;
+  sortMode: MemoryCatalogSortMode;
+  status: MemoryCatalogStatus;
   onPageChange: (page: number) => void;
-  onArchive: (id: string) => void;
-  onRestore: (id: string) => void;
+  onSearchChange: (value: string) => void;
+  onSelect: (id: string) => void;
+  onSortModeChange: (value: MemoryCatalogSortMode) => void;
+  onStatusChange: (value: MemoryCatalogStatus) => void;
 }) {
   return (
-    <section className="min-h-0 flex-1 py-6">
-      <div className="mb-4 flex flex-col gap-3 border-b border-line-base pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-ink-strong">Stored notes</h2>
-          <p className="mt-1 text-xs text-ink-muted">{props.pagination?.totalItems ?? 0} matching notes</p>
+    <aside className={`${props.mobileDetailOpen ? "hidden" : "block"} min-w-0 border-stroke bg-canvas md:block md:h-[calc(100dvh-4.5rem)] md:overflow-y-auto md:border-r`}>
+      <div className="sticky top-0 z-10 border-b border-stroke bg-canvas/95 px-4 pb-4 pt-7 backdrop-blur-md sm:px-6">
+        <div className="mb-5 flex items-end justify-between gap-4">
+          <div>
+            <p className="mb-1 text-[0.68rem] font-semibold uppercase tracking-[0.17em] text-muted">Library</p>
+            <h1 className="font-display text-[2rem] leading-none tracking-[-0.035em] text-ink">Memories</h1>
+          </div>
+          <span className="pb-0.5 text-xs tabular-nums text-muted">
+            {props.pagination?.totalItems ?? 0} items
+          </span>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <SearchField
-            value={props.search}
-            placeholder="Search title or body"
-            label="Search notes"
-            onChange={props.onSearchChange}
-          />
-          <label className="text-sm">
-            <span className="sr-only">Sort notes</span>
+
+        <SearchField value={props.search} placeholder="Search your memory" onChange={props.onSearchChange} />
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex w-fit min-w-0 rounded-full border border-stroke bg-white p-1">
+            {memoryStatuses.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                className={`h-8 rounded-full px-3 text-[0.7rem] font-semibold transition-colors ${
+                  props.status === item.value ? "bg-ink text-white" : "text-muted hover:text-ink"
+                }`}
+                onClick={() => props.onStatusChange(item.value)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <label className="min-w-0 sm:w-auto">
+            <span className="sr-only">Sort memories</span>
             <select
-              className="h-9 rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
+              className="h-9 w-full truncate rounded-full border-0 bg-transparent py-0 pl-3 pr-8 text-xs font-medium text-muted shadow-none focus:ring-1 focus:ring-ink sm:max-w-[8.7rem]"
               value={props.sortMode}
-              onChange={(event) => props.onSortModeChange(readNoteSortMode(event.target.value))}
+              onChange={(event) => props.onSortModeChange(readMemorySortMode(event.target.value))}
             >
-              {noteSortModes.map((mode) => (
+              {memorySortModes.map((mode) => (
                 <option key={mode.value} value={mode.value}>{mode.label}</option>
               ))}
             </select>
@@ -450,292 +328,447 @@ function NotesView(props: {
         </div>
       </div>
 
-      {props.actionError ? <p className="mb-4 text-sm text-danger-base">{props.actionError.message}</p> : null}
-
       {props.isLoading ? (
-        <p className="text-sm text-ink-muted">Loading notes...</p>
+        <MemoryListSkeleton />
       ) : props.error ? (
-        <p className="text-sm text-danger-base">{props.error.message}</p>
-      ) : props.notes.length === 0 ? (
-        <div className="border-y border-line-base py-8 text-sm text-ink-muted">No notes match this view.</div>
+        <InlineError message={props.error.message} />
+      ) : props.entries.length === 0 ? (
+        <EmptyState
+          title="Nothing here"
+          description={props.search ? "Try a different search." : "This shelf is quietly empty."}
+        />
       ) : (
-        <div className="divide-y divide-line-base border-y border-line-base">
-          {props.notes.map((note) => (
-            <article key={note.id} className="grid gap-4 py-4 md:grid-cols-[minmax(0,1fr)_160px]">
-              <div className="min-w-0">
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <StatusPill value={note.archived ? "archived" : "active"} />
-                  <MetadataPill value={`score ${note.upvotes - note.downvotes}`} />
-                  <MetadataPill value={`up ${note.upvotes}`} />
-                  <MetadataPill value={`down ${note.downvotes}`} />
-                </div>
-                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-ink-base">{note.content}</p>
-                <NoteSourceContext note={note} />
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint">
-                  <span>{note.id}</span>
-                  <span>Created {formatRelativeDate(note.createdAt)}</span>
-                  <span>Updated {formatRelativeDate(note.updatedAt)}</span>
-                </div>
-              </div>
-              <div className="flex items-start md:justify-end">
-                {note.archived ? (
-                  <SmallControlButton disabled={props.isMutating} onClick={() => props.onRestore(note.id)}>Restore</SmallControlButton>
-                ) : (
-                  <SmallControlButton danger disabled={props.isMutating} onClick={() => props.onArchive(note.id)}>Archive</SmallControlButton>
-                )}
-              </div>
-            </article>
+        <div className="px-2 py-2 sm:px-3">
+          {props.entries.map((entry) => (
+            <MemoryListItem
+              key={entry.id}
+              entry={entry}
+              selected={props.selectedId === entry.id}
+              onClick={() => props.onSelect(entry.id)}
+            />
           ))}
         </div>
       )}
       {props.pagination ? (
+        <div className="px-4 pb-6 sm:px-6">
+          <PaginationControls
+            pagination={props.pagination}
+            disabled={props.isLoading}
+            onPageChange={props.onPageChange}
+          />
+        </div>
+      ) : null}
+    </aside>
+  );
+}
+
+function MemoryListItem(props: {
+  entry: MemoryCatalogItem;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const project = props.entry.project ? formatProjectLabel(props.entry.project) : undefined;
+  const captureKind = readMetadataString(props.entry.metadata, "capture_kind") ?? props.entry.sourceKind;
+
+  return (
+    <button
+      type="button"
+      className={`group relative w-full rounded-2xl px-4 py-4 text-left transition-all ${
+        props.selected ? "bg-white shadow-soft" : "hover:bg-white/70"
+      }`}
+      data-testid={`memory-${props.entry.id}`}
+      onClick={props.onClick}
+    >
+      <span className={`absolute bottom-4 left-0 top-4 w-0.5 rounded-full transition-colors ${
+        props.entry.acceptanceState === "deprecated"
+          ? "bg-danger"
+          : props.selected
+            ? "bg-ink"
+            : "bg-transparent"
+      }`} />
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="line-clamp-2 text-[0.92rem] font-semibold leading-5 tracking-[-0.015em] text-ink">
+          {props.entry.title}
+        </h2>
+        <ChevronRightIcon className={`mt-0.5 h-4 w-4 shrink-0 transition-transform ${
+          props.selected ? "translate-x-0 text-ink" : "-translate-x-1 text-faint group-hover:translate-x-0 group-hover:text-ink"
+        }`} />
+      </div>
+      {props.entry.summary ? (
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted">{props.entry.summary}</p>
+      ) : null}
+      <div className="mt-3 flex min-w-0 items-center gap-2 text-[0.68rem] text-faint">
+        <StatusDot status={props.entry.acceptanceState} />
+        <span className="truncate">{project ?? captureKind ?? props.entry.type}</span>
+        <span aria-hidden="true">·</span>
+        <span className="shrink-0">{formatRelativeDate(props.entry.createdAt)}</span>
+        {props.entry.useCount > 0 ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="shrink-0">used {props.entry.useCount}</span>
+          </>
+        ) : null}
+      </div>
+    </button>
+  );
+}
+
+function MemoryDetailPane(props: {
+  actionError: Error | null;
+  detail: Awaited<ReturnType<typeof fetchReviewQueueDetail>> | undefined;
+  error: Error | null;
+  isLoading: boolean;
+  isMutating: boolean;
+  mobileDetailOpen: boolean;
+  onBack: () => void;
+  onDeprecate: () => void;
+}) {
+  const visibility = props.mobileDetailOpen ? "block" : "hidden md:block";
+  if (props.isLoading) {
+    return <div className={`${visibility} bg-white p-6 sm:p-10`}><DetailSkeleton /></div>;
+  }
+  if (props.error) {
+    return <div className={`${visibility} bg-white`}><InlineError message={props.error.message} /></div>;
+  }
+  if (!props.detail) {
+    return (
+      <div className="hidden place-items-center bg-white md:grid">
+        <EmptyState title="Choose a memory" description="Open something from the library to read it here." />
+      </div>
+    );
+  }
+
+  const { entry, usage } = props.detail;
+  const deprecated = entry.frontmatter.acceptanceState === "deprecated";
+  const captureKind = readMetadataString(entry.frontmatter.metadata, "capture_kind") ?? entry.frontmatter.source?.kind;
+
+  return (
+    <article className={`${visibility} min-w-0 bg-white md:h-[calc(100dvh-4.5rem)] md:overflow-y-auto`}>
+      <div className="mx-auto max-w-4xl px-5 pb-24 pt-5 sm:px-10 md:px-12 md:pt-10 lg:px-16 xl:px-20">
+        <button
+          type="button"
+          className="mb-8 inline-flex h-9 items-center gap-2 rounded-full border border-stroke px-3 text-xs font-semibold text-muted transition-colors hover:border-ink hover:text-ink md:hidden"
+          onClick={props.onBack}
+        >
+          <ArrowLeftIcon className="h-4 w-4" />
+          Library
+        </button>
+
+        <header className="border-b border-stroke pb-8">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <StatusBadge status={entry.frontmatter.acceptanceState} />
+              {captureKind ? <span className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-faint">{captureKind}</span> : null}
+            </div>
+            {!deprecated ? (
+              <button
+                type="button"
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-danger/30 px-4 text-xs font-semibold text-danger transition-colors hover:border-danger hover:bg-danger-soft disabled:cursor-wait disabled:opacity-50"
+                disabled={props.isMutating}
+                onClick={props.onDeprecate}
+              >
+                <ArchiveIcon className="h-4 w-4" />
+                {props.isMutating ? "Deprecating…" : "Deprecate"}
+              </button>
+            ) : null}
+          </div>
+
+          <h1 className="max-w-3xl font-display text-[2.35rem] leading-[1.08] tracking-[-0.045em] text-ink sm:text-[3rem]">
+            {entry.title}
+          </h1>
+          <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted">
+            {entry.frontmatter.project ? <span>{formatProjectLabel(entry.frontmatter.project)}</span> : null}
+            {entry.frontmatter.project ? <span aria-hidden="true" className="text-stroke-strong">/</span> : null}
+            <span>{entry.frontmatter.type}</span>
+            <span aria-hidden="true" className="text-stroke-strong">/</span>
+            <span>{usage.useCount === 0 ? "Not used yet" : `Used ${usage.useCount} times`}</span>
+            {usage.lastUsedAt ? (
+              <>
+                <span aria-hidden="true" className="text-stroke-strong">/</span>
+                <span>Last used {formatRelativeDate(usage.lastUsedAt)}</span>
+              </>
+            ) : null}
+          </div>
+        </header>
+
+        {props.actionError ? <InlineError message={props.actionError.message} /> : null}
+
+        <section className="py-9 sm:py-12">
+          <MarkdownContent body={entry.body} />
+        </section>
+
+        <TechnicalDetails
+          acceptanceState={entry.frontmatter.acceptanceState}
+          confidence={entry.frontmatter.confidence}
+          decisionState={entry.frontmatter.decisionState}
+          domains={entry.frontmatter.domains}
+          id={entry.frontmatter.id}
+          intents={entry.frontmatter.intents}
+          metadata={entry.frontmatter.metadata}
+          modes={entry.frontmatter.modes}
+          reviewState={entry.frontmatter.reviewState}
+          scope={entry.frontmatter.scope}
+          source={entry.frontmatter.source}
+          usageFeedback={usage.feedback}
+        />
+      </div>
+    </article>
+  );
+}
+
+function TechnicalDetails(props: {
+  acceptanceState: string;
+  confidence: number;
+  decisionState: string;
+  domains: string[];
+  id: string;
+  intents: string[];
+  metadata: Record<string, unknown>;
+  modes: string[];
+  reviewState: string;
+  scope: string;
+  source?: { kind: string; ref: string };
+  usageFeedback: UsageFeedbackCounts;
+}) {
+  return (
+    <details className="group border-t border-stroke pt-5">
+      <summary className="flex cursor-pointer list-none items-center justify-between py-2 text-xs font-semibold uppercase tracking-[0.13em] text-muted">
+        Technical details
+        <ChevronRightIcon className="h-4 w-4 transition-transform group-open:rotate-90" />
+      </summary>
+      <div className="animate-reveal pb-6 pt-5">
+        <dl className="grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-3">
+          <DetailFact label="Acceptance" value={props.acceptanceState} />
+          <DetailFact label="Review" value={props.reviewState} />
+          <DetailFact label="Decision" value={props.decisionState} />
+          <DetailFact label="Scope" value={props.scope} />
+          <DetailFact label="Confidence" value={props.confidence.toFixed(2)} />
+          <DetailFact label="Feedback" value={`+${props.usageFeedback.positiveCount} / -${props.usageFeedback.negativeCount}`} />
+        </dl>
+        <TagGroup label="Domains" values={props.domains} />
+        <TagGroup label="Intents" values={props.intents} />
+        <TagGroup label="Modes" values={props.modes} />
+        <div className="mt-6 grid gap-5 border-t border-stroke pt-6 text-xs sm:grid-cols-2">
+          <DetailFact label="Memory ID" value={props.id} />
+          <DetailFact label="Source" value={props.source ? `${props.source.kind}: ${props.source.ref}` : "Not provided"} />
+        </div>
+        <details className="mt-6">
+          <summary className="cursor-pointer text-xs font-semibold text-muted">Raw metadata</summary>
+          <pre className="mt-3 max-h-80 overflow-auto rounded-2xl bg-canvas p-4 text-[0.68rem] leading-5 text-muted">
+            {JSON.stringify(props.metadata, null, 2)}
+          </pre>
+        </details>
+      </div>
+    </details>
+  );
+}
+
+function DetailFact(props: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-faint">{props.label}</dt>
+      <dd className="mt-1 break-words text-xs leading-5 text-ink">{props.value}</dd>
+    </div>
+  );
+}
+
+function TagGroup(props: { label: string; values: string[] }) {
+  if (props.values.length === 0) {
+    return null;
+  }
+  return (
+    <div className="mt-6">
+      <p className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-faint">{props.label}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {props.values.map((value) => <span key={value} className="rounded-full bg-canvas px-3 py-1 text-[0.68rem] text-muted">{value}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function NotesLibrary() {
+  const queryClient = useQueryClient();
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [sortMode, setSortMode] = useState<NoteSortMode>("newest");
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(1);
+  const search = useDebouncedValue(searchInput, searchDebounceMilliseconds);
+  const notesQuery = useQuery({
+    queryKey: ["notes", includeArchived, page, search, sortMode],
+    queryFn: () => fetchNotes({
+      includeArchived,
+      search: search.length > 0 ? search : undefined,
+      sortMode,
+      page,
+      pageSize
+    })
+  });
+
+  useEffect(() => {
+    const responsePage = notesQuery.data?.pagination.page;
+    if (responsePage !== undefined && responsePage !== page) {
+      setPage(responsePage);
+    }
+  }, [notesQuery.data?.pagination.page, page]);
+
+  const archiveMutation = useMutation({
+    mutationFn: archiveNote,
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["notes"] })
+  });
+  const restoreMutation = useMutation({
+    mutationFn: restoreNote,
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["notes"] })
+  });
+  const actionError = archiveMutation.error ?? restoreMutation.error;
+  const isMutating = archiveMutation.isPending || restoreMutation.isPending;
+
+  return (
+    <section className="mx-auto max-w-5xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+      <header className="mb-8 sm:mb-12">
+        <p className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.17em] text-muted">Small things worth keeping</p>
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="font-display text-[2.7rem] leading-none tracking-[-0.045em] text-ink sm:text-5xl">Notes</h1>
+            <p className="mt-3 text-sm text-muted">{notesQuery.data?.pagination.totalItems ?? 0} notes in this view</p>
+          </div>
+          <label className="inline-flex items-center gap-3 text-xs font-semibold text-muted">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-stroke-strong text-ink focus:ring-ink"
+              checked={includeArchived}
+              onChange={(event) => {
+                setIncludeArchived(event.target.checked);
+                setPage(1);
+              }}
+            />
+            Show archived
+          </label>
+        </div>
+      </header>
+
+      <div className="mb-7 flex flex-col gap-3 rounded-2xl border border-stroke bg-white p-3 shadow-soft sm:flex-row sm:items-center">
+        <div className="min-w-0 flex-1">
+          <SearchField value={searchInput} placeholder="Search notes" onChange={(value) => {
+            setSearchInput(value);
+            setPage(1);
+          }} />
+        </div>
+        <label>
+          <span className="sr-only">Sort notes</span>
+          <select
+            className="h-11 w-full rounded-xl border-0 bg-canvas py-0 pl-3 pr-9 text-xs font-semibold text-muted shadow-none focus:ring-1 focus:ring-ink sm:w-auto"
+            value={sortMode}
+            onChange={(event) => {
+              setSortMode(readNoteSortMode(event.target.value));
+              setPage(1);
+            }}
+          >
+            {noteSortModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+          </select>
+        </label>
+      </div>
+
+      {actionError ? <InlineError message={actionError.message} /> : null}
+      {notesQuery.isLoading ? (
+        <MemoryListSkeleton />
+      ) : notesQuery.error ? (
+        <InlineError message={notesQuery.error.message} />
+      ) : (notesQuery.data?.notes.length ?? 0) === 0 ? (
+        <EmptyState title="No notes found" description="Try a different search or include archived notes." />
+      ) : (
+        <div className="space-y-3">
+          {notesQuery.data?.notes.map((note) => (
+            <NoteCard
+              key={note.id}
+              note={note}
+              disabled={isMutating}
+              onArchive={() => archiveMutation.mutate(note.id)}
+              onRestore={() => restoreMutation.mutate(note.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {notesQuery.data?.pagination ? (
         <PaginationControls
-          pagination={props.pagination}
-          disabled={props.isLoading}
-          onPageChange={props.onPageChange}
+          pagination={notesQuery.data.pagination}
+          disabled={notesQuery.isLoading}
+          onPageChange={setPage}
         />
       ) : null}
     </section>
   );
 }
 
-function NoteSourceContext(props: { note: NoteRecord }) {
-  if (!props.note.topic && !props.note.sourceConversation) {
+function NoteCard(props: {
+  note: NoteRecord;
+  disabled: boolean;
+  onArchive: () => void;
+  onRestore: () => void;
+}) {
+  const score = props.note.upvotes - props.note.downvotes;
+  return (
+    <article className={`rounded-3xl border bg-white p-5 shadow-soft transition-opacity sm:p-7 ${
+      props.note.archived ? "border-stroke opacity-65" : "border-transparent"
+    }`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-[0.68rem]">
+            {props.note.topic ? <span className="rounded-full bg-canvas px-3 py-1 font-semibold text-muted">{props.note.topic}</span> : null}
+            {props.note.archived ? <span className="font-semibold uppercase tracking-[0.1em] text-danger">Archived</span> : null}
+            {score !== 0 ? <span className="text-faint">score {score > 0 ? `+${score}` : score}</span> : null}
+          </div>
+          <p className="whitespace-pre-wrap break-words text-sm leading-7 text-ink">{props.note.content}</p>
+          <NoteSource note={props.note} />
+          <p className="mt-5 text-[0.68rem] text-faint">{formatDateTime(props.note.createdAt)}</p>
+        </div>
+        <button
+          type="button"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-stroke text-muted transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
+          aria-label={props.note.archived ? "Restore note" : "Archive note"}
+          disabled={props.disabled}
+          onClick={props.note.archived ? props.onRestore : props.onArchive}
+        >
+          {props.note.archived ? <RestoreIcon className="h-4 w-4" /> : <ArchiveIcon className="h-4 w-4" />}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function NoteSource(props: { note: NoteRecord }) {
+  if (!props.note.sourceConversation) {
     return null;
   }
-
   return (
-    <details className="mt-3 border-l border-line-base pl-3 text-xs text-ink-muted">
-      <summary className="cursor-pointer select-none text-ink-muted">Source context</summary>
-      <div className="mt-2 space-y-2">
-        {props.note.topic ? (
-          <p>
-            <span className="font-medium text-ink-strong">Topic</span>
-            <span className="ml-2">{props.note.topic}</span>
-          </p>
-        ) : null}
-        {props.note.sourceConversation ? (
-          <div className="space-y-2">
-            {props.note.sourceConversation.messages.map((message, index) => (
-              <div key={`${message.role}-${index}`}>
-                <span className="font-medium text-ink-strong">{message.role}</span>
-                <p className="mt-1 whitespace-pre-wrap break-words leading-5">{message.text}</p>
-              </div>
-            ))}
+    <details className="group mt-5 border-t border-stroke pt-4">
+      <summary className="cursor-pointer list-none text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-faint">
+        Source conversation
+      </summary>
+      <div className="mt-4 space-y-3">
+        {props.note.sourceConversation.messages.map((message, index) => (
+          <div key={`${message.role}-${index}`} className="rounded-2xl bg-canvas px-4 py-3">
+            <p className="text-[0.65rem] font-semibold uppercase tracking-[0.1em] text-faint">{message.role}</p>
+            <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted">{message.text}</p>
           </div>
-        ) : null}
+        ))}
       </div>
     </details>
   );
 }
 
-function QuickViewControls(props: {
-  onInbox: () => void;
-  onRepair: () => void;
-  onPromotion: () => void;
-}) {
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      <SmallControlButton onClick={props.onInbox}>Inbox</SmallControlButton>
-      <SmallControlButton onClick={props.onRepair}>Repair</SmallControlButton>
-      <SmallControlButton onClick={props.onPromotion}>Promote</SmallControlButton>
-    </div>
-  );
-}
-
-function BulkReviewControls(props: {
-  selectedCount: number;
-  visibleCount: number;
-  isMutating: boolean;
-  error: Error | null;
-  onSelectVisible: () => void;
-  onClearSelection: () => void;
-  onBulkAction: (action: ReviewAction) => void;
-}) {
-  const hasSelection = props.selectedCount > 0;
-
-  return (
-    <div className="space-y-2 rounded-md border border-line-base bg-surface-panel p-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-ink-muted">{props.selectedCount} selected</span>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            className="text-xs font-medium text-action-base disabled:cursor-not-allowed disabled:text-ink-faint"
-            disabled={props.visibleCount === 0 || props.isMutating}
-            onClick={props.onSelectVisible}
-          >
-            Select visible
-          </button>
-          <button
-            type="button"
-            className="text-xs font-medium text-ink-muted disabled:cursor-not-allowed disabled:text-ink-faint"
-            disabled={!hasSelection || props.isMutating}
-            onClick={props.onClearSelection}
-          >
-            Clear
-          </button>
-        </div>
-      </div>
-      <div className="grid grid-cols-4 gap-2">
-        <SmallControlButton disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("accept")}>Accept</SmallControlButton>
-        <SmallControlButton disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("keep_candidate")}>Keep</SmallControlButton>
-        <SmallControlButton disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("needs_revision")}>Revise</SmallControlButton>
-        <SmallControlButton danger disabled={!hasSelection || props.isMutating} onClick={() => props.onBulkAction("deprecate")}>Deprecate</SmallControlButton>
-      </div>
-      {props.error ? <p className="text-xs text-danger-base">{props.error.message}</p> : null}
-    </div>
-  );
-}
-
-function QueueList(props: {
-  items: ReviewQueueItem[];
-  selectedId?: string;
-  isLoading: boolean;
-  error: Error | null;
-  pagination?: Pagination;
-  search: string;
-  sortMode: ReviewQueueSortMode;
-  signalFilter: ReviewQueueSignalFilter;
-  selectedIds: string[];
-  isBulkMutating: boolean;
-  bulkError: Error | null;
-  onSearchChange: (value: string) => void;
-  onSortModeChange: (value: ReviewQueueSortMode) => void;
-  onSignalFilterChange: (value: ReviewQueueSignalFilter) => void;
-  onPageChange: (page: number) => void;
-  onSelect: (id: string) => void;
-  onToggleSelection: (id: string) => void;
-  onSelectVisible: () => void;
-  onClearSelection: () => void;
-  onBulkAction: (action: ReviewAction) => void;
-}) {
-  return (
-    <aside className="min-h-0 border-r border-line-base pr-0 lg:pr-6">
-      <div className="mb-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-ink-strong">Queued memories</h2>
-          <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs text-ink-muted">
-            {props.pagination?.totalItems ?? 0}
-          </span>
-        </div>
-        <SearchField
-          value={props.search}
-          placeholder="Search title or body"
-          label="Search memories"
-          onChange={props.onSearchChange}
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <label>
-            <span className="mb-1 block text-xs font-medium text-ink-muted">Sort</span>
-            <select
-              className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-              value={props.sortMode}
-              onChange={(event) => props.onSortModeChange(readQueueSortMode(event.target.value))}
-            >
-              {queueSortModes.map((mode) => (
-                <option key={mode.value} value={mode.value}>{mode.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="mb-1 block text-xs font-medium text-ink-muted">Filter</span>
-            <select
-              className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none focus:border-action-base focus:ring-action-base"
-              value={props.signalFilter}
-              onChange={(event) => props.onSignalFilterChange(readQueueSignalFilter(event.target.value))}
-            >
-              {queueSignalFilters.map((filter) => (
-                <option key={filter.value} value={filter.value}>{filter.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <BulkReviewControls
-          selectedCount={props.selectedIds.length}
-          visibleCount={props.items.length}
-          isMutating={props.isBulkMutating}
-          error={props.bulkError}
-          onSelectVisible={props.onSelectVisible}
-          onClearSelection={props.onClearSelection}
-          onBulkAction={props.onBulkAction}
-        />
-      </div>
-
-      {props.isLoading ? (
-        <p className="text-sm text-ink-muted">Loading queue...</p>
-      ) : props.error ? (
-        <p className="text-sm text-danger-base">{props.error.message}</p>
-      ) : props.items.length === 0 ? (
-        <div className="border-t border-line-base py-8 text-sm text-ink-muted">No queued rationale memories match this view.</div>
-      ) : (
-        <div className="max-h-[calc(100vh-14rem)] overflow-y-auto divide-y divide-line-base border-y border-line-base">
-          {props.items.map((item) => (
-            <div
-              key={item.id}
-              className={`flex gap-3 px-1 py-4 transition-colors hover:bg-surface-subtle ${
-                props.selectedId === item.id ? "bg-surface-subtle" : "bg-transparent"
-              }`}
-            >
-              <label className="pt-0.5">
-                <span className="sr-only">Select {item.title}</span>
-                <input
-                  type="checkbox"
-                  className="rounded border-line-base text-action-base focus:ring-action-base"
-                  checked={props.selectedIds.includes(item.id)}
-                  onChange={() => props.onToggleSelection(item.id)}
-                />
-              </label>
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left"
-                onClick={() => props.onSelect(item.id)}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <h3 className="line-clamp-2 text-sm font-medium text-ink-strong">{item.title}</h3>
-                  <MetadataPill value={readMetadataString(item.metadata, "capture_kind") ?? "manual"} />
-                </div>
-                {item.project ? (
-                  <p className="mt-2 line-clamp-1 text-xs text-ink-muted">{formatProjectLabel(item.project)}</p>
-                ) : null}
-                <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-ink-muted">
-                  <QueueMetric label="Priority" value={item.reviewPriorityScore.toFixed(1)} />
-                  <QueueMetric label="Use count" value={String(item.useCount)} />
-                  <QueueMetric label="Last used" value={formatRelativeDate(item.lastUsedAt)} />
-                  <QueueMetric label="Feedback" value={formatFeedbackScore(item.usageFeedback)} />
-                </div>
-                <p className="mt-2 line-clamp-1 text-xs text-ink-faint">{formatPriorityReasons(item.reviewPriorityReasons)}</p>
-                <p className="mt-1 line-clamp-1 text-xs text-ink-faint">{formatFeedbackSummary(item.usageFeedback)}</p>
-                <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-muted">{item.summary ?? "No summary available."}</p>
-                <p className="mt-3 text-xs text-ink-faint">{item.id}</p>
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      {props.pagination ? (
-        <PaginationControls
-          pagination={props.pagination}
-          disabled={props.isLoading}
-          onPageChange={props.onPageChange}
-        />
-      ) : null}
-    </aside>
-  );
-}
-
 function SearchField(props: {
   value: string;
-  label: string;
   placeholder: string;
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="block min-w-0">
-      <span className="sr-only">{props.label}</span>
+    <label className="relative block">
+      <span className="sr-only">{props.placeholder}</span>
+      <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
       <input
         type="search"
-        className="h-9 w-full rounded-md border-line-base bg-surface-panel text-sm text-ink-base shadow-none placeholder:text-ink-faint focus:border-action-base focus:ring-action-base"
+        className="h-11 w-full rounded-xl border border-stroke bg-white pl-10 pr-4 text-sm text-ink shadow-none placeholder:text-faint focus:border-ink focus:ring-0"
         value={props.value}
         placeholder={props.placeholder}
         onChange={(event) => props.onChange(event.target.value)}
@@ -749,317 +782,141 @@ function PaginationControls(props: {
   disabled: boolean;
   onPageChange: (page: number) => void;
 }) {
-  const firstItem = props.pagination.totalItems === 0
-    ? 0
-    : (props.pagination.page - 1) * props.pagination.pageSize + 1;
-  const lastItem = Math.min(
-    props.pagination.page * props.pagination.pageSize,
-    props.pagination.totalItems
-  );
-
+  if (props.pagination.totalPages <= 1) {
+    return null;
+  }
   return (
-    <nav className="mt-4 flex items-center justify-between gap-3 text-xs text-ink-muted" aria-label="Pagination">
-      <span>{firstItem}-{lastItem} of {props.pagination.totalItems}</span>
-      <div className="flex items-center gap-2">
-        <SmallControlButton
-          disabled={props.disabled || props.pagination.page <= 1}
-          onClick={() => props.onPageChange(props.pagination.page - 1)}
-        >
-          Previous
-        </SmallControlButton>
-        <span className="min-w-16 text-center">
-          {props.pagination.page} / {props.pagination.totalPages}
-        </span>
-        <SmallControlButton
-          disabled={props.disabled || props.pagination.page >= props.pagination.totalPages}
-          onClick={() => props.onPageChange(props.pagination.page + 1)}
-        >
-          Next
-        </SmallControlButton>
-      </div>
+    <nav className="mt-6 flex items-center justify-between border-t border-stroke pt-5" aria-label="Pagination">
+      <button
+        type="button"
+        className="pagination-button"
+        disabled={props.disabled || props.pagination.page <= 1}
+        aria-label="Previous page"
+        onClick={() => props.onPageChange(props.pagination.page - 1)}
+      >
+        <ChevronLeftIcon className="h-4 w-4" />
+      </button>
+      <span className="text-[0.68rem] font-semibold tabular-nums text-muted">
+        {props.pagination.page} / {props.pagination.totalPages}
+      </span>
+      <button
+        type="button"
+        className="pagination-button"
+        disabled={props.disabled || props.pagination.page >= props.pagination.totalPages}
+        aria-label="Next page"
+        onClick={() => props.onPageChange(props.pagination.page + 1)}
+      >
+        <ChevronRightIcon className="h-4 w-4" />
+      </button>
     </nav>
   );
 }
 
-function SmallControlButton(props: {
-  children: string;
-  danger?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  const color = props.danger
-    ? "border-danger-base text-danger-base hover:bg-danger-faint"
-    : "border-line-strong text-ink-base hover:border-action-base hover:bg-action-faint hover:text-action-base";
-
+function StatusBadge(props: { status: string }) {
+  const label = props.status === "candidate" ? "Current" : props.status;
   return (
-    <button
-      type="button"
-      className={`h-8 rounded-md border bg-surface-panel px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${color}`}
-      disabled={props.disabled}
-      onClick={props.onClick}
+    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[0.68rem] font-semibold capitalize ${
+      props.status === "deprecated" ? "bg-danger-soft text-danger" : "bg-sage-soft text-sage"
+    }`}>
+      <StatusDot status={props.status} />
+      {label}
+    </span>
+  );
+}
+
+function StatusDot(props: { status: string }) {
+  return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${props.status === "deprecated" ? "bg-danger" : "bg-sage"}`} />;
+}
+
+function Toast(props: { message: string; onDismiss: () => void }) {
+  return (
+    <div
+      className="fixed bottom-5 left-4 right-4 z-50 flex animate-toast items-center gap-3 rounded-2xl border border-stroke bg-ink px-4 py-3 text-white shadow-toast sm:left-auto sm:right-6 sm:w-80"
+      role="status"
+      aria-live="polite"
     >
-      {props.children}
-    </button>
-  );
-}
-
-function DetailPanel(props: {
-  item: Awaited<ReturnType<typeof fetchReviewQueueDetail>> | undefined;
-  isLoading: boolean;
-  error: Error | null;
-  notes: string;
-  operationMessage?: string;
-  actionError: Error | null;
-  onNotesChange: (value: string) => void;
-  onAction: (action: ReviewAction) => void;
-  isMutating: boolean;
-}) {
-  if (props.isLoading) {
-    return <section className="text-sm text-ink-muted">Loading detail...</section>;
-  }
-
-  if (props.error) {
-    return <section className="text-sm text-danger-base">{props.error.message}</section>;
-  }
-
-  if (!props.item) {
-    return <section className="text-sm text-ink-muted">Select a rationale memory to review.</section>;
-  }
-
-  const { entry, review, usage } = props.item;
-  const reviewState = entry.frontmatter.reviewState;
-
-  return (
-    <section className="min-w-0">
-      <div className="mb-5 flex flex-col gap-3 border-b border-line-base pb-5 md:flex-row md:items-start md:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill value={reviewState} />
-            <MetadataPill value={entry.frontmatter.acceptanceState} />
-            <MetadataPill value={entry.frontmatter.decisionState} />
-            <MetadataPill value={readMetadataString(entry.frontmatter.metadata, "capture_kind") ?? "manual"} />
-            <MetadataPill value={`use count ${usage.useCount}`} />
-          </div>
-          <h2 className="mt-3 text-xl font-semibold text-ink-strong">{entry.title}</h2>
-          <p className="mt-2 text-sm text-ink-muted">{entry.frontmatter.id}</p>
-        </div>
+      <span className="grid h-7 w-7 place-items-center rounded-full bg-white/10">
+        <ArchiveIcon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold">Done</p>
+        <p className="mt-0.5 text-[0.7rem] text-white/65">{props.message}</p>
       </div>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <article className="space-y-6">
-          <Section title="Body">{entry.body}</Section>
-        </article>
-
-        <aside className="space-y-5 border-t border-line-base pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
-          {props.operationMessage ? (
-            <div className="rounded-md border border-action-base bg-action-faint px-3 py-2 text-sm text-action-base">
-              {props.operationMessage}
-            </div>
-          ) : null}
-          {props.actionError ? (
-            <div className="rounded-md border border-danger-base bg-danger-faint px-3 py-2 text-sm text-danger-base">
-              {props.actionError.message}
-            </div>
-          ) : null}
-          <ProjectFacts
-            project={entry.frontmatter.project}
-            source={entry.frontmatter.source}
-            type={entry.frontmatter.type}
-            scope={entry.frontmatter.scope}
-            confidence={entry.frontmatter.confidence}
-            acceptanceState={entry.frontmatter.acceptanceState}
-            reviewState={entry.frontmatter.reviewState}
-            decisionState={entry.frontmatter.decisionState}
-            domains={entry.frontmatter.domains}
-            intents={entry.frontmatter.intents}
-            modes={entry.frontmatter.modes}
-            useCount={usage.useCount}
-            lastUsedAt={usage.lastUsedAt}
-            usageFeedback={usage.feedback}
-          />
-          <ReviewFacts title="Strengths" items={review.strengths} tone="success" />
-          <ReviewFacts title="Cautions" items={review.cautions} tone="danger" />
-          <MetadataDetails metadata={entry.frontmatter.metadata} />
-
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium text-ink-strong">Review notes</span>
-            <textarea
-              className="min-h-28 w-full rounded-md border-line-base bg-surface-panel text-sm shadow-none focus:border-action-base focus:ring-action-base"
-              value={props.notes}
-              onChange={(event) => props.onNotesChange(event.target.value)}
-              placeholder="Optional note for this review action"
-            />
-          </label>
-
-          <div className="grid grid-cols-2 gap-2">
-            <ActionButton disabled={props.isMutating} onClick={() => props.onAction("accept")}>Accept</ActionButton>
-            <ActionButton disabled={props.isMutating} onClick={() => props.onAction("keep_candidate")}>Keep</ActionButton>
-            <ActionButton disabled={props.isMutating} onClick={() => props.onAction("needs_revision")}>Revise</ActionButton>
-            <ActionButton danger disabled={props.isMutating} onClick={() => props.onAction("deprecate")}>Deprecate</ActionButton>
-          </div>
-        </aside>
-      </div>
-    </section>
-  );
-}
-
-function QueueMetric(props: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <p className="truncate text-[0.68rem] font-medium uppercase tracking-wide text-ink-faint">{props.label}</p>
-      <p className="mt-0.5 truncate text-xs text-ink-base">{props.value}</p>
+      <button type="button" className="grid h-7 w-7 place-items-center rounded-full text-white/60 hover:bg-white/10 hover:text-white" aria-label="Dismiss notification" onClick={props.onDismiss}>
+        <XIcon className="h-4 w-4" />
+      </button>
     </div>
   );
 }
 
-function Section(props: { title: string; children?: string }) {
+function InlineError(props: { message: string }) {
   return (
-    <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">{props.title}</h3>
-      <p className="whitespace-pre-wrap text-sm leading-6 text-ink-base">{props.children || "Not provided."}</p>
-    </section>
+    <div className="m-5 rounded-2xl border border-danger/20 bg-danger-soft px-4 py-3 text-xs leading-5 text-danger">
+      {props.message}
+    </div>
   );
 }
 
-function ReviewFacts(props: { title: string; items: string[]; tone: "success" | "danger" }) {
-  const toneClass = props.tone === "success"
-    ? "bg-success-faint text-success-base"
-    : "bg-danger-faint text-danger-base";
-
+function EmptyState(props: { title: string; description: string }) {
   return (
-    <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">{props.title}</h3>
-      {props.items.length === 0 ? (
-        <p className="text-sm text-ink-muted">None</p>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          {props.items.map((item) => (
-            <span key={item} className={`rounded-full px-2 py-1 text-xs font-medium ${toneClass}`}>{item}</span>
-          ))}
+    <div className="mx-auto max-w-sm px-8 py-20 text-center">
+      <span className="mx-auto grid h-11 w-11 place-items-center rounded-full border border-stroke bg-white text-faint">
+        <MemoryIcon className="h-5 w-5" />
+      </span>
+      <h2 className="mt-5 font-display text-xl tracking-[-0.025em] text-ink">{props.title}</h2>
+      <p className="mt-2 text-xs leading-5 text-muted">{props.description}</p>
+    </div>
+  );
+}
+
+function MemoryListSkeleton() {
+  return (
+    <div className="space-y-3 px-4 py-5" aria-label="Loading">
+      {[1, 2, 3, 4].map((item) => (
+        <div key={item} className="animate-pulse rounded-2xl bg-white p-4">
+          <div className="h-3 w-4/5 rounded bg-stroke" />
+          <div className="mt-3 h-2 w-2/5 rounded bg-stroke" />
         </div>
-      )}
-    </section>
+      ))}
+    </div>
   );
 }
 
-function ProjectFacts(props: {
-  project?: ProjectContext;
-  source?: { kind: string; ref: string };
-  type: string;
-  scope: string;
-  confidence: number;
-  acceptanceState: string;
-  reviewState: string;
-  decisionState: string;
-  domains: string[];
-  intents: string[];
-  modes: string[];
-  useCount: number;
-  lastUsedAt?: string;
-  usageFeedback: UsageFeedbackCounts;
-}) {
+function DetailSkeleton() {
   return (
-    <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Context</h3>
-      <div className="space-y-3 text-sm leading-6">
-        <MetadataLine label="Project" value={props.project ? formatProjectLabel(props.project) : "Not provided."} />
-        <MetadataLine label="Repository" value={props.project?.repo} />
-        <MetadataLine label="Root" value={props.project?.root} />
-        <MetadataLine label="Type" value={props.type} />
-        <MetadataLine label="Scope" value={props.scope} />
-        <MetadataLine label="Confidence" value={props.confidence.toFixed(2)} />
-        <MetadataLine label="Use count" value={String(props.useCount)} />
-        <MetadataLine label="Last used" value={formatDateTime(props.lastUsedAt)} />
-        <MetadataLine label="Positive feedback" value={String(props.usageFeedback.positiveCount)} />
-        <MetadataLine label="Negative feedback" value={String(props.usageFeedback.negativeCount)} />
-        <MetadataLine label="Applied" value={String(props.usageFeedback.appliedCount)} />
-        <MetadataLine label="Helpful" value={String(props.usageFeedback.helpfulCount)} />
-        <MetadataLine label="Unhelpful" value={String(props.usageFeedback.unhelpfulCount)} />
-        <MetadataLine label="Dismissed" value={String(props.usageFeedback.dismissedCount)} />
-        <MetadataLine label="Acceptance" value={props.acceptanceState} />
-        <MetadataLine label="Review" value={props.reviewState} />
-        <MetadataLine label="Decision" value={props.decisionState} />
-        <MetadataLine label="Source" value={props.source ? `${props.source.kind}: ${props.source.ref}` : undefined} />
-        <MetadataList label="Domains" items={props.domains} />
-        <MetadataList label="Intents" items={props.intents} />
-        <MetadataList label="Modes" items={props.modes} />
+    <div className="mx-auto max-w-3xl animate-pulse py-8">
+      <div className="h-5 w-20 rounded-full bg-canvas" />
+      <div className="mt-8 h-10 w-4/5 rounded bg-canvas" />
+      <div className="mt-3 h-10 w-3/5 rounded bg-canvas" />
+      <div className="mt-10 space-y-3">
+        <div className="h-3 rounded bg-canvas" />
+        <div className="h-3 rounded bg-canvas" />
+        <div className="h-3 w-4/5 rounded bg-canvas" />
       </div>
-    </section>
-  );
-}
-
-function MetadataLine(props: { label: string; value?: string }) {
-  return (
-    <div>
-      <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{props.label}</p>
-      <p className="break-words text-ink-base">{props.value ?? "Not provided."}</p>
     </div>
   );
 }
 
-function MetadataList(props: { label: string; items: string[] }) {
-  return (
-    <div>
-      <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{props.label}</p>
-      {props.items.length === 0 ? (
-        <p className="text-ink-muted">Not provided.</p>
-      ) : (
-        <div className="mt-1 flex flex-wrap gap-2">
-          {props.items.map((item) => <MetadataPill key={item} value={item} />)}
-        </div>
-      )}
-    </div>
-  );
+function findNextMemoryId(entries: MemoryCatalogItem[], currentId: string) {
+  const currentIndex = entries.findIndex((entry) => entry.id === currentId);
+  if (currentIndex === -1) {
+    return entries[0]?.id;
+  }
+  return (entries[currentIndex + 1] ?? entries[currentIndex - 1])?.id;
 }
 
-function MetadataDetails(props: { metadata: Record<string, unknown> }) {
-  return (
-    <details className="group">
-      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-ink-muted">Metadata</summary>
-      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-subtle p-3 text-xs leading-5 text-ink-base">
-        {JSON.stringify(props.metadata, null, 2)}
-      </pre>
-    </details>
-  );
+function readMemorySortMode(value: string): MemoryCatalogSortMode {
+  if (value === "created" || value === "last_used" || value === "uses") {
+    return value;
+  }
+  throw new Error(`Invalid memory sort mode: ${value}`);
 }
 
-function StatusPill(props: { value: string }) {
-  const className = props.value === "reviewed"
-    || props.value === "active"
-    ? namedStatusColor.reviewed
-    : props.value === "needs_revision"
-      ? namedStatusColor.needs_revision
-      : props.value === "archived" || props.value === "deprecated"
-        ? namedStatusColor.deprecated
-        : namedStatusColor.unreviewed;
-
-  return <span className={`rounded-full px-2 py-1 text-xs font-medium ${className}`}>{props.value}</span>;
-}
-
-function MetadataPill(props: { value: string }) {
-  return <span className="rounded-full bg-surface-subtle px-2 py-1 text-xs font-medium text-ink-muted">{props.value}</span>;
-}
-
-function ActionButton(props: {
-  children: string;
-  danger?: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const color = props.danger
-    ? "border-danger-base text-danger-base hover:bg-danger-faint"
-    : "border-line-strong text-ink-base hover:border-action-base hover:bg-action-faint hover:text-action-base";
-
-  return (
-    <button
-      type="button"
-      className={`h-9 w-full rounded-md border bg-surface-panel text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${color}`}
-      disabled={props.disabled}
-      onClick={props.onClick}
-    >
-      {props.children}
-    </button>
-  );
+function readNoteSortMode(value: string): NoteSortMode {
+  if (value === "newest" || value === "oldest") {
+    return value;
+  }
+  throw new Error(`Invalid note sort mode: ${value}`);
 }
 
 function readMetadataString(metadata: Record<string, unknown>, key: string) {
@@ -1067,138 +924,41 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
-function readQueueSortMode(value: string): ReviewQueueSortMode {
-  if (
-    value === "priority"
-    || value === "created"
-    || value === "last_used"
-    || value === "positive_feedback"
-    || value === "negative_feedback"
-    || value === "uses"
-  ) {
-    return value;
-  }
-
-  throw new Error(`Invalid queue sort mode: ${value}`);
-}
-
-function readQueueSignalFilter(value: string): ReviewQueueSignalFilter {
-  if (
-    value === "all"
-    || value === "repair_attention"
-    || value === "with_negative_feedback"
-    || value === "with_positive_feedback"
-    || value === "recently_used"
-  ) {
-    return value;
-  }
-
-  throw new Error(`Invalid queue signal filter: ${value}`);
-}
-
-function readNoteSortMode(value: string): NoteSortMode {
-  if (value === "newest" || value === "oldest") {
-    return value;
-  }
-
-  throw new Error(`Invalid notes sort mode: ${value}`);
-}
-
-function toggleSelectedId(selectedIds: string[], id: string) {
-  return selectedIds.includes(id)
-    ? selectedIds.filter((selectedId) => selectedId !== id)
-    : [...selectedIds, id];
-}
-
-function findNextQueuedItemId(items: ReviewQueueItem[], currentId: string) {
-  const currentIndex = items.findIndex((item) => item.id === currentId);
-  if (currentIndex === -1) {
-    return items[0]?.id;
-  }
-
-  const nextItem = items[currentIndex + 1] ?? items[currentIndex - 1];
-  return nextItem?.id;
-}
-
-function findNextQueuedItemIdExcluding(items: ReviewQueueItem[], excludedIds: string[]) {
-  return items.find((item) => !excludedIds.includes(item.id))?.id;
-}
-
-function formatReviewActionMessage(action: ReviewAction, count: number) {
-  const label = action === "accept"
-    ? "accepted"
-    : action === "keep_candidate"
-      ? "kept"
-      : action === "needs_revision"
-        ? "marked for revision"
-        : "deprecated";
-  return `${count} item${count === 1 ? "" : "s"} ${label}.`;
-}
-
-function viewSwitchButtonClassName(isActive: boolean) {
-  const activeClass = isActive
-    ? "bg-action-faint text-action-base"
-    : "text-ink-muted hover:bg-surface-subtle hover:text-ink-base";
-  return `h-8 rounded px-3 text-xs font-medium transition-colors ${activeClass}`;
-}
-
 function formatProjectLabel(project: ProjectContext) {
-  return project.repo ? `${project.name} (${project.repo})` : project.name;
+  return project.repo ? `${project.name} / ${project.repo}` : project.name;
 }
 
 function formatRelativeDate(value: string | undefined) {
   if (!value) {
-    return "Never";
+    return "unknown";
   }
-
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
-    return "Invalid";
+    return "unknown";
   }
-
-  const ageMs = Date.now() - timestamp;
-  if (ageMs < 0) {
-    return "Future";
+  const ageMilliseconds = Date.now() - timestamp;
+  if (ageMilliseconds < 60_000) {
+    return "just now";
   }
-
-  const ageMinutes = Math.floor(ageMs / (1000 * 60));
-  if (ageMinutes < 1) {
-    return "Now";
-  }
+  const ageMinutes = Math.floor(ageMilliseconds / 60_000);
   if (ageMinutes < 60) {
-    return `${ageMinutes}m`;
+    return `${ageMinutes}m ago`;
   }
-
   const ageHours = Math.floor(ageMinutes / 60);
   if (ageHours < 24) {
-    return `${ageHours}h`;
+    return `${ageHours}h ago`;
   }
-
   const ageDays = Math.floor(ageHours / 24);
-  return `${ageDays}d`;
+  if (ageDays < 30) {
+    return `${ageDays}d ago`;
+  }
+  return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-function formatDateTime(value: string | undefined) {
-  if (!value) {
-    return "Not used yet.";
-  }
-
+function formatDateTime(value: string) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) {
-    return "Invalid date.";
+    return "Unknown date";
   }
-
-  return date.toLocaleString();
-}
-
-function formatPriorityReasons(reasons: string[]) {
-  return reasons.length > 0 ? reasons.join(" / ") : "standard-candidate";
-}
-
-function formatFeedbackSummary(feedback: UsageFeedbackCounts) {
-  return `feedback +${feedback.positiveCount} / -${feedback.negativeCount}`;
-}
-
-function formatFeedbackScore(feedback: UsageFeedbackCounts) {
-  return `+${feedback.positiveCount} / -${feedback.negativeCount}`;
+  return date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
 }

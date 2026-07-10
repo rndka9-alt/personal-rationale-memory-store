@@ -146,7 +146,7 @@ function parseSourceConversationMessage(value: unknown) {
   return { role, text };
 }
 
-function readSourceConversationRole(value: Record<string, unknown>, key: string) {
+function readSourceConversationRole(value: Record<string, unknown>, key: string): "user" | "assistant" {
   const propertyValue = value[key];
   if (propertyValue !== "user" && propertyValue !== "assistant") {
     throw new Error(`Expected ${key} to be a source conversation role.`);

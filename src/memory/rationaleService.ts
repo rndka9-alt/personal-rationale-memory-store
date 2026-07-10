@@ -10,6 +10,7 @@ import {
   findLatestMemoryRevision,
   insertMemoryRevision,
   listAllMemoryEntriesByAcceptanceState,
+  listMemoryCatalogPage,
   listMemoryEntriesByAcceptanceState,
   listRecentMemoryEntries,
   listReviewQueueMemoryEntries,
@@ -22,7 +23,11 @@ import {
   setMemoryEntryCurrentRevision,
   updateMemoryStatus
 } from "../db/queries.js";
-import type { MemoryUsageFeedbackCounts, RetrievalQuerySourceKind } from "../db/queries.js";
+import type {
+  MemoryCatalogPageOptions,
+  MemoryUsageFeedbackCounts,
+  RetrievalQuerySourceKind
+} from "../db/queries.js";
 import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
@@ -655,6 +660,10 @@ export class RationaleService {
       resultCount: result.items.length
     });
     return result;
+  }
+
+  async listMemoryCatalogPage(options: MemoryCatalogPageOptions) {
+    return listMemoryCatalogPage(this.pool, options);
   }
 
   async reviewCandidates(limit: number) {

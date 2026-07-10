@@ -6,50 +6,53 @@ export default {
   theme: {
     extend: {
       colors: {
-        surface: {
-          page: "#fafafa",
-          panel: "#ffffff",
-          subtle: "#f5f5f5"
-        },
-        ink: {
-          strong: "#171717",
-          base: "#262626",
-          muted: "#737373",
-          faint: "#a3a3a3"
-        },
-        line: {
-          base: "#e5e5e5",
-          strong: "#d4d4d4"
-        },
-        action: {
-          base: "#2563eb",
-          hover: "#1d4ed8",
-          faint: "#eff6ff"
+        canvas: "#f5f5f1",
+        ink: "#1b1c1a",
+        muted: "#6f716c",
+        faint: "#a2a49f",
+        stroke: {
+          DEFAULT: "#e4e4df",
+          strong: "#c9cac4"
         },
         danger: {
-          base: "#dc2626",
-          hover: "#b91c1c",
-          faint: "#fef2f2"
+          DEFAULT: "#b34a3c",
+          soft: "#fbefec"
         },
-        success: {
-          base: "#16a34a",
-          faint: "#f0fdf4"
-        },
-        warning: {
-          base: "#ca8a04",
-          faint: "#fefce8"
+        sage: {
+          DEFAULT: "#59715e",
+          soft: "#eef3ee"
         }
       },
       fontFamily: {
         sans: [
-          "Inter",
+          "Avenir Next",
+          "Pretendard Variable",
+          "Pretendard",
           "ui-sans-serif",
           "system-ui",
           "-apple-system",
           "BlinkMacSystemFont",
-          "Segoe UI",
           "sans-serif"
-        ]
+        ],
+        display: ["Iowan Old Style", "Baskerville", "Times New Roman", "serif"]
+      },
+      boxShadow: {
+        soft: "0 1px 2px rgba(25, 26, 24, 0.05), 0 8px 24px rgba(25, 26, 24, 0.035)",
+        toast: "0 18px 50px rgba(20, 21, 19, 0.24)"
+      },
+      animation: {
+        reveal: "reveal 180ms ease-out both",
+        toast: "toast 260ms cubic-bezier(0.22, 1, 0.36, 1) both"
+      },
+      keyframes: {
+        reveal: {
+          from: { opacity: "0", transform: "translateY(-4px)" },
+          to: { opacity: "1", transform: "translateY(0)" }
+        },
+        toast: {
+          from: { opacity: "0", transform: "translateY(12px) scale(0.98)" },
+          to: { opacity: "1", transform: "translateY(0) scale(1)" }
+        }
       }
     }
   },

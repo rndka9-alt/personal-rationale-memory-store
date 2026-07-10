@@ -3,8 +3,9 @@
 @tailwind utilities;
 
 :root {
-  color: #171717;
-  background: #fafafa;
+  color: #1b1c1a;
+  background: #f5f5f1;
+  font-family: "Avenir Next", "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -18,6 +19,11 @@ body {
 }
 
 button,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
 input,
 select,
 textarea {
@@ -25,5 +31,154 @@ textarea {
 }
 
 ::selection {
-  background: #dbeafe;
+  background: #dfe8df;
+}
+
+.pagination-button {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 1px solid #e4e4df;
+  border-radius: 9999px;
+  color: #6f716c;
+  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
+}
+
+.pagination-button:hover:not(:disabled) {
+  border-color: #1b1c1a;
+  color: #1b1c1a;
+  background: #fff;
+}
+
+.pagination-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.memory-prose {
+  max-width: 46rem;
+  color: #363834;
+  font-size: 0.95rem;
+  line-height: 1.85;
+}
+
+.memory-prose > * + * {
+  margin-top: 1.25rem;
+}
+
+.memory-prose h2,
+.memory-prose h3,
+.memory-prose h4 {
+  color: #1b1c1a;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+}
+
+.memory-prose h2 {
+  margin-top: 2.75rem;
+  font-family: "Iowan Old Style", Baskerville, "Times New Roman", serif;
+  font-size: 1.7rem;
+  font-weight: 500;
+}
+
+.memory-prose h3 {
+  margin-top: 2.25rem;
+  font-size: 1rem;
+}
+
+.memory-prose h4 {
+  margin-top: 1.75rem;
+  font-size: 0.9rem;
+}
+
+.memory-prose strong {
+  color: #1b1c1a;
+  font-weight: 650;
+}
+
+.memory-prose ul,
+.memory-prose ol {
+  padding-left: 1.25rem;
+}
+
+.memory-prose ul {
+  list-style: disc;
+}
+
+.memory-prose ol {
+  list-style: decimal;
+}
+
+.memory-prose li {
+  padding-left: 0.25rem;
+}
+
+.memory-prose li + li {
+  margin-top: 0.5rem;
+}
+
+.memory-prose blockquote {
+  border-left: 2px solid #59715e;
+  padding: 0.5rem 0 0.5rem 1.25rem;
+  color: #6f716c;
+  font-family: "Iowan Old Style", Baskerville, "Times New Roman", serif;
+  font-size: 1.08rem;
+  font-style: italic;
+}
+
+.memory-prose code {
+  border-radius: 0.35rem;
+  background: #f0f0ec;
+  padding: 0.12rem 0.35rem;
+  color: #343633;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.82em;
+}
+
+.memory-prose pre {
+  overflow-x: auto;
+  border: 1px solid #e4e4df;
+  border-radius: 1rem;
+  background: #f8f8f5;
+  padding: 1rem 1.125rem;
+  line-height: 1.65;
+}
+
+.memory-prose pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.memory-prose hr {
+  margin: 2.5rem 0;
+  border: 0;
+  border-top: 1px solid #e4e4df;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .memory-prose {
+    font-size: 0.9rem;
+    line-height: 1.78;
+  }
+
+  .memory-prose h2 {
+    font-size: 1.45rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

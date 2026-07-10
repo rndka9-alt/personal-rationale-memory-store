@@ -14,6 +14,7 @@ import type {
   ReviewQueueSortMode
 } from "../memory/rationaleService.js";
 import { logError, logInfo } from "../diagnostics/index.js";
+import type { MemoryCatalogSortMode, MemoryCatalogStatus } from "../db/queries.js";
 
 const defaultPageSize = 25;
 const maximumPageSize = 100;
@@ -45,11 +46,11 @@ await new Promise<void>((resolve) => {
   server.listen(config.web.port, config.web.host, resolve);
 });
 
-logInfo("Review UI web server started.", {
+logInfo("Memory UI web server started.", {
   host: config.web.host,
   port: config.web.port
 });
-process.stderr.write(`Rationale Memory Store Web UI listening on ${config.web.host}:${config.web.port}\n`);
+process.stderr.write(`Rationale Memory UI listening on ${config.web.host}:${config.web.port}\n`);
 
 async function routeRequest(request: IncomingMessage, response: ServerResponse) {
   const method = request.method ?? "GET";
@@ -85,6 +86,18 @@ async function routeApiRequest(
   request: IncomingMessage,
   response: ServerResponse
 ) {
+  if (method === "GET" && url.pathname === "/api/memories") {
+    const result = await rationaleService.listMemoryCatalogPage({
+      status: readMemoryCatalogStatus(url.searchParams.get("status")),
+      search: readSearchParam(url.searchParams.get("search")),
+      sortMode: readMemoryCatalogSortMode(url.searchParams.get("sortMode")),
+      page: readPositiveInteger(url.searchParams.get("page"), 1, "page"),
+      pageSize: readPageSize(url.searchParams.get("pageSize"))
+    });
+    writeJson(response, 200, result);
+    return;
+  }
+
   if (method === "GET" && url.pathname === "/api/review-queue") {
     const captureKind = readOptionalString(url.searchParams.get("captureKind"));
     const reviewStateParam = readOptionalString(url.searchParams.get("reviewState"));
@@ -298,6 +311,26 @@ function readReviewQueueSignalFilter(value: string | null): ReviewQueueSignalFil
     return value;
   }
   throw new Error(`Invalid review queue signal filter: ${value}`);
+}
+
+function readMemoryCatalogStatus(value: string | null): MemoryCatalogStatus {
+  if (value === null || value === "current") {
+    return "current";
+  }
+  if (value === "deprecated" || value === "all") {
+    return value;
+  }
+  throw new Error(`Invalid memory catalog status: ${value}`);
+}
+
+function readMemoryCatalogSortMode(value: string | null): MemoryCatalogSortMode {
+  if (value === null || value === "created") {
+    return "created";
+  }
+  if (value === "last_used" || value === "uses") {
+    return value;
+  }
+  throw new Error(`Invalid memory catalog sort mode: ${value}`);
 }
 
 function readNoteSortMode(value: string | null): "newest" | "oldest" {

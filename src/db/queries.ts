@@ -81,6 +81,18 @@ export type ReviewQueueMemoryPageOptions = ReviewQueueMemoryListOptions & {
   pageSize: number;
 };
 
+export type MemoryCatalogStatus = "current" | "deprecated" | "all";
+
+export type MemoryCatalogSortMode = "created" | "last_used" | "uses";
+
+export type MemoryCatalogPageOptions = {
+  status: MemoryCatalogStatus;
+  search?: string;
+  sortMode: MemoryCatalogSortMode;
+  page: number;
+  pageSize: number;
+};
+
 export type RationaleContentFingerprintClaim =
   | { status: "claimed"; entryId: string }
   | { status: "processing"; entryId: string }
@@ -923,6 +935,59 @@ export async function listReviewQueueMemoryPage(
   };
 }
 
+export async function listMemoryCatalogPage(
+  pool: pg.Pool,
+  options: MemoryCatalogPageOptions
+) {
+  logInfo("DB list paginated memory catalog started.", {
+    status: options.status,
+    hasSearch: Boolean(options.search),
+    sortMode: options.sortMode,
+    page: options.page,
+    pageSize: options.pageSize
+  });
+  const query = createMemoryCatalogQuery(options);
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total_count
+    FROM memory_entries e
+    WHERE ${query.conditions.join(" AND ")}`,
+    query.values
+  );
+  const countRow = countResult.rows[0];
+  if (!countRow) {
+    throw new Error("Memory catalog count query returned no rows.");
+  }
+
+  const totalItems = Number(countRow.total_count);
+  const totalPages = Math.max(1, Math.ceil(totalItems / options.pageSize));
+  const page = Math.min(options.page, totalPages);
+  const pageValues = [...query.values, options.pageSize, (page - 1) * options.pageSize];
+  const result = await pool.query(
+    `SELECT e.*
+    FROM memory_entries e
+    WHERE ${query.conditions.join(" AND ")}
+    ORDER BY ${memoryCatalogOrderBy(options.sortMode)}
+    LIMIT $${query.values.length + 1} OFFSET $${query.values.length + 2}`,
+    pageValues
+  );
+
+  logInfo("DB list paginated memory catalog completed.", {
+    page,
+    pageSize: options.pageSize,
+    totalItems,
+    resultCount: result.rows.length
+  });
+  return {
+    entries: result.rows.map(mapMemoryEntryRow),
+    pagination: {
+      page,
+      pageSize: options.pageSize,
+      totalItems,
+      totalPages
+    }
+  };
+}
+
 export type RetrievalQuerySourceKind = "search" | "compose";
 
 export type RetrievalQueryEventInsert = {
@@ -1365,6 +1430,42 @@ function createReviewQueueMemoryQuery(options: ReviewQueueMemoryListOptions) {
   }
 
   return { conditions, values };
+}
+
+function createMemoryCatalogQuery(options: MemoryCatalogPageOptions) {
+  const conditions = ["TRUE"];
+  const values: unknown[] = [];
+
+  if (options.status === "current") {
+    conditions.push("e.acceptance_state <> 'deprecated'");
+  } else if (options.status === "deprecated") {
+    conditions.push("e.acceptance_state = 'deprecated'");
+  }
+
+  if (options.search) {
+    values.push(`%${escapeLikePattern(options.search)}%`);
+    conditions.push(`(
+      e.title ILIKE $${values.length} ESCAPE '!'
+      OR EXISTS (
+        SELECT 1
+        FROM memory_chunks c
+        WHERE c.entry_id = e.id
+          AND c.content ILIKE $${values.length} ESCAPE '!'
+      )
+    )`);
+  }
+
+  return { conditions, values };
+}
+
+function memoryCatalogOrderBy(sortMode: MemoryCatalogSortMode) {
+  if (sortMode === "last_used") {
+    return "e.last_used_at DESC NULLS LAST, e.created_at DESC, e.id ASC";
+  }
+  if (sortMode === "uses") {
+    return "e.use_count DESC, e.created_at DESC, e.id ASC";
+  }
+  return "e.created_at DESC, e.id ASC";
 }
 
 function escapeLikePattern(value: string) {

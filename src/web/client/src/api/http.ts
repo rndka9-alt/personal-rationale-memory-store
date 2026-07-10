@@ -19,8 +19,8 @@ export async function requestJson(path: string, options: RequestOptions = {}) {
 }
 
 function readErrorMessage(value: unknown) {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    const errorValue = value["error"];
+  if (isRecord(value)) {
+    const errorValue = value.error;
     if (typeof errorValue === "string") {
       return errorValue;
     }
@@ -29,3 +29,6 @@ function readErrorMessage(value: unknown) {
   return "Request failed.";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
