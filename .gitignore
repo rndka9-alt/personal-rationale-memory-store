@@ -6,3 +6,4 @@ dist/
 .certs/
 data/*.pem
 data/memory/rationales/
+data/digest-seed.json
