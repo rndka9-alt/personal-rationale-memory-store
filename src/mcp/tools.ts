@@ -52,7 +52,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
   const definitions: ToolDefinition[] = [
     {
       name: "search_rationales",
-      description: "Search rationale memories with lexical, vector, and metadata signals. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
+      description: "Search rationale memories with lexical, vector, and metadata signals. Write natural-language queries in Korean while keeping code identifiers, exact search terms, and proper nouns unchanged. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
       schema: searchToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -80,7 +80,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
+      description: "Compose bounded prompt-ready rationale context for a task. Describe the task in Korean while keeping code identifiers and proper nouns unchanged. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
       schema: composeInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -99,7 +99,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "record_note",
       description:
-        "Record a lightweight personal note. When it comes from the current conversation, include sourceContext with a concise topic and 1–4 relevant user/assistant messages preserving their original roles, text, and order. Omit sourceContext only for standalone notes.",
+        "Record a lightweight personal note. Write content and topic in Korean while keeping code identifiers and proper nouns unchanged. When it comes from the current conversation, include sourceContext with 1–4 relevant user/assistant messages preserving their original language, roles, text, and order. Omit sourceContext only for standalone notes.",
       schema: recordNoteToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -134,7 +134,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record reusable rationale memory as a title and self-contained Markdown body. Use record_note for casual or lightweight personal notes.",
+        "Record reusable rationale memory as a title and self-contained Markdown body. Write title and body in Korean while keeping code identifiers and proper nouns unchanged. Use record_note for casual or lightweight personal notes.",
       schema: autoCaptureRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -146,7 +146,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "update_rationale",
-      description: "Replace a rationale title and body from a base revision.",
+      description: "Replace a rationale title and body from a base revision. Write reason, title, and body in Korean while keeping code identifiers and proper nouns unchanged.",
       schema: updateRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -192,12 +192,16 @@ const writeToolAnnotations = {
 };
 
 const searchToolInputSchema = z.object({
-  query: z.string().min(1),
+  query: z.string()
+    .min(1)
+    .describe("Natural-language search query in Korean; keep code identifiers, exact search terms, and proper nouns unchanged."),
   project: searchProjectFilterSchema.optional()
 });
 
 const composeInputSchema = z.object({
-  task: z.string().min(1),
+  task: z.string()
+    .min(1)
+    .describe("Task description in Korean; keep code identifiers and proper nouns unchanged."),
   project: searchProjectFilterSchema.optional()
 });
 
@@ -206,13 +210,14 @@ const continueInputSchema = z.object({
 });
 
 const recordNoteToolInputSchema = z.object({
-  content: recordNoteInputSchema.shape.content.describe("The lightweight note to remember."),
+  content: recordNoteInputSchema.shape.content
+    .describe("Lightweight note in Korean; keep code identifiers and proper nouns unchanged."),
   // Topic-only context remains valid for existing callers, while the public guidance asks
   // conversational captures to preserve the relevant source messages.
   sourceContext: z.object({
-    topic: noteTopicSchema.describe("A short label for the source conversation."),
+    topic: noteTopicSchema.describe("Short Korean label for the source conversation."),
     messages: noteSourceConversationSchema.shape.messages
-      .describe("One to four relevant messages preserving their original speaker roles, text, and order.")
+      .describe("One to four relevant messages preserving their original language, speaker roles, text, and order.")
       .optional()
   })
     .optional()
@@ -220,17 +225,22 @@ const recordNoteToolInputSchema = z.object({
 });
 
 const autoCaptureRationaleToolInputSchema = z.object({
-  title: autoCaptureRationaleInputSchema.shape.title,
-  body: autoCaptureRationaleInputSchema.shape.body,
+  title: autoCaptureRationaleInputSchema.shape.title
+    .describe("Concise rationale title in Korean; keep code identifiers and proper nouns unchanged."),
+  body: autoCaptureRationaleInputSchema.shape.body
+    .describe("Self-contained Markdown body in Korean; keep code identifiers and proper nouns unchanged."),
   type: autoCaptureRationaleInputSchema.shape.type,
   project: searchProjectFilterSchema.optional()
 });
 
 const updateRationaleToolInputSchema = z.object({
   revisionId: updateRationaleInputSchema.shape.revisionId,
-  reason: updateRationaleInputSchema.shape.reason,
-  title: updateRationaleInputSchema.shape.title,
+  reason: updateRationaleInputSchema.shape.reason
+    .describe("Reason for the update in Korean; keep code identifiers and proper nouns unchanged."),
+  title: updateRationaleInputSchema.shape.title
+    .describe("Complete replacement title in Korean; keep code identifiers and proper nouns unchanged."),
   body: updateRationaleInputSchema.shape.body
+    .describe("Complete replacement Markdown body in Korean; keep code identifiers and proper nouns unchanged.")
 });
 
 const recordUsageFeedbackToolInputSchema = z.object({

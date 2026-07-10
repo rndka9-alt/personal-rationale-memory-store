@@ -93,9 +93,26 @@ describe("MCP write tool results", () => {
     const recordNoteTool = getTool(createToolServices(), "record_note");
 
     expect(recordNoteTool.description).toContain("current conversation");
-    expect(recordNoteTool.description).toContain("original roles, text, and order");
-    expect(recordNoteTool.schema.content.description).toBe("The lightweight note to remember.");
+    expect(recordNoteTool.description).toContain("original language, roles, text, and order");
     expect(recordNoteTool.schema.sourceContext.description).toContain("Conversation provenance");
+  });
+
+  it("guides embedding-relevant natural-language inputs to Korean", () => {
+    const services = createToolServices();
+    const searchTool = getTool(services, "search_rationales");
+    const composeTool = getTool(services, "compose_context");
+    const recordNoteTool = getTool(services, "record_note");
+    const captureTool = getTool(services, "auto_capture_rationale");
+    const updateTool = getTool(services, "update_rationale");
+
+    expect(searchTool.schema.query.description).toContain("Korean");
+    expect(composeTool.schema.task.description).toContain("Korean");
+    expect(recordNoteTool.schema.content.description).toContain("Korean");
+    expect(captureTool.schema.title.description).toContain("Korean");
+    expect(captureTool.schema.body.description).toContain("Korean");
+    expect(updateTool.schema.reason.description).toContain("Korean");
+    expect(updateTool.schema.title.description).toContain("Korean");
+    expect(updateTool.schema.body.description).toContain("Korean");
   });
 
   it("returns compact search results without internal ranking or storage metadata", async () => {
