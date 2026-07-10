@@ -98,7 +98,8 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "record_note",
-      description: "Record a lightweight personal note, with optional source context for later review.",
+      description:
+        "Record a lightweight personal note. When it comes from the current conversation, include sourceContext with a concise topic and 1–4 relevant user/assistant messages preserving their original roles, text, and order. Omit sourceContext only for standalone notes.",
       schema: recordNoteToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -205,11 +206,17 @@ const continueInputSchema = z.object({
 });
 
 const recordNoteToolInputSchema = z.object({
-  content: recordNoteInputSchema.shape.content,
+  content: recordNoteInputSchema.shape.content.describe("The lightweight note to remember."),
+  // Topic-only context remains valid for existing callers, while the public guidance asks
+  // conversational captures to preserve the relevant source messages.
   sourceContext: z.object({
-    topic: noteTopicSchema,
-    messages: noteSourceConversationSchema.shape.messages.optional()
-  }).optional()
+    topic: noteTopicSchema.describe("A short label for the source conversation."),
+    messages: noteSourceConversationSchema.shape.messages
+      .describe("One to four relevant messages preserving their original speaker roles, text, and order.")
+      .optional()
+  })
+    .optional()
+    .describe("Conversation provenance for notes derived from a conversation; omit for standalone notes.")
 });
 
 const autoCaptureRationaleToolInputSchema = z.object({

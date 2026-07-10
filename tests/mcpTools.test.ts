@@ -89,6 +89,15 @@ describe("MCP write tool results", () => {
     expect(getRequiredInputKeys(getTool(services, "record_usage_feedback"))).toEqual(["entryId", "eventType"]);
   });
 
+  it("explains when note conversation provenance should be captured", () => {
+    const recordNoteTool = getTool(createToolServices(), "record_note");
+
+    expect(recordNoteTool.description).toContain("current conversation");
+    expect(recordNoteTool.description).toContain("original roles, text, and order");
+    expect(recordNoteTool.schema.content.description).toBe("The lightweight note to remember.");
+    expect(recordNoteTool.schema.sourceContext.description).toContain("Conversation provenance");
+  });
+
   it("returns compact search results without internal ranking or storage metadata", async () => {
     const services = createToolServices();
     services.rationaleService.searchWithDiagnostics = async () => ({
