@@ -882,7 +882,7 @@ function DigestClaimLedger(props: { claims: DigestClaim[] }) {
 function DigestClaimGroup(props: { layer: DigestLayer; claims: DigestClaim[] }) {
   const details = digestLayerDetails[props.layer];
   return (
-    <article className="overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
+    <article className="flex flex-col overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
       <header className="flex items-center justify-between border-b border-stroke px-5 py-4 sm:px-6">
         <div className="flex items-baseline gap-2.5">
           <h3 className="font-display text-xl tracking-[-0.025em] text-ink">{details.label}</h3>
@@ -893,7 +893,7 @@ function DigestClaimGroup(props: { layer: DigestLayer; claims: DigestClaim[] }) 
       {props.claims.length === 0 ? (
         <p className="px-5 py-7 text-xs text-faint sm:px-6">이 레이어의 활성 claim이 없습니다.</p>
       ) : (
-        <ul className="divide-y divide-stroke">
+        <ul className="max-h-96 min-h-0 flex-1 divide-y divide-stroke overflow-y-auto overscroll-contain">
           {props.claims.map((claim) => (
             <li key={claim.id} className="px-5 py-5 sm:px-6">
               <p className="break-words text-sm leading-6 text-ink">{claim.text}</p>
