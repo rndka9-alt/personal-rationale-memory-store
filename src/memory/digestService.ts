@@ -526,13 +526,17 @@ export async function seedDigest(
 
 const digestSystemPrompt = `당신은 개인 메모리 digest 원장을 증분 갱신하는 합성기다.
 
+레이어 정의: now=진행 중인 관심사·작업, recent=일단락된 최근 사건·성과, longterm=직업·환경·정체성 같은 안정적 사실, about=시간과 무관한 성향·취향·작업 방식 선호.
+
+prose 스타일: now는 상태 브리핑으로 쓴다 — 무엇이 진행 중이고 어디까지 왔고 다음이 무엇인지. about은 사실 나열이 아닌 인물 초상으로 쓴다 — 성향을 서로 연결하고 왜 그런지가 드러나게. recent와 longterm은 간결한 사실 서술로 쓴다.
+
 규칙:
 1. 입력 노트는 어시스턴트 시점에서 기록되었으므로, digest와 claim은 항상 사용자를 중심으로 서술한다.
 2. 신규 노트가 기존 claim과 같은 내용이면 add를 만들지 말고 strengthen를 사용한다.
 3. updatedAt이 현재 시각보다 3주 이상 오래된 now claim은 recent로 강등하는 revise를 만들거나 retire한다.
 4. active claim이 60개를 넘으면 새 claim 추가보다 기존 claim 병합을 위한 revise와 retire를 우선한다.
 5. 건강 등 민감 영역은 구체적인 사생활을 반복하지 말고 한 줄 수준으로 추상화한다.
-6. prose는 내용이 실제로 바뀌는 레이어만 넣는다 — add, retire, 텍스트나 레이어를 바꾸는 revise가 있는 레이어. strengthen이나 noteIds만 추가하는 revise만 있으면 그 레이어의 prose는 다시 쓰지 않는다. revise로 레이어가 이동하면 이전/새 레이어를 모두 넣는다. 각 prose 값은 800자 이하다.
+6. prose는 내용이 실제로 바뀌는 레이어만 넣는다 — add, retire, 텍스트나 레이어를 바꾸는 revise가 있는 레이어. prose 값은 해당 레이어의 기존 프로즈를 통째로 대체한다. strengthen이나 noteIds만 추가하는 revise만 있으면 그 레이어의 prose는 다시 쓰지 않는다. revise로 레이어가 이동하면 이전/새 레이어를 모두 넣는다. 각 prose 값은 800자 이하다.
 7. add의 noteIds, strengthen의 noteIds, revise의 선택적 noteIds에는 근거가 된 신규 노트 id만 넣는다. noteIds는 오래된 것부터 최신 순서로 둔다.
 8. 존재하는 claim을 그대로 다시 출력하지 않는다. 원장 전체를 재작성하지 않고 아래 JSON 스키마의 ops만 출력한다.
 9. 마크다운 코드 펜스, 설명, 주석 없이 지정된 JSON 객체 하나만 출력한다.
@@ -562,19 +566,28 @@ const digestRepairSystemPrompt = `개인 메모리 digest 문장을 압축한다
 4. 설명, 주석, 따옴표 없이 압축한 본문만 출력한다.`;
 
 function createDigestUserPrompt(claims: DigestClaim[], newNotes: DigestNote[], now: Date) {
+  // sampleNoteIds·createdAt·정밀 타임스탬프는 모델이 참조할 일이 없는 토큰 무게라 프롬프트에서 뺀다
+  // — ops의 noteIds는 신규 노트 id만 허용(규칙 7)하고, 시간 판단(규칙 3)은 날짜 단위면 충분하다.
   return JSON.stringify({
-    currentTime: now.toISOString(),
+    currentTime: toDigestPromptDate(now.toISOString()),
     activeClaims: claims.map((claim) => ({
       id: claim.id,
       layer: claim.layer,
       text: claim.text,
       evidenceCount: claim.evidenceCount,
-      sampleNoteIds: claim.sampleNoteIds,
-      createdAt: claim.createdAt,
-      updatedAt: claim.updatedAt
+      updatedAt: toDigestPromptDate(claim.updatedAt)
     })),
-    newNotes
+    newNotes: newNotes.map((note) => ({
+      id: note.id,
+      content: note.content,
+      topic: note.topic,
+      createdAt: toDigestPromptDate(note.createdAt)
+    }))
   });
+}
+
+function toDigestPromptDate(timestamp: string) {
+  return timestamp.slice(0, 10);
 }
 
 function parseDigestLlmOutput(outputText: string) {
