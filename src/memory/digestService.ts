@@ -187,8 +187,7 @@ export class DigestService {
       return null;
     }
 
-    const newNoteCount = await countNewDigestNotes(this.pool, state.noteCursorAt, state.noteCursorId);
-    return formatDigestSection(state.prose, state.synthesizedAt, newNoteCount);
+    return formatDigestSection(state.prose, state.synthesizedAt);
   }
 
   async maybeRefreshInBackground() {
@@ -334,7 +333,7 @@ export function shouldRefreshDigest(input: {
   return now.getTime() - synthesizedAt.getTime() >= minIntervalMilliseconds;
 }
 
-export function formatDigestSection(prose: DigestProse, synthesizedAt: string, newNoteCount: number) {
+export function formatDigestSection(prose: DigestProse, synthesizedAt: string) {
   const synthesizedDate = new Date(synthesizedAt);
   if (Number.isNaN(synthesizedDate.getTime())) {
     throw new Error(`Invalid digest synthesizedAt timestamp: ${synthesizedAt}`);
@@ -346,7 +345,7 @@ export function formatDigestSection(prose: DigestProse, synthesizedAt: string, n
     `[장기]\n${prose.longterm}`,
     `[나에 대해]\n${prose.about}`
   ];
-  const header = `━━━ digest (${synthesizedDate.toISOString().slice(0, 10)} 합성 · 이후 신규 노트 ${newNoteCount}개 미반영) ━━━`;
+  const header = `━━━ digest (${synthesizedDate.toISOString().slice(0, 10)} 기준) ━━━`;
   return `${header}\n${sections.join("\n\n")}`;
 }
 

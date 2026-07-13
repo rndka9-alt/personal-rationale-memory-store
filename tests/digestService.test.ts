@@ -477,7 +477,9 @@ describe("digest refresh trigger and soft cap", () => {
 
 describe("digest section and prose validation", () => {
   it("orders all four layers and accepts the 1200 character hard cap", () => {
-    const section = formatDigestSection(createProse("current"), "2026-07-10T12:00:00.000Z", 3);
+    const section = formatDigestSection(createProse("current"), "2026-07-10T12:00:00.000Z");
+    expect(section).toMatch(/^━━━ digest \(2026-07-10 기준\) ━━━/);
+    expect(section).not.toContain("미반영");
     expect(section.indexOf("current now")).toBeLessThan(section.indexOf("current recent"));
     expect(section.indexOf("current recent")).toBeLessThan(section.indexOf("current longterm"));
     expect(section.indexOf("current longterm")).toBeLessThan(section.indexOf("current about"));
