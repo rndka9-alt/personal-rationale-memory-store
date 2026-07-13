@@ -12,6 +12,7 @@ const digestStateId = "singleton";
 const digestViewStateRowSchema = z.object({
   id: z.literal(digestStateId),
   note_cursor: z.string().nullable(),
+  note_cursor_id: z.string().nullable(),
   prose: digestProseSchema,
   synthesized_at: z.coerce.date().nullable()
 });
@@ -20,11 +21,26 @@ const digestViewClaimRowSchema = z.object({
   id: z.string(),
   layer: digestLayerSchema,
   text: z.string(),
-  evidence_count: z.coerce.number().int().positive(),
+  evidence_count: z.coerce.number().int().nonnegative(),
   sample_note_ids: z.array(z.string()),
+  first_observed_at: z.coerce.date().nullable(),
+  last_observed_at: z.coerce.date().nullable(),
+  observed_days: z.coerce.number().int().nonnegative(),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date()
 });
+
+const digestSkippedOperationSchema = z.object({
+  operation: digestOperationSchema,
+  reason: z.string()
+}).strict();
+
+const digestDeferredEventSchema = z.object({
+  action: z.enum(["queued", "applied", "removed", "retained"]),
+  claimId: z.string(),
+  targetLayer: z.enum(["longterm", "about"]),
+  reason: z.string()
+}).strict();
 
 const digestRunRowSchema = z.object({
   id: z.string(),
@@ -33,7 +49,10 @@ const digestRunRowSchema = z.object({
   error: z.string().nullable(),
   new_note_count: z.coerce.number().int().nonnegative(),
   ops: z.array(digestOperationSchema),
-  prose_snapshot: digestProseSchema
+  skipped_operations: z.array(digestSkippedOperationSchema),
+  deferred_events: z.array(digestDeferredEventSchema),
+  prose_snapshot: digestProseSchema,
+  run_kind: z.enum(["synthesis", "maintenance"])
 });
 
 export class DigestViewService {
@@ -42,21 +61,37 @@ export class DigestViewService {
   async getDigest() {
     const [stateResult, claimsResult] = await Promise.all([
       this.pool.query(
-        `SELECT id, note_cursor::text AS note_cursor, prose, synthesized_at
+        `SELECT id, note_cursor::text AS note_cursor, note_cursor_id, prose, synthesized_at
         FROM digest_state
         WHERE id = $1`,
         [digestStateId]
       ),
       this.pool.query(
-        `SELECT id, layer, text, evidence_count, sample_note_ids, created_at, updated_at
-        FROM digest_claims
-        WHERE retired_at IS NULL
-        ORDER BY CASE layer
+        `SELECT
+          claims.id,
+          claims.layer,
+          claims.text,
+          COUNT(evidence.note_id)::int AS evidence_count,
+          COALESCE(
+            (array_agg(evidence.note_id ORDER BY evidence.observed_at DESC, evidence.note_id DESC)
+              FILTER (WHERE evidence.note_id IS NOT NULL))[1:5],
+            '{}'::text[]
+          ) AS sample_note_ids,
+          MIN(evidence.observed_at) AS first_observed_at,
+          MAX(evidence.observed_at) AS last_observed_at,
+          COUNT(DISTINCT (evidence.observed_at AT TIME ZONE 'Asia/Seoul')::date)::int AS observed_days,
+          claims.created_at,
+          claims.updated_at
+        FROM digest_claims AS claims
+        LEFT JOIN digest_claim_evidence AS evidence ON evidence.claim_id = claims.id
+        WHERE claims.retired_at IS NULL
+        GROUP BY claims.id
+        ORDER BY CASE claims.layer
           WHEN 'now' THEN 1
           WHEN 'recent' THEN 2
           WHEN 'longterm' THEN 3
           WHEN 'about' THEN 4
-        END, updated_at DESC, id ASC`
+        END, MAX(evidence.observed_at) DESC NULLS LAST, claims.id ASC`
       )
     ]);
 
@@ -65,12 +100,19 @@ export class DigestViewService {
       throw new Error("Digest state row is missing. Run migrations before viewing digest.");
     }
     const parsedState = digestViewStateRowSchema.parse(stateRow);
+    if ((parsedState.note_cursor === null) !== (parsedState.note_cursor_id === null)) {
+      throw new Error("Digest cursor timestamp and id must both be null or both be present.");
+    }
     const claims = claimsResult.rows.map(mapDigestViewClaimRow);
     if (!parsedState.synthesized_at) {
       return { state: null, claims };
     }
 
-    const newNoteCount = await countNewDigestNotes(this.pool, parsedState.note_cursor);
+    const newNoteCount = await countNewDigestNotes(
+      this.pool,
+      parsedState.note_cursor,
+      parsedState.note_cursor_id
+    );
     return {
       state: {
         synthesizedAt: parsedState.synthesized_at.toISOString(),
@@ -83,7 +125,9 @@ export class DigestViewService {
 
   async listRuns(limit: number) {
     const result = await this.pool.query(
-      `SELECT id, run_at, status, error, new_note_count, ops, prose_snapshot
+      `SELECT
+        id, run_at, status, error, new_note_count, ops, skipped_operations,
+        deferred_events, prose_snapshot, run_kind
       FROM digest_runs
       ORDER BY run_at DESC, id DESC
       LIMIT $1`,
@@ -101,6 +145,9 @@ function mapDigestViewClaimRow(row: pg.QueryResultRow) {
     text: claim.text,
     evidenceCount: claim.evidence_count,
     sampleNoteIds: claim.sample_note_ids,
+    firstObservedAt: claim.first_observed_at?.toISOString() ?? null,
+    lastObservedAt: claim.last_observed_at?.toISOString() ?? null,
+    observedDays: claim.observed_days,
     createdAt: claim.created_at.toISOString(),
     updatedAt: claim.updated_at.toISOString()
   };
@@ -115,6 +162,9 @@ function mapDigestRunRow(row: pg.QueryResultRow) {
     error: run.error,
     newNoteCount: run.new_note_count,
     ops: run.ops,
-    proseSnapshot: run.prose_snapshot
+    skippedOperations: run.skipped_operations,
+    deferredEvents: run.deferred_events,
+    proseSnapshot: run.prose_snapshot,
+    runKind: run.run_kind
   };
 }

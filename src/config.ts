@@ -49,7 +49,11 @@ const environmentSchema = z.object({
   DIGEST_LLM_API_KEY: optionalStringSchema,
   DIGEST_LLM_MAX_TOKENS: z.coerce.number().int().positive().default(8192),
   DIGEST_IMMEDIATE_NOTES: z.coerce.number().int().positive().default(10),
-  DIGEST_MIN_INTERVAL_HOURS: z.coerce.number().positive().default(24)
+  DIGEST_MIN_INTERVAL_HOURS: z.coerce.number().positive().default(24),
+  DIGEST_PROMOTE_MIN_SPAN_DAYS: z.coerce.number().int().positive().default(7),
+  DIGEST_RECENT_RETIRE_WEEKS: z.coerce.number().int().positive().default(8),
+  DIGEST_STABLE_LAYER_MERGE_TRIGGER: z.coerce.number().int().positive().default(25),
+  DIGEST_STABLE_LAYER_MERGE_RELEASE: z.coerce.number().int().nonnegative().default(20)
 });
 
 export type AppConfig = ReturnType<typeof loadConfig>;
@@ -134,9 +138,17 @@ function resolveDigestConfig(
   environment: z.infer<typeof environmentSchema>,
   enabled: boolean
 ) {
+  if (environment.DIGEST_STABLE_LAYER_MERGE_RELEASE >= environment.DIGEST_STABLE_LAYER_MERGE_TRIGGER) {
+    throw new Error("DIGEST_STABLE_LAYER_MERGE_RELEASE must be lower than DIGEST_STABLE_LAYER_MERGE_TRIGGER.");
+  }
+
   const sharedConfig = {
     immediateNotes: environment.DIGEST_IMMEDIATE_NOTES,
-    minIntervalHours: environment.DIGEST_MIN_INTERVAL_HOURS
+    minIntervalHours: environment.DIGEST_MIN_INTERVAL_HOURS,
+    promoteMinSpanDays: environment.DIGEST_PROMOTE_MIN_SPAN_DAYS,
+    recentRetireWeeks: environment.DIGEST_RECENT_RETIRE_WEEKS,
+    stableLayerMergeTrigger: environment.DIGEST_STABLE_LAYER_MERGE_TRIGGER,
+    stableLayerMergeRelease: environment.DIGEST_STABLE_LAYER_MERGE_RELEASE
   };
 
   if (!enabled) {

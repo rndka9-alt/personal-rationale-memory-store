@@ -92,7 +92,9 @@ const digestOperationLabels: Record<DigestOperation["type"], string> = {
   add: "추가",
   strengthen: "강화",
   revise: "수정",
-  retire: "은퇴"
+  retire: "은퇴",
+  promote: "승격",
+  merge: "병합"
 };
 
 function useDebouncedValue(value: string, delayMilliseconds: number) {
@@ -901,7 +903,8 @@ function DigestClaimGroup(props: { layer: DigestLayer; claims: DigestClaim[] }) 
                 <span className={`rounded-full px-2.5 py-1 font-semibold tabular-nums ${evidenceBadgeClassName(claim.evidenceCount)}`}>
                   근거 ×{claim.evidenceCount}
                 </span>
-                <span>{formatDigestDate(claim.updatedAt)} 갱신</span>
+                <span>관측 {claim.observedDays}일</span>
+                <span>{formatDigestObservationSpan(claim)}</span>
               </div>
             </li>
           ))}
@@ -949,6 +952,7 @@ function DigestRunItem(props: { run: DigestRun }) {
             </span>
             <span>신규 노트 {run.newNoteCount}개</span>
             <span>ops {run.ops.length}개</span>
+            <span>{run.runKind === "synthesis" ? "판단" : "유지보수"}</span>
           </div>
         </div>
       </summary>
@@ -967,6 +971,30 @@ function DigestRunItem(props: { run: DigestRun }) {
             ))}
           </ol>
         )}
+        {run.skippedOperations.length > 0 ? (
+          <div className="mt-5">
+            <p className="mb-2 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-muted">Skipped</p>
+            <ul className="space-y-2 text-xs text-faint">
+              {run.skippedOperations.map((skipped, index) => (
+                <li key={`${skipped.reason}-${index}`} className="rounded-2xl border border-stroke bg-white px-4 py-3">
+                  {digestOperationLabels[skipped.operation.type]} · {skipped.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {run.deferredEvents.length > 0 ? (
+          <div className="mt-5">
+            <p className="mb-2 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-muted">Deferred promotions</p>
+            <ul className="space-y-2 text-xs text-faint">
+              {run.deferredEvents.map((event, index) => (
+                <li key={`${event.claimId}-${event.action}-${index}`} className="rounded-2xl border border-stroke bg-white px-4 py-3">
+                  {event.action} · {event.claimId} → {digestLayerDetails[event.targetLayer].label} · {event.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </details>
   );
@@ -1016,6 +1044,24 @@ function DigestOperationContent(props: { operation: DigestOperation }) {
       </div>
     );
   }
+  if (operation.type === "promote") {
+    return (
+      <div className="min-w-0">
+        <p className="break-all font-mono text-xs leading-5 text-ink">{operation.claimId}</p>
+        <p className="mt-1 text-[0.67rem] text-faint">{digestLayerDetails[operation.layer].label}로 승격</p>
+      </div>
+    );
+  }
+  if (operation.type === "merge") {
+    return (
+      <div className="min-w-0">
+        <p className="break-words text-sm leading-5 text-ink">{operation.text ?? operation.parentClaimId}</p>
+        <p className="mt-1 break-all text-[0.67rem] leading-5 text-faint">
+          부모 {operation.parentClaimId} · 자식 {operation.childClaimIds.length}개
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="min-w-0">
       <p className="break-all font-mono text-xs leading-5 text-ink">{operation.claimId}</p>
@@ -1056,6 +1102,15 @@ function evidenceBadgeClassName(evidenceCount: number) {
     return "bg-sage-soft text-sage";
   }
   return "bg-canvas text-muted";
+}
+
+function formatDigestObservationSpan(claim: DigestClaim) {
+  if (!claim.firstObservedAt || !claim.lastObservedAt) {
+    return "관측 시각 없음";
+  }
+  const firstDate = formatDigestDate(claim.firstObservedAt);
+  const lastDate = formatDigestDate(claim.lastObservedAt);
+  return firstDate === lastDate ? firstDate : `${firstDate} ~ ${lastDate}`;
 }
 
 function digestOperationBadgeClassName(type: DigestOperation["type"]) {

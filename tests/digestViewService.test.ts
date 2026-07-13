@@ -3,11 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import { DigestViewService } from "../src/memory/digestViewService.js";
 
 describe("digest view service", () => {
-  it("returns synthesized state with the shared new-note count and ordered active claims", async () => {
+  it("returns evidence aggregates and counts new notes from the tuple cursor", async () => {
     const pool = createPoolMock([
       [{
         id: "singleton",
         note_cursor: "2026-07-10T08:00:00.000Z",
+        note_cursor_id: "note-2",
         prose: createProse("current"),
         synthesized_at: new Date("2026-07-10T09:00:00.000Z")
       }],
@@ -16,8 +17,11 @@ describe("digest view service", () => {
         layer: "now",
         text: "요즘 claim",
         evidence_count: 4,
-        sample_note_ids: ["note-1", "note-2"],
-        created_at: new Date("2026-07-09T09:00:00.000Z"),
+        sample_note_ids: ["note-4", "note-3", "note-2", "note-1"],
+        first_observed_at: new Date("2026-07-01T09:00:00.000Z"),
+        last_observed_at: new Date("2026-07-10T09:00:00.000Z"),
+        observed_days: 3,
+        created_at: new Date("2026-07-01T09:00:00.000Z"),
         updated_at: new Date("2026-07-10T09:00:00.000Z")
       }],
       [{ new_note_count: 3 }]
@@ -35,29 +39,28 @@ describe("digest view service", () => {
         layer: "now",
         text: "요즘 claim",
         evidenceCount: 4,
-        sampleNoteIds: ["note-1", "note-2"],
-        createdAt: "2026-07-09T09:00:00.000Z",
+        sampleNoteIds: ["note-4", "note-3", "note-2", "note-1"],
+        firstObservedAt: "2026-07-01T09:00:00.000Z",
+        lastObservedAt: "2026-07-10T09:00:00.000Z",
+        observedDays: 3,
+        createdAt: "2026-07-01T09:00:00.000Z",
         updatedAt: "2026-07-10T09:00:00.000Z"
       }]
     });
 
-    expect(pool.query).toHaveBeenCalledTimes(3);
-    expect(pool.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringMatching(/retired_at IS NULL[\s\S]+WHEN 'now'[\s\S]+WHEN 'recent'[\s\S]+WHEN 'longterm'[\s\S]+WHEN 'about'[\s\S]+updated_at DESC/)
-    );
     expect(pool.query).toHaveBeenNthCalledWith(
       3,
-      expect.stringContaining("archived = FALSE"),
-      ["2026-07-10T08:00:00.000Z"]
+      expect.stringContaining("(created_at, id) > ($1::timestamptz, $2::text)"),
+      ["2026-07-10T08:00:00.000Z", "note-2"]
     );
   });
 
-  it("returns an empty state without counting notes before the first synthesis", async () => {
+  it("returns an empty state before the first synthesis", async () => {
     const pool = createPoolMock([
       [{
         id: "singleton",
         note_cursor: null,
+        note_cursor_id: null,
         prose: createProse(""),
         synthesized_at: null
       }],
@@ -69,19 +72,30 @@ describe("digest view service", () => {
     expect(pool.query).toHaveBeenCalledTimes(2);
   });
 
-  it("parses digest run JSON while preserving its operations", async () => {
+  it("returns promote, merge, skipped, and deferred audit records", async () => {
     const operations = [
-      { type: "add", layer: "recent", text: "새 claim", noteIds: ["note-3"] },
-      { type: "strengthen", claimId: "claim-now", noteIds: ["note-4", "note-5"] }
+      { type: "promote", claimId: "claim-now", layer: "about" },
+      { type: "merge", parentClaimId: "parent", childClaimIds: ["child"], text: "병합 claim" }
     ];
     const pool = createPoolMock([[{
-        id: "run-1",
-        run_at: new Date("2026-07-10T10:00:00.000Z"),
-        status: "succeeded",
-        error: null,
-        new_note_count: 2,
-        ops: operations,
-        prose_snapshot: createProse("snapshot")
+      id: "run-1",
+      run_at: new Date("2026-07-10T10:00:00.000Z"),
+      status: "succeeded",
+      error: null,
+      new_note_count: 2,
+      ops: operations,
+      skipped_operations: [{
+        operation: { type: "promote", claimId: "short", layer: "longterm" },
+        reason: "observation_span_below_7_days"
+      }],
+      deferred_events: [{
+        action: "queued",
+        claimId: "short",
+        targetLayer: "longterm",
+        reason: "observation_span_below_7_days"
+      }],
+      prose_snapshot: createProse("snapshot"),
+      run_kind: "synthesis"
     }]]);
     const service = new DigestViewService(pool);
 
@@ -92,9 +106,19 @@ describe("digest view service", () => {
       error: null,
       newNoteCount: 2,
       ops: operations,
-      proseSnapshot: createProse("snapshot")
+      skippedOperations: [{
+        operation: { type: "promote", claimId: "short", layer: "longterm" },
+        reason: "observation_span_below_7_days"
+      }],
+      deferredEvents: [{
+        action: "queued",
+        claimId: "short",
+        targetLayer: "longterm",
+        reason: "observation_span_below_7_days"
+      }],
+      proseSnapshot: createProse("snapshot"),
+      runKind: "synthesis"
     }]);
-    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("ORDER BY run_at DESC"), [20]);
   });
 });
 

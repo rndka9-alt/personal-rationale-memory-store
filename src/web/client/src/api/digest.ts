@@ -12,6 +12,9 @@ export type DigestClaim = {
   text: string;
   evidenceCount: number;
   sampleNoteIds: string[];
+  firstObservedAt: string | null;
+  lastObservedAt: string | null;
+  observedDays: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -29,7 +32,21 @@ export type DigestOperation =
   | { type: "add"; layer: DigestLayer; text: string; noteIds: string[] }
   | { type: "strengthen"; claimId: string; noteIds: string[] }
   | { type: "revise"; claimId: string; text?: string; layer?: DigestLayer; noteIds?: string[] }
-  | { type: "retire"; claimId: string };
+  | { type: "retire"; claimId: string }
+  | { type: "promote"; claimId: string; layer: "longterm" | "about" }
+  | { type: "merge"; parentClaimId: string; childClaimIds: string[]; text?: string };
+
+export type DigestSkippedOperation = {
+  operation: DigestOperation;
+  reason: string;
+};
+
+export type DigestDeferredEvent = {
+  action: "queued" | "applied" | "removed" | "retained";
+  claimId: string;
+  targetLayer: "longterm" | "about";
+  reason: string;
+};
 
 export type DigestRun = {
   id: string;
@@ -38,7 +55,10 @@ export type DigestRun = {
   error: string | null;
   newNoteCount: number;
   ops: DigestOperation[];
+  skippedOperations: DigestSkippedOperation[];
+  deferredEvents: DigestDeferredEvent[];
   proseSnapshot: DigestProse;
+  runKind: "synthesis" | "maintenance";
 };
 
 export async function fetchDigest(): Promise<DigestView> {
@@ -80,20 +100,32 @@ function parseDigestClaim(value: unknown): DigestClaim {
     id: readString(value, "id"),
     layer: readDigestLayer(value, "layer"),
     text: readString(value, "text"),
-    evidenceCount: readPositiveInteger(value, "evidenceCount"),
+    evidenceCount: readNonnegativeInteger(value, "evidenceCount"),
     sampleNoteIds: readStringArray(value, "sampleNoteIds"),
+    firstObservedAt: readNullableString(value, "firstObservedAt"),
+    lastObservedAt: readNullableString(value, "lastObservedAt"),
+    observedDays: readNonnegativeInteger(value, "observedDays"),
     createdAt: readString(value, "createdAt"),
     updatedAt: readString(value, "updatedAt")
   };
 }
 
 function parseDigestRun(value: unknown): DigestRun {
-  if (!isRecord(value) || !Array.isArray(value.ops)) {
+  if (
+    !isRecord(value)
+    || !Array.isArray(value.ops)
+    || !Array.isArray(value.skippedOperations)
+    || !Array.isArray(value.deferredEvents)
+  ) {
     throw new Error("Invalid digest run.");
   }
   const status = value.status;
   if (status !== "succeeded" && status !== "failed") {
     throw new Error("Invalid digest run status.");
+  }
+  const runKind = value.runKind;
+  if (runKind !== "synthesis" && runKind !== "maintenance") {
+    throw new Error("Invalid digest run kind.");
   }
   return {
     id: readString(value, "id"),
@@ -102,7 +134,10 @@ function parseDigestRun(value: unknown): DigestRun {
     error: readNullableString(value, "error"),
     newNoteCount: readNonnegativeInteger(value, "newNoteCount"),
     ops: value.ops.map(parseDigestOperation),
-    proseSnapshot: parseDigestProse(value.proseSnapshot)
+    skippedOperations: value.skippedOperations.map(parseDigestSkippedOperation),
+    deferredEvents: value.deferredEvents.map(parseDigestDeferredEvent),
+    proseSnapshot: parseDigestProse(value.proseSnapshot),
+    runKind
   };
 }
 
@@ -137,7 +172,52 @@ function parseDigestOperation(value: unknown): DigestOperation {
   if (value.type === "retire") {
     return { type: "retire", claimId: readString(value, "claimId") };
   }
+  if (value.type === "promote") {
+    const layer = readDigestLayer(value, "layer");
+    if (layer !== "longterm" && layer !== "about") {
+      throw new Error("Digest promote target must be a stable layer.");
+    }
+    return { type: "promote", claimId: readString(value, "claimId"), layer };
+  }
+  if (value.type === "merge") {
+    return {
+      type: "merge",
+      parentClaimId: readString(value, "parentClaimId"),
+      childClaimIds: readStringArray(value, "childClaimIds"),
+      text: readOptionalString(value, "text")
+    };
+  }
   throw new Error("Invalid digest operation type.");
+}
+
+function parseDigestSkippedOperation(value: unknown): DigestSkippedOperation {
+  if (!isRecord(value)) {
+    throw new Error("Invalid skipped digest operation.");
+  }
+  return {
+    operation: parseDigestOperation(value.operation),
+    reason: readString(value, "reason")
+  };
+}
+
+function parseDigestDeferredEvent(value: unknown): DigestDeferredEvent {
+  if (!isRecord(value)) {
+    throw new Error("Invalid deferred promotion event.");
+  }
+  const action = value.action;
+  if (action !== "queued" && action !== "applied" && action !== "removed" && action !== "retained") {
+    throw new Error("Invalid deferred promotion action.");
+  }
+  const targetLayer = readDigestLayer(value, "targetLayer");
+  if (targetLayer !== "longterm" && targetLayer !== "about") {
+    throw new Error("Deferred promotion target must be a stable layer.");
+  }
+  return {
+    action,
+    claimId: readString(value, "claimId"),
+    targetLayer,
+    reason: readString(value, "reason")
+  };
 }
 
 function parseDigestProse(value: unknown): DigestProse {
@@ -196,14 +276,6 @@ function readNonnegativeInteger(value: Record<string, unknown>, key: string) {
   const field = value[key];
   if (typeof field !== "number" || !Number.isInteger(field) || field < 0) {
     throw new Error(`Expected ${key} to be a nonnegative integer.`);
-  }
-  return field;
-}
-
-function readPositiveInteger(value: Record<string, unknown>, key: string) {
-  const field = readNonnegativeInteger(value, key);
-  if (field < 1) {
-    throw new Error(`Expected ${key} to be a positive integer.`);
   }
   return field;
 }

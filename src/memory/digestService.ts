@@ -18,21 +18,56 @@ import {
   LlmRequestLogService,
   type LlmRequestUsage
 } from "./llmRequestLogService.js";
+import {
+  applyDigestOperations,
+  digestJudgmentOutputSchema,
+  digestLayerSchema,
+  digestLayers,
+  digestOperationSchema,
+  digestProseSchema,
+  getDigestClaimStats,
+  maintainDigestClaims,
+  planDigestOperations,
+  resolveMergePressure,
+  type AppliedDigestOperations,
+  type DigestClaim,
+  type DigestDeferredEvent,
+  type DigestDeferredPromotion,
+  type DigestEvidence,
+  type DigestLayer,
+  type DigestNote,
+  type DigestOperation,
+  type DigestProse,
+  type DigestSkippedOperation
+} from "./digestDomain.js";
+
+export {
+  applyDigestOperations,
+  digestLayerSchema,
+  digestLayers,
+  digestOperationSchema,
+  digestProseSchema,
+  getDigestClaimStats,
+  maintainDigestClaims,
+  planDigestOperations,
+  resolveMergePressure
+} from "./digestDomain.js";
+export type {
+  DigestClaim,
+  DigestDeferredEvent,
+  DigestDeferredPromotion,
+  DigestEvidence,
+  DigestLayer,
+  DigestNote,
+  DigestOperation,
+  DigestProse,
+  DigestSkippedOperation
+} from "./digestDomain.js";
 
 const digestStateId = "singleton";
 const digestRefreshLockTimeoutMinutes = 10;
 export const digestProseTargetLength = 800;
 export const digestProseHardMaxLength = 1200;
-
-export const digestLayers = ["now", "recent", "longterm", "about"] as const;
-export const digestLayerSchema = z.enum(digestLayers);
-
-export const digestProseSchema = z.object({
-  now: z.string().max(digestProseHardMaxLength),
-  recent: z.string().max(digestProseHardMaxLength),
-  longterm: z.string().max(digestProseHardMaxLength),
-  about: z.string().max(digestProseHardMaxLength)
-}).strict();
 
 const digestOutputProseSchema = z.object({
   now: z.string().max(digestProseHardMaxLength).optional(),
@@ -43,63 +78,27 @@ const digestOutputProseSchema = z.object({
 
 const digestRepairTextSchema = z.string().trim().min(1);
 
-const digestNoteIdsSchema = z.array(z.string().min(1)).min(1);
-
-const addDigestOperationSchema = z.object({
-  type: z.literal("add"),
-  layer: digestLayerSchema,
-  text: z.string().min(1),
-  noteIds: digestNoteIdsSchema
-}).strict();
-
-const strengthenDigestOperationSchema = z.object({
-  type: z.literal("strengthen"),
-  claimId: z.string().min(1),
-  noteIds: digestNoteIdsSchema
-}).strict();
-
-const reviseDigestOperationSchema = z.object({
-  type: z.literal("revise"),
-  claimId: z.string().min(1),
-  text: z.string().min(1).optional(),
-  layer: digestLayerSchema.optional(),
-  noteIds: digestNoteIdsSchema.optional()
-}).strict().refine(
-  (operation) => operation.text !== undefined || operation.layer !== undefined || operation.noteIds !== undefined,
-  "revise must change text, layer, or evidence."
-);
-
-const retireDigestOperationSchema = z.object({
-  type: z.literal("retire"),
-  claimId: z.string().min(1)
-}).strict();
-
-export const digestOperationSchema = z.union([
-  addDigestOperationSchema,
-  strengthenDigestOperationSchema,
-  reviseDigestOperationSchema,
-  retireDigestOperationSchema
-]);
-
-export const digestLlmOutputSchema = z.object({
-  ops: z.array(digestOperationSchema),
-  prose: digestOutputProseSchema
-}).strict();
-
 const digestStateRowSchema = z.object({
   id: z.literal(digestStateId),
   note_cursor: z.string().nullable(),
+  note_cursor_id: z.string().nullable(),
   prose: digestProseSchema,
   synthesized_at: z.coerce.date().nullable(),
-  refresh_started_at: z.coerce.date().nullable()
+  judgment_at: z.coerce.date().nullable(),
+  refresh_started_at: z.coerce.date().nullable(),
+  longterm_merge_pressure: z.boolean(),
+  about_merge_pressure: z.boolean()
 });
 
 const digestClaimRowSchema = z.object({
   id: z.string(),
   layer: digestLayerSchema,
   text: z.string(),
-  evidence_count: z.coerce.number().int().positive(),
-  sample_note_ids: z.array(z.string()),
+  evidence: z.array(z.object({
+    note_id: z.string(),
+    observed_at: z.coerce.date(),
+    source_kind: z.string()
+  }).strict()),
   created_at: z.coerce.date(),
   updated_at: z.coerce.date(),
   retired_at: z.coerce.date().nullable()
@@ -116,49 +115,33 @@ export const digestSeedInputSchema = z.object({
   claims: z.array(z.object({
     layer: digestLayerSchema,
     text: z.string().min(1),
-    evidenceCount: z.number().int().positive(),
     sampleNoteIds: z.array(z.string().min(1))
   }).strict()),
   prose: digestProseSchema
 }).strict();
 
-export type DigestLayer = z.infer<typeof digestLayerSchema>;
-export type DigestProse = z.infer<typeof digestProseSchema>;
-export type DigestOperation = z.infer<typeof digestOperationSchema>;
 export type DigestSeedInput = z.infer<typeof digestSeedInputSchema>;
 
-export type DigestClaim = {
-  id: string;
-  layer: DigestLayer;
-  text: string;
-  evidenceCount: number;
-  sampleNoteIds: string[];
-  createdAt: string;
-  updatedAt: string;
-  retiredAt: string | null;
-};
-
 export type DigestState = {
-  noteCursor: string | null;
+  noteCursorAt: string | null;
+  noteCursorId: string | null;
   prose: DigestProse;
   synthesizedAt: string | null;
+  // 코드-only 렌더가 신규 노트 판단 주기를 뒤로 미루지 않도록 마지막 판단 시각을 분리한다.
+  judgmentAt: string | null;
   refreshStartedAt: string | null;
-};
-
-export type DigestNote = {
-  id: string;
-  content: string;
-  topic: string | null;
-  createdAt: string;
+  longtermMergePressure: boolean;
+  aboutMergePressure: boolean;
 };
 
 export type DigestSnapshot = {
   claims: DigestClaim[];
   state: DigestState;
   newNotes: DigestNote[];
+  deferredPromotions: DigestDeferredPromotion[];
 };
 
-export type DigestLlmPurpose = "digest_synthesis" | "digest_repair";
+export type DigestLlmPurpose = "digest_judgment" | "digest_render" | "digest_repair";
 
 export type DigestTextGeneration = {
   text: string;
@@ -178,21 +161,12 @@ export type DigestTextGenerator = {
 type EnabledDigestConfig = Extract<AppConfig["digest"], { enabled: true }>;
 type DigestQueryExecutor = Pick<pg.Pool, "query">;
 
-type ApplyDigestOperationsOptions = {
-  now?: Date;
-  createClaimId?: () => string;
-  onSkippedOperation?: (operation: DigestOperation) => void;
-};
-
-type AppliedDigestOperations = {
-  claims: DigestClaim[];
-  dirtyLayers: Set<DigestLayer>;
-  skippedOperations: DigestOperation[];
-};
-
 type SynthesizedDigest = AppliedDigestOperations & {
-  operations: DigestOperation[];
+  deferredPromotions: DigestDeferredPromotion[];
+  deferredEvents: DigestDeferredEvent[];
   prose: DigestProse;
+  longtermMergePressure: boolean;
+  aboutMergePressure: boolean;
 };
 
 export class DigestService {
@@ -213,7 +187,7 @@ export class DigestService {
       return null;
     }
 
-    const newNoteCount = await countNewDigestNotes(this.pool, state.noteCursor);
+    const newNoteCount = await countNewDigestNotes(this.pool, state.noteCursorAt, state.noteCursorId);
     return formatDigestSection(state.prose, state.synthesizedAt, newNoteCount);
   }
 
@@ -234,15 +208,21 @@ export class DigestService {
 
   private async refreshIfDue() {
     const initialState = await getDigestState(this.pool);
-    const initialNewNoteCount = await countNewDigestNotes(this.pool, initialState.noteCursor);
+    const initialNewNoteCount = await countNewDigestNotes(
+      this.pool,
+      initialState.noteCursorAt,
+      initialState.noteCursorId
+    );
     const now = new Date();
-    if (!shouldRefreshDigest({
+    const judgmentDue = shouldRefreshDigest({
       newNoteCount: initialNewNoteCount,
-      synthesizedAt: initialState.synthesizedAt,
+      synthesizedAt: initialState.judgmentAt,
       immediateNotes: this.config.immediateNotes,
       minIntervalHours: this.config.minIntervalHours,
       now
-    })) {
+    });
+    const maintenanceDue = await hasDigestMaintenanceWork(this.pool, this.config, now);
+    if (!judgmentDue && !maintenanceDue) {
       return;
     }
 
@@ -253,44 +233,71 @@ export class DigestService {
     }
 
     let operations: DigestOperation[] = [];
+    let skippedOperations: DigestSkippedOperation[] = [];
+    let deferredEvents: DigestDeferredEvent[] = [];
     let snapshot: DigestSnapshot | undefined;
+    let runKind: "synthesis" | "maintenance" = judgmentDue ? "synthesis" : "maintenance";
     const runId = randomUUID();
     try {
       snapshot = await loadDigestSnapshot(this.pool);
-      if (snapshot.newNotes.length === 0) {
-        await releaseDigestRefreshLock(this.pool, lockStartedAt);
-        return;
-      }
+      const shouldRunJudgment = judgmentDue && snapshot.newNotes.length > 0;
+      runKind = shouldRunJudgment ? "synthesis" : "maintenance";
 
       const synthesized = await synthesizeDigestSnapshot(
         snapshot,
         createLoggedDigestTextGenerator(this.pool, this.config, this.generator, runId),
-        now,
-        (operation) => logWarn("Digest operation referenced a missing claim and was skipped.", {
-          operationType: operation.type,
-          claimId: "claimId" in operation ? operation.claimId : undefined
-        })
+        {
+          ...this.config,
+          runId,
+          now,
+          runJudgment: shouldRunJudgment,
+          onPlanned: (planned) => {
+            operations = planned.operations;
+            skippedOperations = planned.skippedOperations;
+            deferredEvents = planned.deferredEvents;
+          }
+        }
       );
       operations = synthesized.operations;
-      await persistSuccessfulDigestRun(this.pool, snapshot, synthesized, lockStartedAt, now, runId);
+      skippedOperations = synthesized.skippedOperations;
+      deferredEvents = synthesized.deferredEvents;
+      if (!shouldRunJudgment && !hasDigestChanges(synthesized)) {
+        await releaseDigestRefreshLock(this.pool, lockStartedAt);
+        return;
+      }
+      await persistSuccessfulDigestRun(
+        this.pool,
+        snapshot,
+        synthesized,
+        lockStartedAt,
+        now,
+        runId,
+        runKind
+      );
       logInfo("Digest refresh completed.", {
         newNoteCount: snapshot.newNotes.length,
         operationCount: operations.length,
+        skippedOperationCount: skippedOperations.length,
         dirtyLayers: [...synthesized.dirtyLayers]
       });
     } catch (error) {
       const proseSnapshot = snapshot ? snapshot.state.prose : initialState.prose;
-      const newNoteCount = snapshot ? snapshot.newNotes.length : initialNewNoteCount;
+      const newNoteCount = runKind === "synthesis"
+        ? snapshot?.newNotes.length ?? initialNewNoteCount
+        : 0;
       try {
         await recordFailedDigestRun(
           this.pool,
           operations,
+          skippedOperations,
+          deferredEvents,
           proseSnapshot,
           newNoteCount,
           lockStartedAt,
           error,
           now,
-          runId
+          runId,
+          runKind
         );
       } catch (recordError) {
         logError("Recording failed digest run failed.", recordError);
@@ -343,114 +350,109 @@ export function formatDigestSection(prose: DigestProse, synthesizedAt: string, n
   return `${header}\n${sections.join("\n\n")}`;
 }
 
-export function applyDigestOperations(
-  claims: DigestClaim[],
-  operations: DigestOperation[],
-  options: ApplyDigestOperationsOptions = {}
-): AppliedDigestOperations {
-  const now = options.now ?? new Date();
-  const nowTimestamp = now.toISOString();
-  const createClaimId = options.createClaimId ?? createDigestClaimId;
-  const copiedClaims = claims.map((claim) => ({
-    ...claim,
-    sampleNoteIds: [...claim.sampleNoteIds]
-  }));
-  const claimsById = new Map(copiedClaims.map((claim) => [claim.id, claim]));
-  const dirtyLayers = new Set<DigestLayer>();
-  const skippedOperations: DigestOperation[] = [];
-
-  for (const operation of operations) {
-    if (operation.type === "add") {
-      const noteIds = uniqueNoteIds(operation.noteIds);
-      const claim: DigestClaim = {
-        id: createClaimId(),
-        layer: operation.layer,
-        text: operation.text,
-        evidenceCount: noteIds.length,
-        sampleNoteIds: capSampleNoteIds([], noteIds),
-        createdAt: nowTimestamp,
-        updatedAt: nowTimestamp,
-        retiredAt: null
-      };
-      copiedClaims.push(claim);
-      claimsById.set(claim.id, claim);
-      dirtyLayers.add(operation.layer);
-      continue;
-    }
-
-    const claim = claimsById.get(operation.claimId);
-    if (!claim || claim.retiredAt) {
-      skippedOperations.push(operation);
-      options.onSkippedOperation?.(operation);
-      continue;
-    }
-
-    if (operation.type === "strengthen") {
-      const noteIds = uniqueNoteIds(operation.noteIds);
-      claim.evidenceCount += noteIds.length;
-      claim.sampleNoteIds = capSampleNoteIds(claim.sampleNoteIds, noteIds);
-      claim.updatedAt = nowTimestamp;
-      // strengthen은 근거 카운트만 늘리고 프로즈 내용은 불변이라 재렌더 대상이 아니다.
-      // dirty로 취급하면 LLM이 (올바르게) prose를 생략했을 때 run 전체가 실패한다 — 첫 실전 합성에서 실증.
-      continue;
-    }
-
-    if (operation.type === "revise") {
-      const previousLayer = claim.layer;
-      if (operation.text !== undefined) {
-        claim.text = operation.text;
-      }
-      if (operation.layer !== undefined) {
-        claim.layer = operation.layer;
-      }
-      if (operation.noteIds !== undefined) {
-        const noteIds = uniqueNoteIds(operation.noteIds);
-        claim.evidenceCount += noteIds.length;
-        claim.sampleNoteIds = capSampleNoteIds(claim.sampleNoteIds, noteIds);
-      }
-      claim.updatedAt = nowTimestamp;
-      if (operation.text !== undefined || operation.layer !== undefined) {
-        dirtyLayers.add(previousLayer);
-        dirtyLayers.add(claim.layer);
-      }
-      continue;
-    }
-
-    claim.retiredAt = nowTimestamp;
-    claim.updatedAt = nowTimestamp;
-    dirtyLayers.add(claim.layer);
-  }
-
-  return {
-    claims: copiedClaims,
-    dirtyLayers,
-    skippedOperations
-  };
-}
+export type SynthesizeDigestOptions = {
+  promoteMinSpanDays: number;
+  recentRetireWeeks: number;
+  stableLayerMergeTrigger: number;
+  stableLayerMergeRelease: number;
+  runId: string;
+  runJudgment?: boolean;
+  now?: Date;
+  createClaimId?: () => string;
+  onPlanned?: (planned: {
+    operations: DigestOperation[];
+    skippedOperations: DigestSkippedOperation[];
+    deferredEvents: DigestDeferredEvent[];
+  }) => void;
+};
 
 export async function synthesizeDigestSnapshot(
   snapshot: DigestSnapshot,
   generator: DigestTextGenerator,
-  now = new Date(),
-  onSkippedOperation?: (operation: DigestOperation) => void
+  options: SynthesizeDigestOptions
 ): Promise<SynthesizedDigest> {
-  const generation = await generator.generate(
-    digestSystemPrompt,
-    createDigestUserPrompt(snapshot.claims, snapshot.newNotes, now),
-    "digest_synthesis"
+  const now = options.now ?? new Date();
+  const runJudgment = options.runJudgment ?? true;
+  const currentLongtermMergePressure = resolveMergePressure(
+    snapshot.state.longtermMergePressure,
+    countActiveClaims(snapshot.claims, "longterm"),
+    options.stableLayerMergeTrigger,
+    options.stableLayerMergeRelease
   );
-  const parsedOutput = parseDigestLlmOutput(normalizeDigestTextGeneration(generation).text);
-  const applied = applyDigestOperations(snapshot.claims, parsedOutput.ops, {
-    now,
-    onSkippedOperation
+  const currentAboutMergePressure = resolveMergePressure(
+    snapshot.state.aboutMergePressure,
+    countActiveClaims(snapshot.claims, "about"),
+    options.stableLayerMergeTrigger,
+    options.stableLayerMergeRelease
+  );
+  let requestedOperations: DigestOperation[] = [];
+  if (runJudgment) {
+    const generation = await generator.generate(
+      createDigestJudgmentSystemPrompt({
+        longtermMergePressure: currentLongtermMergePressure,
+        aboutMergePressure: currentAboutMergePressure
+      }),
+      createDigestJudgmentUserPrompt(snapshot.claims, snapshot.newNotes, now),
+      "digest_judgment"
+    );
+    requestedOperations = parseDigestJudgmentOutput(normalizeDigestTextGeneration(generation).text).ops;
+  }
+
+  const plan = planDigestOperations(snapshot.claims, requestedOperations, snapshot.newNotes, {
+    promoteMinSpanDays: options.promoteMinSpanDays,
+    runId: options.runId,
+    now
   });
-  const mergedProse = mergeDirtyDigestProse(snapshot.state.prose, parsedOutput.prose, applied.dirtyLayers);
-  const prose = await repairLongDigestProse(mergedProse, applied.dirtyLayers, generator);
+  const applied = applyDigestOperations(snapshot.claims, plan, snapshot.newNotes, {
+    now,
+    createClaimId: options.createClaimId ?? createDigestClaimId
+  });
+  const maintained = maintainDigestClaims(
+    applied.claims,
+    snapshot.deferredPromotions,
+    applied.deferredRequests,
+    {
+      promoteMinSpanDays: options.promoteMinSpanDays,
+      recentRetireWeeks: options.recentRetireWeeks,
+      now
+    }
+  );
+  const dirtyLayers = new Set([...applied.dirtyLayers, ...maintained.dirtyLayers]);
+  const operations = [...applied.operations, ...maintained.appliedOperations];
+  options.onPlanned?.({
+    operations,
+    skippedOperations: applied.skippedOperations,
+    deferredEvents: maintained.deferredEvents
+  });
+  const prose = await renderDirtyDigestProse(
+    snapshot.state.prose,
+    maintained.claims,
+    dirtyLayers,
+    generator
+  );
+  const longtermMergePressure = resolveMergePressure(
+    currentLongtermMergePressure,
+    countActiveClaims(maintained.claims, "longterm"),
+    options.stableLayerMergeTrigger,
+    options.stableLayerMergeRelease
+  );
+  const aboutMergePressure = resolveMergePressure(
+    currentAboutMergePressure,
+    countActiveClaims(maintained.claims, "about"),
+    options.stableLayerMergeTrigger,
+    options.stableLayerMergeRelease
+  );
 
   return {
     ...applied,
-    operations: parsedOutput.ops,
-    prose
+    operations,
+    claims: maintained.claims,
+    deferredPromotions: maintained.deferredPromotions,
+    deferredEvents: maintained.deferredEvents,
+    dirtyLayers,
+    prose,
+    longtermMergePressure,
+    aboutMergePressure
   };
 }
 
@@ -483,29 +485,61 @@ export async function seedDigest(
     }
 
     for (const claim of seed.claims) {
+      const claimId = createDigestClaimId();
       await client.query(
         `INSERT INTO digest_claims (
-          id, layer, text, evidence_count, sample_note_ids, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+          id, layer, text, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $4)`,
         [
-          createDigestClaimId(),
+          claimId,
           claim.layer,
           claim.text,
-          claim.evidenceCount,
-          capSampleNoteIds([], uniqueNoteIds(claim.sampleNoteIds)),
           now
         ]
       );
+      const noteIds = uniqueNoteIds(claim.sampleNoteIds);
+      if (noteIds.length > 0) {
+        const notesResult = await client.query(
+          "SELECT id, created_at FROM notes WHERE id = ANY($1::text[])",
+          [noteIds]
+        );
+        if (notesResult.rows.length !== noteIds.length) {
+          throw new Error(`Digest seed claim referenced missing notes: ${claim.text}`);
+        }
+        for (const row of notesResult.rows) {
+          const note = z.object({ id: z.string(), created_at: z.coerce.date() }).parse(row);
+          await client.query(
+            `INSERT INTO digest_claim_evidence (claim_id, note_id, observed_at, source_kind)
+            VALUES ($1, $2, $3, 'seed')
+            ON CONFLICT (claim_id, note_id) DO NOTHING`,
+            [claimId, note.id, note.created_at]
+          );
+        }
+      }
     }
 
+    const cursorResult = await client.query(
+      `SELECT created_at, id
+      FROM notes
+      WHERE archived = FALSE
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`
+    );
+    const cursorRow = cursorResult.rows[0]
+      ? z.object({ created_at: z.coerce.date(), id: z.string() }).parse(cursorResult.rows[0])
+      : null;
     const stateResult = await client.query(
       `UPDATE digest_state
-        SET note_cursor = (SELECT MAX(created_at) FROM notes WHERE archived = FALSE),
-            prose = $2,
-            synthesized_at = $3,
+        SET note_cursor = $2,
+            note_cursor_id = $3,
+            prose = $4,
+            synthesized_at = $5,
+            judgment_at = $5,
+            longterm_merge_pressure = FALSE,
+            about_merge_pressure = FALSE,
             refresh_started_at = NULL
         WHERE id = $1`,
-      [digestStateId, seed.prose, now]
+      [digestStateId, cursorRow?.created_at ?? null, cursorRow?.id ?? null, seed.prose, now]
     );
     if (stateResult.rowCount !== 1) {
       throw new Error("Digest state row is missing. Run migrations before seeding digest.");
@@ -524,38 +558,64 @@ export async function seedDigest(
   };
 }
 
-const digestSystemPrompt = `당신은 개인 메모리 digest 원장을 증분 갱신하는 합성기다.
+function createDigestJudgmentSystemPrompt(input: {
+  longtermMergePressure: boolean;
+  aboutMergePressure: boolean;
+}) {
+  const stableLayerPressureRules = [
+    input.longtermMergePressure
+      ? "longterm은 소프트캡 압력 상태다. 같은 레이어의 중복·종속 claim은 merge를 우선한다."
+      : "longterm은 현재 소프트캡 압력 상태가 아니다.",
+    input.aboutMergePressure
+      ? "about은 소프트캡 압력 상태다. 설명력이 큰 부모 아래 지엽 성향을 합치는 merge를 우선한다."
+      : "about은 현재 소프트캡 압력 상태가 아니다."
+  ].join("\n");
+
+  return `당신은 개인 메모리 digest 원장을 증분 갱신하는 판단기다. 표현용 prose는 다른 단계가 맡으므로 원장 operation만 결정한다.
 
 레이어 정의: now=진행 중인 관심사·작업, recent=일단락된 최근 사건·성과, longterm=직업·환경·정체성 같은 안정적 사실, about=시간과 무관한 성향·취향·작업 방식 선호.
 
-prose 스타일: now는 상태 브리핑으로 쓴다 — 무엇이 진행 중이고 어디까지 왔고 다음이 무엇인지. about은 사실 나열이 아닌 인물 초상으로 쓴다 — 성향을 서로 연결하고 왜 그런지가 드러나게. recent와 longterm은 간결한 사실 서술로 쓴다.
+판단 계약:
+1. 입력 노트는 어시스턴트 시점에서 기록되었으므로 claim은 사용자를 중심으로 서술한다.
+2. 가치 우선순위는 모순·직접 정정에 따른 고침 > 새로운 확장 > 반복이다. 모순은 기존 claim의 revise 또는 retire로 먼저 해소한다.
+3. 반복은 편집 가치가 0이어도 관측 가치가 있다. 같은 내용의 신규 노트는 add 대신 strengthen로 연결해 관측일을 보존한다.
+4. 한 세션의 에코나 어시스턴트가 재진술한 파생 노트를 서로 독립된 성향으로 증식시키지 않는다.
+5. longterm/about 진입은 promote만 사용한다. add는 now/recent에서 시작하고, revise의 레이어 이동도 now/recent 사이에서만 사용한다.
+6. merge는 같은 레이어의 parent와 child 사이에서만 사용한다. 부모는 설명력이 넓은 claim으로 고르고 자식의 의미를 text에 보존한다.
+7. lastObservedAt이 현재 시각보다 3주 이상 오래된 now claim은 recent로 옮기는 revise 또는 retire를 검토한다.
+8. longterm/about claim의 retire는 신규 노트가 명백히 모순하거나 직접 정정하는 경우에 사용한다.
+9. now/recent active claim 합계가 60개를 넘으면 새 add보다 같은 레이어의 merge와 불필요 claim retire를 우선한다.
+10. 건강 등 민감 영역은 구체적인 사생활을 반복하지 않고 한 줄 수준으로 추상화한다.
+11. noteIds에는 이번 입력의 신규 노트 id만 넣는다. 존재하는 claim 전체를 재출력하지 않고 실제 변화의 ops만 만든다.
 
-규칙:
-1. 입력 노트는 어시스턴트 시점에서 기록되었으므로, digest와 claim은 항상 사용자를 중심으로 서술한다.
-2. 신규 노트가 기존 claim과 같은 내용이면 add를 만들지 말고 strengthen를 사용한다.
-3. updatedAt이 현재 시각보다 3주 이상 오래된 now claim은 recent로 강등하는 revise를 만들거나 retire한다.
-4. active claim이 60개를 넘으면 새 claim 추가보다 기존 claim 병합을 위한 revise와 retire를 우선한다.
-5. 건강 등 민감 영역은 구체적인 사생활을 반복하지 말고 한 줄 수준으로 추상화한다.
-6. prose는 내용이 실제로 바뀌는 레이어만 넣는다 — add, retire, 텍스트나 레이어를 바꾸는 revise가 있는 레이어. prose 값은 해당 레이어의 기존 프로즈를 통째로 대체한다. strengthen이나 noteIds만 추가하는 revise만 있으면 그 레이어의 prose는 다시 쓰지 않는다. revise로 레이어가 이동하면 이전/새 레이어를 모두 넣는다. 각 prose 값은 800자 이하다.
-7. add의 noteIds, strengthen의 noteIds, revise의 선택적 noteIds에는 근거가 된 신규 노트 id만 넣는다. noteIds는 오래된 것부터 최신 순서로 둔다.
-8. 존재하는 claim을 그대로 다시 출력하지 않는다. 원장 전체를 재작성하지 않고 아래 JSON 스키마의 ops만 출력한다.
-9. 마크다운 코드 펜스, 설명, 주석 없이 지정된 JSON 객체 하나만 출력한다.
+${stableLayerPressureRules}
 
 출력 JSON 스키마:
 {
   "ops": [
-    { "type": "add", "layer": "now|recent|longterm|about", "text": "string", "noteIds": ["note-id"] },
+    { "type": "add", "layer": "now|recent", "text": "string", "noteIds": ["note-id"] },
     { "type": "strengthen", "claimId": "claim-id", "noteIds": ["note-id"] },
-    { "type": "revise", "claimId": "claim-id", "text": "optional string", "layer": "optional now|recent|longterm|about", "noteIds": ["optional note-id"] },
-    { "type": "retire", "claimId": "claim-id" }
-  ],
-  "prose": {
-    "now": "dirty일 때만 optional string",
-    "recent": "dirty일 때만 optional string",
-    "longterm": "dirty일 때만 optional string",
-    "about": "dirty일 때만 optional string"
-  }
-}`;
+    { "type": "revise", "claimId": "claim-id", "text": "optional string", "layer": "optional now|recent", "noteIds": ["optional note-id"] },
+    { "type": "retire", "claimId": "claim-id" },
+    { "type": "promote", "claimId": "claim-id", "layer": "longterm|about" },
+    { "type": "merge", "parentClaimId": "claim-id", "childClaimIds": ["claim-id"], "text": "optional string" }
+  ]
+}
+
+마크다운 코드 펜스, 설명, 주석 없이 JSON 객체 하나만 출력한다.`;
+}
+
+const digestRenderSystemPrompt = `당신은 확정된 개인 메모리 digest claim 원장을 prose로 렌더한다.
+
+렌더 계약:
+1. prose의 모든 내용은 입력된 active claim에서만 가져온다. 신규 노트, operation, 이전 prose는 문맥에 없으며 추측으로 보충하지 않는다.
+2. 각 레이어 prose는 해당 레이어에 입력된 claim 전체를 종합한 완결된 교체본이다.
+3. now는 무엇이 진행 중이고 어디까지 왔는지가 드러나는 상태 브리핑으로 쓴다.
+4. recent와 longterm은 간결한 사실 서술로 쓴다.
+5. about은 사실 나열보다 성향을 연결한 인물 초상으로 쓴다. 관측 스팬과 observedDays가 큰 성향을 중심에 두고 관측이 적은 지엽 취향은 변두리나 종속절에 둔다.
+6. 각 prose 값은 800자 이하다.
+7. 입력 layers에 있는 키만 같은 키의 문자열로 반환한다.
+8. 마크다운 코드 펜스, 설명, 주석 없이 JSON 객체 하나만 출력한다.`;
 
 const digestRepairSystemPrompt = `개인 메모리 digest 문장을 압축한다.
 
@@ -565,59 +625,97 @@ const digestRepairSystemPrompt = `개인 메모리 digest 문장을 압축한다
 3. 문장을 중간에서 자르지 않는다.
 4. 설명, 주석, 따옴표 없이 압축한 본문만 출력한다.`;
 
-function createDigestUserPrompt(claims: DigestClaim[], newNotes: DigestNote[], now: Date) {
-  // sampleNoteIds·createdAt·정밀 타임스탬프는 모델이 참조할 일이 없는 토큰 무게라 프롬프트에서 뺀다
-  // — ops의 noteIds는 신규 노트 id만 허용(규칙 7)하고, 시간 판단(규칙 3)은 날짜 단위면 충분하다.
+function createDigestJudgmentUserPrompt(claims: DigestClaim[], newNotes: DigestNote[], now: Date) {
   return JSON.stringify({
-    currentTime: toDigestPromptDate(now.toISOString()),
-    activeClaims: claims.map((claim) => ({
-      id: claim.id,
-      layer: claim.layer,
-      text: claim.text,
-      evidenceCount: claim.evidenceCount,
-      updatedAt: toDigestPromptDate(claim.updatedAt)
-    })),
+    currentTime: now.toISOString(),
+    activeClaims: claims.filter((claim) => !claim.retiredAt).map(formatClaimForPrompt),
     newNotes: newNotes.map((note) => ({
       id: note.id,
       content: note.content,
       topic: note.topic,
-      createdAt: toDigestPromptDate(note.createdAt)
+      createdAt: note.createdAt
     }))
   });
 }
 
-function toDigestPromptDate(timestamp: string) {
-  return timestamp.slice(0, 10);
+function formatClaimForPrompt(claim: DigestClaim) {
+  return {
+    id: claim.id,
+    layer: claim.layer,
+    text: claim.text,
+    ...getDigestClaimStats(claim)
+  };
 }
 
-function parseDigestLlmOutput(outputText: string) {
+function parseDigestJudgmentOutput(outputText: string) {
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(outputText);
   } catch (error) {
-    throw new Error("Digest LLM output was not valid JSON.", { cause: error });
+    throw new Error("Digest judgment output was not valid JSON.", { cause: error });
   }
-  return digestLlmOutputSchema.parse(parsedJson);
+  return digestJudgmentOutputSchema.parse(parsedJson);
 }
 
-function mergeDirtyDigestProse(
+async function renderDirtyDigestProse(
   currentProse: DigestProse,
-  outputProse: z.infer<typeof digestOutputProseSchema>,
-  dirtyLayers: Set<DigestLayer>
+  claims: DigestClaim[],
+  dirtyLayers: Set<DigestLayer>,
+  generator: DigestTextGenerator
 ) {
   const mergedProse = { ...currentProse };
+  const layersToRender: DigestLayer[] = [];
   for (const layer of digestLayers) {
-    const output = outputProse[layer];
-    if (dirtyLayers.has(layer)) {
+    if (!dirtyLayers.has(layer)) {
+      continue;
+    }
+    const activeClaims = claims.filter((claim) => !claim.retiredAt && claim.layer === layer);
+    if (activeClaims.length === 0) {
+      mergedProse[layer] = "";
+      continue;
+    }
+    layersToRender.push(layer);
+  }
+
+  if (layersToRender.length > 0) {
+    const generation = await generator.generate(
+      digestRenderSystemPrompt,
+      JSON.stringify({
+        layers: Object.fromEntries(layersToRender.map((layer) => [
+          layer,
+          claims
+            .filter((claim) => !claim.retiredAt && claim.layer === layer)
+            .map(formatClaimForPrompt)
+        ]))
+      }),
+      "digest_render"
+    );
+    const outputProse = parseDigestRenderOutput(normalizeDigestTextGeneration(generation).text);
+    for (const layer of layersToRender) {
+      const output = outputProse[layer];
       if (output === undefined) {
-        throw new Error(`Digest LLM output omitted prose for dirty layer: ${layer}`);
+        throw new Error(`Digest render output omitted prose for dirty layer: ${layer}`);
       }
       mergedProse[layer] = output;
-    } else if (output !== undefined) {
-      logWarn("Digest LLM output included prose for a clean layer; it was ignored.", { layer });
+    }
+    for (const layer of digestLayers) {
+      if (!layersToRender.includes(layer) && outputProse[layer] !== undefined) {
+        throw new Error(`Digest render output included an unrequested layer: ${layer}`);
+      }
     }
   }
-  return mergedProse;
+
+  return repairLongDigestProse(mergedProse, dirtyLayers, generator);
+}
+
+function parseDigestRenderOutput(outputText: string) {
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(outputText);
+  } catch (error) {
+    throw new Error("Digest render output was not valid JSON.", { cause: error });
+  }
+  return digestOutputProseSchema.parse(parsedJson);
 }
 
 async function repairLongDigestProse(
@@ -799,7 +897,7 @@ function createLoggedDigestTextGenerator(
 ): DigestTextGenerator {
   const requestLogService = new LlmRequestLogService(pool);
   return {
-    generate: async (systemPrompt, userPrompt, purpose = "digest_synthesis") => {
+    generate: async (systemPrompt, userPrompt, purpose = "digest_judgment") => {
       const requestedAt = new Date();
       const startedAt = Date.now();
       try {
@@ -950,11 +1048,12 @@ function createDigestMessages(systemPrompt: string, userPrompt: string) {
 
 async function loadDigestSnapshot(pool: pg.Pool): Promise<DigestSnapshot> {
   const state = await getDigestState(pool);
-  const [claims, newNotes] = await Promise.all([
+  const [claims, newNotes, deferredPromotions] = await Promise.all([
     listActiveDigestClaims(pool),
-    listNewDigestNotes(pool, state.noteCursor)
+    listNewDigestNotes(pool, state.noteCursorAt, state.noteCursorId),
+    listDeferredPromotions(pool)
   ]);
-  return { claims, state, newNotes };
+  return { claims, state, newNotes, deferredPromotions };
 }
 
 async function getDigestState(executor: DigestQueryExecutor): Promise<DigestState> {
@@ -962,9 +1061,13 @@ async function getDigestState(executor: DigestQueryExecutor): Promise<DigestStat
     `SELECT
       id,
       note_cursor::text AS note_cursor,
+      note_cursor_id,
       prose,
       synthesized_at,
-      refresh_started_at
+      judgment_at,
+      refresh_started_at,
+      longterm_merge_pressure,
+      about_merge_pressure
     FROM digest_state
     WHERE id = $1`,
     [digestStateId]
@@ -974,29 +1077,64 @@ async function getDigestState(executor: DigestQueryExecutor): Promise<DigestStat
     throw new Error("Digest state row is missing. Run migrations before using digest.");
   }
   const state = digestStateRowSchema.parse(row);
+  if ((state.note_cursor === null) !== (state.note_cursor_id === null)) {
+    throw new Error("Digest cursor timestamp and id must both be null or both be present.");
+  }
   return {
-    noteCursor: state.note_cursor,
+    noteCursorAt: state.note_cursor,
+    noteCursorId: state.note_cursor_id,
     prose: state.prose,
     synthesizedAt: state.synthesized_at?.toISOString() ?? null,
-    refreshStartedAt: state.refresh_started_at?.toISOString() ?? null
+    judgmentAt: state.judgment_at?.toISOString() ?? null,
+    refreshStartedAt: state.refresh_started_at?.toISOString() ?? null,
+    longtermMergePressure: state.longterm_merge_pressure,
+    aboutMergePressure: state.about_merge_pressure
   };
 }
 
 async function listActiveDigestClaims(executor: DigestQueryExecutor): Promise<DigestClaim[]> {
   const result = await executor.query(
-    "SELECT * FROM digest_claims WHERE retired_at IS NULL ORDER BY created_at ASC, id ASC"
+    `SELECT
+      claims.id,
+      claims.layer,
+      claims.text,
+      claims.created_at,
+      claims.updated_at,
+      claims.retired_at,
+      COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'note_id', evidence.note_id,
+            'observed_at', evidence.observed_at,
+            'source_kind', evidence.source_kind
+          ) ORDER BY evidence.observed_at ASC, evidence.note_id ASC
+        ) FILTER (WHERE evidence.note_id IS NOT NULL),
+        '[]'::jsonb
+      ) AS evidence
+    FROM digest_claims AS claims
+    LEFT JOIN digest_claim_evidence AS evidence ON evidence.claim_id = claims.id
+    WHERE claims.retired_at IS NULL
+    GROUP BY claims.id
+    ORDER BY claims.created_at ASC, claims.id ASC`
   );
   return result.rows.map((row) => mapDigestClaimRow(row));
 }
 
-async function listNewDigestNotes(executor: DigestQueryExecutor, noteCursor: string | null): Promise<DigestNote[]> {
+async function listNewDigestNotes(
+  executor: DigestQueryExecutor,
+  noteCursorAt: string | null,
+  noteCursorId: string | null
+): Promise<DigestNote[]> {
   const result = await executor.query(
     `SELECT id, content, topic, created_at
       FROM notes
       WHERE archived = FALSE
-        AND ($1::timestamptz IS NULL OR created_at > $1)
+        AND (
+          $1::timestamptz IS NULL
+          OR (created_at, id) > ($1::timestamptz, $2::text)
+        )
       ORDER BY created_at ASC, id ASC`,
-    [noteCursor]
+    [noteCursorAt, noteCursorId]
   );
   return result.rows.map((row) => {
     const note = digestNoteRowSchema.parse(row);
@@ -1009,16 +1147,82 @@ async function listNewDigestNotes(executor: DigestQueryExecutor, noteCursor: str
   });
 }
 
-export async function countNewDigestNotes(executor: DigestQueryExecutor, noteCursor: string | null) {
+export async function countNewDigestNotes(
+  executor: DigestQueryExecutor,
+  noteCursorAt: string | null,
+  noteCursorId: string | null
+) {
   const result = await executor.query(
     `SELECT COUNT(*)::int AS new_note_count
       FROM notes
       WHERE archived = FALSE
-        AND ($1::timestamptz IS NULL OR created_at > $1)`,
-    [noteCursor]
+        AND (
+          $1::timestamptz IS NULL
+          OR (created_at, id) > ($1::timestamptz, $2::text)
+        )`,
+    [noteCursorAt, noteCursorId]
   );
   const row = z.object({ new_note_count: z.coerce.number().int().nonnegative() }).parse(result.rows[0]);
   return row.new_note_count;
+}
+
+async function listDeferredPromotions(executor: DigestQueryExecutor) {
+  const result = await executor.query(
+    `SELECT claim_id, target_layer, requested_at, run_id, reason
+    FROM digest_deferred_promotions
+    ORDER BY requested_at ASC, claim_id ASC`
+  );
+  const rowSchema = z.object({
+    claim_id: z.string(),
+    target_layer: z.enum(["longterm", "about"]),
+    requested_at: z.coerce.date(),
+    run_id: z.string(),
+    reason: z.string()
+  });
+  return result.rows.map((row): DigestDeferredPromotion => {
+    const deferred = rowSchema.parse(row);
+    return {
+      claimId: deferred.claim_id,
+      targetLayer: deferred.target_layer,
+      requestedAt: deferred.requested_at.toISOString(),
+      runId: deferred.run_id,
+      reason: deferred.reason
+    };
+  });
+}
+
+async function hasDigestMaintenanceWork(
+  executor: DigestQueryExecutor,
+  config: EnabledDigestConfig,
+  now: Date
+) {
+  const result = await executor.query(
+    `SELECT (
+      EXISTS (
+        SELECT 1
+        FROM digest_deferred_promotions AS deferred
+        JOIN digest_claims AS claims ON claims.id = deferred.claim_id
+        LEFT JOIN digest_claim_evidence AS evidence ON evidence.claim_id = claims.id
+        GROUP BY deferred.claim_id, claims.layer, claims.retired_at
+        HAVING claims.retired_at IS NOT NULL
+          OR claims.layer IN ('longterm', 'about')
+          OR MAX(evidence.observed_at) - MIN(evidence.observed_at) >= make_interval(days => $1)
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM digest_claims AS claims
+        JOIN digest_claim_evidence AS evidence ON evidence.claim_id = claims.id
+        LEFT JOIN digest_deferred_promotions AS deferred ON deferred.claim_id = claims.id
+        WHERE claims.retired_at IS NULL
+          AND claims.layer = 'recent'
+          AND deferred.claim_id IS NULL
+        GROUP BY claims.id
+        HAVING MAX(evidence.observed_at) <= $2::timestamptz - make_interval(weeks => $3)
+      )
+    ) AS has_maintenance_work`,
+    [config.promoteMinSpanDays, now, config.recentRetireWeeks]
+  );
+  return z.object({ has_maintenance_work: z.boolean() }).parse(result.rows[0]).has_maintenance_work;
 }
 
 async function acquireDigestRefreshLock(executor: DigestQueryExecutor) {
@@ -1057,29 +1261,41 @@ async function persistSuccessfulDigestRun(
   synthesized: SynthesizedDigest,
   lockStartedAt: Date,
   now: Date,
-  runId: string
+  runId: string,
+  runKind: "synthesis" | "maintenance"
 ) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await persistDigestClaims(client, synthesized.claims);
+    await persistDeferredPromotions(client, synthesized.deferredPromotions);
+    const lastProcessedNote = runKind === "synthesis"
+      ? snapshot.newNotes[snapshot.newNotes.length - 1]
+      : undefined;
+    if (runKind === "synthesis" && !lastProcessedNote) {
+      throw new Error("Digest synthesis run cannot advance an empty note batch.");
+    }
     const stateResult = await client.query(
       `UPDATE digest_state
-        SET note_cursor = (
-              SELECT MAX(created_at)
-              FROM notes
-              WHERE id = ANY($2::text[])
-            ),
-            prose = $3,
-            synthesized_at = $4,
+        SET note_cursor = $2,
+            note_cursor_id = $3,
+            prose = $4,
+            synthesized_at = $5,
+            judgment_at = CASE WHEN $8::boolean THEN $5 ELSE judgment_at END,
+            longterm_merge_pressure = $6,
+            about_merge_pressure = $7,
             refresh_started_at = NULL
-        WHERE id = $1 AND refresh_started_at = $5
+        WHERE id = $1 AND refresh_started_at = $9
         RETURNING id`,
       [
         digestStateId,
-        snapshot.newNotes.map((note) => note.id),
+        lastProcessedNote?.createdAt ?? snapshot.state.noteCursorAt,
+        lastProcessedNote?.id ?? snapshot.state.noteCursorId,
         synthesized.prose,
         now,
+        synthesized.longtermMergePressure,
+        synthesized.aboutMergePressure,
+        runKind === "synthesis",
         lockStartedAt
       ]
     );
@@ -1088,12 +1304,15 @@ async function persistSuccessfulDigestRun(
     }
     await insertDigestRun(client, {
       operations: synthesized.operations,
+      skippedOperations: synthesized.skippedOperations,
+      deferredEvents: synthesized.deferredEvents,
       proseSnapshot: synthesized.prose,
-      newNoteCount: snapshot.newNotes.length,
+      newNoteCount: runKind === "synthesis" ? snapshot.newNotes.length : 0,
       status: "succeeded",
       error: null,
       runAt: now,
-      runId
+      runId,
+      runKind
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -1108,25 +1327,45 @@ async function persistDigestClaims(executor: DigestQueryExecutor, claims: Digest
   for (const claim of claims) {
     await executor.query(
       `INSERT INTO digest_claims (
-        id, layer, text, evidence_count, sample_note_ids, created_at, updated_at, retired_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        id, layer, text, created_at, updated_at, retired_at
+      ) VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (id) DO UPDATE SET
         layer = EXCLUDED.layer,
         text = EXCLUDED.text,
-        evidence_count = EXCLUDED.evidence_count,
-        sample_note_ids = EXCLUDED.sample_note_ids,
         updated_at = EXCLUDED.updated_at,
         retired_at = EXCLUDED.retired_at`,
       [
         claim.id,
         claim.layer,
         claim.text,
-        claim.evidenceCount,
-        claim.sampleNoteIds,
         claim.createdAt,
         claim.updatedAt,
         claim.retiredAt
       ]
+    );
+    await executor.query("DELETE FROM digest_claim_evidence WHERE claim_id = $1", [claim.id]);
+    for (const evidence of claim.evidence) {
+      await executor.query(
+        `INSERT INTO digest_claim_evidence (claim_id, note_id, observed_at, source_kind)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (claim_id, note_id) DO NOTHING`,
+        [claim.id, evidence.noteId, evidence.observedAt, evidence.sourceKind]
+      );
+    }
+  }
+}
+
+async function persistDeferredPromotions(
+  executor: DigestQueryExecutor,
+  deferredPromotions: DigestDeferredPromotion[]
+) {
+  await executor.query("DELETE FROM digest_deferred_promotions");
+  for (const deferred of deferredPromotions) {
+    await executor.query(
+      `INSERT INTO digest_deferred_promotions (
+        claim_id, target_layer, requested_at, run_id, reason
+      ) VALUES ($1, $2, $3, $4, $5)`,
+      [deferred.claimId, deferred.targetLayer, deferred.requestedAt, deferred.runId, deferred.reason]
     );
   }
 }
@@ -1134,46 +1373,59 @@ async function persistDigestClaims(executor: DigestQueryExecutor, claims: Digest
 async function recordFailedDigestRun(
   executor: DigestQueryExecutor,
   operations: DigestOperation[],
+  skippedOperations: DigestSkippedOperation[],
+  deferredEvents: DigestDeferredEvent[],
   proseSnapshot: DigestProse,
   newNoteCount: number,
   lockStartedAt: Date,
   error: unknown,
   now: Date,
-  runId: string
+  runId: string,
+  runKind: "synthesis" | "maintenance"
 ) {
   await insertDigestRun(executor, {
     operations,
+    skippedOperations,
+    deferredEvents,
     proseSnapshot,
     newNoteCount,
     status: "failed",
     error: errorMessage(error),
     runAt: now,
-    runId
+    runId,
+    runKind
   });
   await releaseDigestRefreshLock(executor, lockStartedAt);
 }
 
 async function insertDigestRun(executor: DigestQueryExecutor, input: {
   operations: DigestOperation[];
+  skippedOperations: DigestSkippedOperation[];
+  deferredEvents: DigestDeferredEvent[];
   proseSnapshot: DigestProse;
   newNoteCount: number;
   status: "succeeded" | "failed";
   error: string | null;
   runAt: Date;
   runId: string;
+  runKind: "synthesis" | "maintenance";
 }) {
   await executor.query(
     `INSERT INTO digest_runs (
-      id, run_at, ops, prose_snapshot, new_note_count, status, error
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      id, run_at, ops, skipped_operations, deferred_events, prose_snapshot,
+      new_note_count, status, error, run_kind
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       input.runId,
       input.runAt,
       JSON.stringify(input.operations),
+      JSON.stringify(input.skippedOperations),
+      JSON.stringify(input.deferredEvents),
       input.proseSnapshot,
       input.newNoteCount,
       input.status,
-      input.error
+      input.error,
+      input.runKind
     ]
   );
 }
@@ -1184,28 +1436,29 @@ function mapDigestClaimRow(row: pg.QueryResultRow): DigestClaim {
     id: claim.id,
     layer: claim.layer,
     text: claim.text,
-    evidenceCount: claim.evidence_count,
-    sampleNoteIds: claim.sample_note_ids,
+    evidence: claim.evidence.map((evidence): DigestEvidence => ({
+      noteId: evidence.note_id,
+      observedAt: evidence.observed_at.toISOString(),
+      sourceKind: evidence.source_kind
+    })),
     createdAt: claim.created_at.toISOString(),
     updatedAt: claim.updated_at.toISOString(),
     retiredAt: claim.retired_at?.toISOString() ?? null
   };
 }
 
-function capSampleNoteIds(existingNoteIds: string[], incomingNoteIds: string[]) {
-  const noteIds = [...existingNoteIds];
-  for (const noteId of incomingNoteIds) {
-    const previousIndex = noteIds.indexOf(noteId);
-    if (previousIndex >= 0) {
-      noteIds.splice(previousIndex, 1);
-    }
-    noteIds.push(noteId);
-  }
-  return noteIds.slice(-5);
-}
-
 function uniqueNoteIds(noteIds: string[]) {
   return [...new Set(noteIds)];
+}
+
+function countActiveClaims(claims: DigestClaim[], layer: DigestLayer) {
+  return claims.filter((claim) => !claim.retiredAt && claim.layer === layer).length;
+}
+
+function hasDigestChanges(synthesized: SynthesizedDigest) {
+  return synthesized.operations.length > 0
+    || synthesized.deferredEvents.some((event) => event.action !== "retained")
+    || synthesized.dirtyLayers.size > 0;
 }
 
 function createDigestClaimId() {
