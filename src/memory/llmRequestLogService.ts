@@ -42,6 +42,10 @@ const llmRequestDailyRowSchema = z.object({
   request_count: z.coerce.number().int().nonnegative()
 });
 
+const llmRequestCountRowSchema = z.object({
+  total_items: z.coerce.number().int().nonnegative()
+});
+
 export type LlmRequestLogStatus = "succeeded" | "failed";
 
 export type LlmRequestUsage = {
@@ -66,8 +70,13 @@ export type LlmRequestLogInput = {
   runId: string | null;
 };
 
+export type LlmRequestPageOptions = {
+  page: number;
+  pageSize: number;
+};
+
 export class LlmRequestLogService {
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(private readonly pool: Pick<pg.Pool, "query">) {}
 
   async recordRequest(input: LlmRequestLogInput) {
     await this.pool.query(
@@ -100,15 +109,33 @@ export class LlmRequestLogService {
     );
   }
 
-  async listRequests(limit: number) {
+  async listRequests(options: LlmRequestPageOptions) {
+    const countResult = await this.pool.query(
+      "SELECT COUNT(*)::int AS total_items FROM llm_request_logs"
+    );
+    const countRow = countResult.rows[0];
+    if (!countRow) {
+      throw new Error("LLM request count query returned no rows.");
+    }
+    const totalItems = llmRequestCountRowSchema.parse(countRow).total_items;
+    const totalPages = Math.max(1, Math.ceil(totalItems / options.pageSize));
+    const page = Math.min(options.page, totalPages);
     const result = await this.pool.query(
       `SELECT *
       FROM llm_request_logs
       ORDER BY requested_at DESC, id DESC
-      LIMIT $1`,
-      [limit]
+      LIMIT $1 OFFSET $2`,
+      [options.pageSize, (page - 1) * options.pageSize]
     );
-    return result.rows.map(mapLlmRequestLogRow);
+    return {
+      requests: result.rows.map(mapLlmRequestLogRow),
+      pagination: {
+        page,
+        pageSize: options.pageSize,
+        totalItems,
+        totalPages
+      }
+    };
   }
 
   async getSummary() {

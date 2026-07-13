@@ -1,4 +1,5 @@
 import { requestJson } from "./http";
+import type { Pagination } from "../types/pagination";
 
 export type LlmRequestAggregate = {
   costUsd: number;
@@ -33,12 +34,19 @@ export type LlmRequestSummary = {
   byModel: Array<{ model: string; costUsd: number; requestCount: number }>;
 };
 
-export async function fetchLlmRequests(limit = 50) {
-  const data = await requestJson(`/api/llm-requests?limit=${limit}`);
-  if (!isRecord(data) || !Array.isArray(data.requests)) {
+export async function fetchLlmRequests(page: number, pageSize: number) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize)
+  });
+  const data = await requestJson(`/api/llm-requests?${params.toString()}`);
+  if (!isRecord(data) || !Array.isArray(data.requests) || !isRecord(data.pagination)) {
     throw new Error("Invalid LLM request list response.");
   }
-  return data.requests.map(parseLlmRequestRecord);
+  return {
+    requests: data.requests.map(parseLlmRequestRecord),
+    pagination: parsePagination(data.pagination)
+  };
 }
 
 export async function fetchLlmRequestSummary(): Promise<LlmRequestSummary> {
@@ -97,6 +105,15 @@ function parseAggregate(value: Record<string, unknown>): LlmRequestAggregate {
     costUsd: readNumber(value, "costUsd"),
     requestCount: readNumber(value, "requestCount"),
     failedCount: readNumber(value, "failedCount")
+  };
+}
+
+function parsePagination(value: Record<string, unknown>): Pagination {
+  return {
+    page: readNumber(value, "page"),
+    pageSize: readNumber(value, "pageSize"),
+    totalItems: readNumber(value, "totalItems"),
+    totalPages: readNumber(value, "totalPages")
   };
 }
 

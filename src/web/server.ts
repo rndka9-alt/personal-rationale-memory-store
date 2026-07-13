@@ -137,12 +137,14 @@ async function routeApiRequest(
   }
 
   if (method === "GET" && url.pathname === "/api/llm-requests") {
-    const limit = readPositiveInteger(url.searchParams.get("limit"), defaultLlmRequestLimit, "limit");
-    if (limit > maximumLlmRequestLimit) {
-      throw new Error(`limit cannot exceed ${maximumLlmRequestLimit}.`);
-    }
-    const requests = await llmRequestLogService.listRequests(limit);
-    writeJson(response, 200, { requests });
+    const pageSize = readLlmRequestPageSize(
+      url.searchParams.get("pageSize") ?? url.searchParams.get("limit")
+    );
+    const result = await llmRequestLogService.listRequests({
+      page: readPositiveInteger(url.searchParams.get("page"), 1, "page"),
+      pageSize
+    });
+    writeJson(response, 200, result);
     return;
   }
 
@@ -315,6 +317,14 @@ function readPageSize(value: string | null) {
   const pageSize = readPositiveInteger(value, defaultPageSize, "pageSize");
   if (pageSize > maximumPageSize) {
     throw new Error(`pageSize cannot exceed ${maximumPageSize}.`);
+  }
+  return pageSize;
+}
+
+function readLlmRequestPageSize(value: string | null) {
+  const pageSize = readPositiveInteger(value, defaultLlmRequestLimit, "pageSize");
+  if (pageSize > maximumLlmRequestLimit) {
+    throw new Error(`pageSize cannot exceed ${maximumLlmRequestLimit}.`);
   }
   return pageSize;
 }

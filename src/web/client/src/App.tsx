@@ -62,6 +62,7 @@ type ToastState = {
 };
 
 const pageSize = 25;
+const llmRequestPageSize = 25;
 const searchDebounceMilliseconds = 300;
 
 const memoryStatuses: Array<{ value: MemoryCatalogStatus; label: string }> = [
@@ -110,17 +111,42 @@ function useDebouncedValue(value: string, delayMilliseconds: number) {
 }
 
 export function App() {
-  const [mainView, setMainView] = useState<MainView>("memories");
+  const [mainView, setMainView] = useState<MainView>(readMainViewFromLocation);
+
+  useEffect(() => {
+    // 탭 이동을 브라우저 히스토리에 남겨 뒤로가기와 새로고침이 같은 화면을 복원하게 한다.
+    const handlePopState = () => setMainView(readMainViewFromLocation());
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  function handleViewChange(view: MainView) {
+    if (view === mainView) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", view);
+    window.history.pushState(null, "", url);
+    setMainView(view);
+  }
 
   return (
     <main className="min-h-screen bg-canvas text-ink">
-      <AppHeader mainView={mainView} onViewChange={setMainView} />
+      <AppHeader mainView={mainView} onViewChange={handleViewChange} />
       {mainView === "memories" ? <MemoryLibrary /> : null}
       {mainView === "notes" ? <NotesLibrary /> : null}
       {mainView === "digest" ? <DigestDashboard /> : null}
       {mainView === "llm" ? <LlmDashboard /> : null}
     </main>
   );
+}
+
+function readMainViewFromLocation(): MainView {
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  if (tab === "notes" || tab === "digest" || tab === "llm") {
+    return tab;
+  }
+  return "memories";
 }
 
 function AppHeader(props: {
@@ -1152,14 +1178,26 @@ type DailyCostPoint = {
 };
 
 function LlmDashboard() {
+  const [page, setPage] = useState(1);
   const summaryQuery = useQuery({
     queryKey: ["llm-request-summary"],
     queryFn: fetchLlmRequestSummary
   });
   const requestsQuery = useQuery({
-    queryKey: ["llm-requests", 50],
-    queryFn: () => fetchLlmRequests(50)
+    queryKey: ["llm-requests", page, llmRequestPageSize],
+    queryFn: () => fetchLlmRequests(page, llmRequestPageSize),
+    placeholderData: (previousData) => previousData
   });
+
+  useEffect(() => {
+    if (requestsQuery.isPlaceholderData) {
+      return;
+    }
+    const responsePage = requestsQuery.data?.pagination.page;
+    if (responsePage !== undefined && responsePage !== page) {
+      setPage(responsePage);
+    }
+  }, [page, requestsQuery.data?.pagination.page, requestsQuery.isPlaceholderData]);
 
   const daily = useMemo(
     () => fillDailyCostSeries(summaryQuery.data?.daily ?? []),
@@ -1187,8 +1225,8 @@ function LlmDashboard() {
   }
 
   const summary = summaryQuery.data;
-  const requests = requestsQuery.data;
-  if (!summary || !requests) {
+  const requestPage = requestsQuery.data;
+  if (!summary || !requestPage) {
     throw new Error("LLM dashboard queries completed without data.");
   }
 
@@ -1259,7 +1297,12 @@ function LlmDashboard() {
             />
           </div>
 
-          <LlmRequestTable requests={requests} />
+          <LlmRequestTable
+            disabled={requestsQuery.isFetching}
+            pagination={requestPage.pagination}
+            requests={requestPage.requests}
+            onPageChange={setPage}
+          />
         </>
       )}
     </section>
@@ -1341,7 +1384,16 @@ function LlmSubtotalTable(props: {
   );
 }
 
-function LlmRequestTable(props: { requests: LlmRequestRecord[] }) {
+function LlmRequestTable(props: {
+  requests: LlmRequestRecord[];
+  pagination: Pagination;
+  disabled: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const firstItem = props.pagination.totalItems === 0
+    ? 0
+    : (props.pagination.page - 1) * props.pagination.pageSize + 1;
+  const lastItem = firstItem === 0 ? 0 : firstItem + props.requests.length - 1;
   return (
     <section className="mt-6 overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
       <div className="flex items-end justify-between gap-4 border-b border-stroke px-5 py-5 sm:px-7">
@@ -1349,7 +1401,9 @@ function LlmRequestTable(props: { requests: LlmRequestRecord[] }) {
           <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted">Latest activity</p>
           <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">Recent requests</h2>
         </div>
-        <p className="text-xs text-faint">{props.requests.length} shown</p>
+        <p className="text-xs tabular-nums text-faint">
+          {firstItem}–{lastItem} of {props.pagination.totalItems}
+        </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[58rem] text-left text-xs">
@@ -1384,6 +1438,13 @@ function LlmRequestTable(props: { requests: LlmRequestRecord[] }) {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="px-5 pb-5 sm:px-7 sm:pb-6">
+        <PaginationControls
+          disabled={props.disabled}
+          pagination={props.pagination}
+          onPageChange={props.onPageChange}
+        />
       </div>
     </section>
   );
