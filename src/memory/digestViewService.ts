@@ -27,7 +27,9 @@ const digestViewClaimRowSchema = z.object({
   last_observed_at: z.coerce.date().nullable(),
   observed_days: z.coerce.number().int().nonnegative(),
   created_at: z.coerce.date(),
-  updated_at: z.coerce.date()
+  updated_at: z.coerce.date(),
+  deferred_target_layer: z.enum(["longterm", "about"]).nullable(),
+  deferred_requested_at: z.coerce.date().nullable()
 });
 
 const digestSkippedOperationSchema = z.object({
@@ -81,11 +83,14 @@ export class DigestViewService {
           MAX(evidence.observed_at) AS last_observed_at,
           COUNT(DISTINCT (evidence.observed_at AT TIME ZONE 'Asia/Seoul')::date)::int AS observed_days,
           claims.created_at,
-          claims.updated_at
+          claims.updated_at,
+          deferred.target_layer AS deferred_target_layer,
+          deferred.requested_at AS deferred_requested_at
         FROM digest_claims AS claims
         LEFT JOIN digest_claim_evidence AS evidence ON evidence.claim_id = claims.id
+        LEFT JOIN digest_deferred_promotions AS deferred ON deferred.claim_id = claims.id
         WHERE claims.retired_at IS NULL
-        GROUP BY claims.id
+        GROUP BY claims.id, deferred.target_layer, deferred.requested_at
         ORDER BY CASE claims.layer
           WHEN 'now' THEN 1
           WHEN 'recent' THEN 2
@@ -139,6 +144,9 @@ export class DigestViewService {
 
 function mapDigestViewClaimRow(row: pg.QueryResultRow) {
   const claim = digestViewClaimRowSchema.parse(row);
+  if ((claim.deferred_target_layer === null) !== (claim.deferred_requested_at === null)) {
+    throw new Error("Deferred promotion row must have both target layer and requested time.");
+  }
   return {
     id: claim.id,
     layer: claim.layer,
@@ -149,7 +157,13 @@ function mapDigestViewClaimRow(row: pg.QueryResultRow) {
     lastObservedAt: claim.last_observed_at?.toISOString() ?? null,
     observedDays: claim.observed_days,
     createdAt: claim.created_at.toISOString(),
-    updatedAt: claim.updated_at.toISOString()
+    updatedAt: claim.updated_at.toISOString(),
+    deferred: claim.deferred_target_layer === null || claim.deferred_requested_at === null
+      ? null
+      : {
+        targetLayer: claim.deferred_target_layer,
+        requestedAt: claim.deferred_requested_at.toISOString()
+      }
   };
 }
 

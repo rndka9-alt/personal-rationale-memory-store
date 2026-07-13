@@ -22,7 +22,22 @@ describe("digest view service", () => {
         last_observed_at: new Date("2026-07-10T09:00:00.000Z"),
         observed_days: 3,
         created_at: new Date("2026-07-01T09:00:00.000Z"),
-        updated_at: new Date("2026-07-10T09:00:00.000Z")
+        updated_at: new Date("2026-07-10T09:00:00.000Z"),
+        deferred_target_layer: null,
+        deferred_requested_at: null
+      }, {
+        id: "claim-waiting",
+        layer: "recent",
+        text: "승격 대기 claim",
+        evidence_count: 2,
+        sample_note_ids: ["note-6", "note-5"],
+        first_observed_at: new Date("2026-07-05T09:00:00.000Z"),
+        last_observed_at: new Date("2026-07-09T09:00:00.000Z"),
+        observed_days: 2,
+        created_at: new Date("2026-07-05T09:00:00.000Z"),
+        updated_at: new Date("2026-07-09T09:00:00.000Z"),
+        deferred_target_layer: "about",
+        deferred_requested_at: new Date("2026-07-10T09:30:00.000Z")
       }],
       [{ new_note_count: 3 }]
     ]);
@@ -44,7 +59,23 @@ describe("digest view service", () => {
         lastObservedAt: "2026-07-10T09:00:00.000Z",
         observedDays: 3,
         createdAt: "2026-07-01T09:00:00.000Z",
-        updatedAt: "2026-07-10T09:00:00.000Z"
+        updatedAt: "2026-07-10T09:00:00.000Z",
+        deferred: null
+      }, {
+        id: "claim-waiting",
+        layer: "recent",
+        text: "승격 대기 claim",
+        evidenceCount: 2,
+        sampleNoteIds: ["note-6", "note-5"],
+        firstObservedAt: "2026-07-05T09:00:00.000Z",
+        lastObservedAt: "2026-07-09T09:00:00.000Z",
+        observedDays: 2,
+        createdAt: "2026-07-05T09:00:00.000Z",
+        updatedAt: "2026-07-09T09:00:00.000Z",
+        deferred: {
+          targetLayer: "about",
+          requestedAt: "2026-07-10T09:30:00.000Z"
+        }
       }]
     });
 

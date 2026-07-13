@@ -17,6 +17,10 @@ export type DigestClaim = {
   observedDays: number;
   createdAt: string;
   updatedAt: string;
+  deferred: {
+    targetLayer: "longterm" | "about";
+    requestedAt: string;
+  } | null;
 };
 
 export type DigestView = {
@@ -106,7 +110,22 @@ function parseDigestClaim(value: unknown): DigestClaim {
     lastObservedAt: readNullableString(value, "lastObservedAt"),
     observedDays: readNonnegativeInteger(value, "observedDays"),
     createdAt: readString(value, "createdAt"),
-    updatedAt: readString(value, "updatedAt")
+    updatedAt: readString(value, "updatedAt"),
+    deferred: value.deferred === null ? null : parseClaimDeferredPromotion(value.deferred)
+  };
+}
+
+function parseClaimDeferredPromotion(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error("Invalid deferred promotion state.");
+  }
+  const targetLayer = readDigestLayer(value, "targetLayer");
+  if (targetLayer !== "longterm" && targetLayer !== "about") {
+    throw new Error("Deferred promotion target must be a stable layer.");
+  }
+  return {
+    targetLayer,
+    requestedAt: readString(value, "requestedAt")
   };
 }
 

@@ -905,6 +905,11 @@ function DigestClaimGroup(props: { layer: DigestLayer; claims: DigestClaim[] }) 
                 </span>
                 <span>관측 {claim.observedDays}일</span>
                 <span>{formatDigestObservationSpan(claim)}</span>
+                {claim.deferred ? (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
+                    승격 대기 → {digestLayerDetails[claim.deferred.targetLayer].label}
+                  </span>
+                ) : null}
               </div>
             </li>
           ))}
