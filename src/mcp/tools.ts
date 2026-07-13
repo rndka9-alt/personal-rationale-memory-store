@@ -98,7 +98,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "record_note",
       description:
-        "Record a lightweight personal note. Write content and topic in Korean while keeping code identifiers and proper nouns unchanged. When it comes from the current conversation, include sourceContext with 1–4 relevant user/assistant messages preserving their original language, roles, text, and order. Omit sourceContext only for standalone notes.",
+        "Record a lightweight personal note — raw material for a synthesized long-term memory of the user. Write content and topic in Korean while keeping code identifiers and proper nouns unchanged. When it comes from the current conversation, include sourceContext with 1–4 relevant user/assistant messages preserving their original language, roles, text, and order. Omit sourceContext only for standalone notes.",
       schema: recordNoteToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -122,7 +122,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_notes_context",
-      description: "Compose plain note context from original note text. Notes are selected by weighted random first, then score ordering, within a character budget. The output ends with a rate_note nudge; note bodies are never rewritten.",
+      description: "Retrieve memory about the user: a synthesized digest of who they are (current interests, recent context, long-term background, personality and preferences) followed by original personal notes. Call this early in a conversation to ground responses in what is already known about the user. Notes are selected by weighted random first, then score ordering, within a character budget. The output ends with a rate_note nudge; note bodies are never rewritten.",
       schema: composeNotesContextInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -210,7 +210,7 @@ const continueInputSchema = z.object({
 
 const recordNoteToolInputSchema = z.object({
   content: recordNoteInputSchema.shape.content
-    .describe("Lightweight note in Korean; keep code identifiers and proper nouns unchanged."),
+    .describe("Lightweight note in Korean; keep code identifiers and proper nouns unchanged. When stating a judgment or trait about the user, attach the observed grounds (mechanism → conclusion, e.g. \"남에게 줄 영향을 고민하는 편이다. 그래서 메타인지가 뛰어나다\"), never a bare label — fragmentary conclusions without their reasons cannot be re-verified against later observations. Mark your own inferences as such, distinct from the user's direct statements."),
   // Topic-only context remains valid for existing callers, while the public guidance asks
   // conversational captures to preserve the relevant source messages.
   sourceContext: z.object({
