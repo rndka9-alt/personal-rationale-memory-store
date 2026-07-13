@@ -314,7 +314,7 @@ describe("digest two-stage synthesis", () => {
         .mockResolvedValueOnce(JSON.stringify({
           ops: [{ type: "revise", claimId: "claim-1", text: "고친 claim", noteIds: ["note-2"] }]
         }))
-        .mockResolvedValueOnce(JSON.stringify({ now: "가".repeat(900) }))
+        .mockResolvedValueOnce(JSON.stringify({ now: "가".repeat(1201) }))
         .mockResolvedValueOnce("나".repeat(790))
     };
 
@@ -324,9 +324,56 @@ describe("digest two-stage synthesis", () => {
     expect(generator.generate).toHaveBeenNthCalledWith(
       3,
       expect.stringContaining("800자 이내"),
-      "가".repeat(900),
+      "가".repeat(1201),
       "digest_repair"
     );
+  });
+
+  it("accepts the shortest complete repair candidate under the final hard cap", async () => {
+    const generator = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(JSON.stringify({
+          ops: [{ type: "revise", claimId: "claim-1", text: "고친 claim", noteIds: ["note-2"] }]
+        }))
+        .mockResolvedValueOnce(JSON.stringify({ now: "가".repeat(4000) }))
+        .mockResolvedValueOnce("나".repeat(1300))
+        .mockResolvedValueOnce("다".repeat(1100))
+    };
+
+    const result = await synthesizeDigestSnapshot(createSnapshot(), generator, createSynthesisOptions());
+
+    expect(result.prose.now).toBe("다".repeat(1100));
+    expect(generator.generate).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects a rendered layer above the intermediate output limit before repair", async () => {
+    const generator = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(JSON.stringify({
+          ops: [{ type: "revise", claimId: "claim-1", text: "고친 claim", noteIds: ["note-2"] }]
+        }))
+        .mockResolvedValueOnce(JSON.stringify({ now: "가".repeat(4001) }))
+    };
+
+    await expect(synthesizeDigestSnapshot(createSnapshot(), generator, createSynthesisOptions()))
+      .rejects.toThrow("String must contain at most 4000 character(s)");
+    expect(generator.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects repair candidates that remain above the final hard cap", async () => {
+    const generator = {
+      generate: vi.fn()
+        .mockResolvedValueOnce(JSON.stringify({
+          ops: [{ type: "revise", claimId: "claim-1", text: "고친 claim", noteIds: ["note-2"] }]
+        }))
+        .mockResolvedValueOnce(JSON.stringify({ now: "가".repeat(4000) }))
+        .mockResolvedValueOnce("나".repeat(1600))
+        .mockResolvedValueOnce("다".repeat(1400))
+    };
+
+    await expect(synthesizeDigestSnapshot(createSnapshot(), generator, createSynthesisOptions()))
+      .rejects.toThrow("String must contain at most 1200 character(s)");
+    expect(generator.generate).toHaveBeenCalledTimes(4);
   });
 });
 

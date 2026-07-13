@@ -46,6 +46,7 @@ export {
   digestLayerSchema,
   digestLayers,
   digestOperationSchema,
+  digestProseHardMaxLength,
   digestProseSchema,
   getDigestClaimStats,
   maintainDigestClaims,
@@ -67,13 +68,13 @@ export type {
 const digestStateId = "singleton";
 const digestRefreshLockTimeoutMinutes = 10;
 export const digestProseTargetLength = 800;
-export const digestProseHardMaxLength = 1200;
+export const digestRenderOutputMaxLength = 4000;
 
 const digestOutputProseSchema = z.object({
-  now: z.string().max(digestProseHardMaxLength).optional(),
-  recent: z.string().max(digestProseHardMaxLength).optional(),
-  longterm: z.string().max(digestProseHardMaxLength).optional(),
-  about: z.string().max(digestProseHardMaxLength).optional()
+  now: z.string().max(digestRenderOutputMaxLength).optional(),
+  recent: z.string().max(digestRenderOutputMaxLength).optional(),
+  longterm: z.string().max(digestRenderOutputMaxLength).optional(),
+  about: z.string().max(digestRenderOutputMaxLength).optional()
 }).strict();
 
 const digestRepairTextSchema = z.string().trim().min(1);

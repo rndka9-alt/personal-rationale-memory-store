@@ -3,12 +3,13 @@ import { z } from "zod";
 export const digestLayers = ["now", "recent", "longterm", "about"] as const;
 export const digestLayerSchema = z.enum(digestLayers);
 export const digestStableLayerSchema = z.enum(["longterm", "about"]);
+export const digestProseHardMaxLength = 1200;
 
 export const digestProseSchema = z.object({
-  now: z.string().max(1200),
-  recent: z.string().max(1200),
-  longterm: z.string().max(1200),
-  about: z.string().max(1200)
+  now: z.string().max(digestProseHardMaxLength),
+  recent: z.string().max(digestProseHardMaxLength),
+  longterm: z.string().max(digestProseHardMaxLength),
+  about: z.string().max(digestProseHardMaxLength)
 }).strict();
 
 const digestNoteIdsSchema = z.array(z.string().min(1)).min(1);
