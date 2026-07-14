@@ -107,18 +107,16 @@ export class NoteService {
       };
     }
 
-    const note = await incrementNoteRating(this.pool, noteId, validatedInput.rating);
+    await incrementNoteRating(this.pool, noteId, validatedInput.rating);
     logInfo("Note rated.", {
       slot: validatedInput.slot,
       noteId,
       rating: validatedInput.rating
     });
+    // 슬롯·평가값은 호출자가 이미 아는 정보이고 누적 카운트는 모델에게 쓸모가 없다.
+    // 응답은 성공 여부와 사용자에게 전할 한마디만 남긴다.
     return {
       ok: true as const,
-      slot: validatedInput.slot,
-      rating: validatedInput.rating,
-      upvotes: note.upvotes,
-      downvotes: note.downvotes,
       feedback: noteRatingFeedback(validatedInput.rating)
     };
   }

@@ -350,7 +350,7 @@ describe("MCP write tool results", () => {
     });
   });
 
-  it("returns slot-scoped success metadata for note ratings", async () => {
+  it("returns only ok and feedback for note ratings", async () => {
     const services = createToolServices();
     const result = await getTool(services, "rate_note").handler({
       slot: "a3",
@@ -359,13 +359,11 @@ describe("MCP write tool results", () => {
 
     const payload = parseToolJson(result);
 
-    expect(payload.ok).toBe(true);
-    expect(payload.slot).toBe("a3");
-    expect(payload.rating).toBe("up");
-    expect(typeof payload.feedback).toBe("string");
-    // 긴 노트 원문 id는 응답에 노출하지 않는다(슬롯만으로 충분).
-    expect(payload).not.toHaveProperty("id");
-    expect(payload).not.toHaveProperty("content");
+    // 슬롯·평가값·카운트는 호출자가 이미 알거나 쓸모없는 정보라 응답에서 뺀다.
+    expect(payload).toEqual({
+      ok: true,
+      feedback: "추천 도장 쾅! 좋은 쪽지로 기억해 둘게요 ✨"
+    });
   });
 
   it("returns a 410 expiry result instead of throwing when the slot is gone", async () => {
@@ -443,17 +441,10 @@ function createToolServices(): ToolServices {
     },
     noteService: {
       recordNote: async () => createNoteRecord(),
-      rateNote: async (input: unknown) => {
-        const { slot, rating } = input as { slot: string; rating: "up" | "down" };
-        return {
-          ok: true as const,
-          slot,
-          rating,
-          upvotes: rating === "up" ? 1 : 0,
-          downvotes: rating === "down" ? 1 : 0,
-          feedback: "추천 도장 쾅! 좋은 쪽지로 기억해 둘게요 ✨"
-        };
-      },
+      rateNote: async () => ({
+        ok: true as const,
+        feedback: "추천 도장 쾅! 좋은 쪽지로 기억해 둘게요 ✨"
+      }),
       composeNotesContext: async () => "Compact note context."
     }
   };
