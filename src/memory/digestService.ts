@@ -23,6 +23,7 @@ import {
   digestJudgmentOutputSchema,
   digestLayerSchema,
   digestLayers,
+  digestOperationClaimIds,
   digestOperationSchema,
   digestProseSchema,
   getDigestClaimStats,
@@ -288,6 +289,7 @@ export class DigestService {
       try {
         await recordFailedDigestRun(
           this.pool,
+          snapshot?.claims ?? [],
           operations,
           skippedOperations,
           deferredEvents,
@@ -1306,6 +1308,11 @@ async function persistSuccessfulDigestRun(
       operations: synthesized.operations,
       skippedOperations: synthesized.skippedOperations,
       deferredEvents: synthesized.deferredEvents,
+      claimTexts: collectDigestRunClaimTexts(snapshot.claims, {
+        operations: synthesized.operations,
+        skippedOperations: synthesized.skippedOperations,
+        deferredEvents: synthesized.deferredEvents
+      }),
       proseSnapshot: synthesized.prose,
       newNoteCount: runKind === "synthesis" ? snapshot.newNotes.length : 0,
       status: "succeeded",
@@ -1372,6 +1379,7 @@ async function persistDeferredPromotions(
 
 async function recordFailedDigestRun(
   executor: DigestQueryExecutor,
+  claims: DigestClaim[],
   operations: DigestOperation[],
   skippedOperations: DigestSkippedOperation[],
   deferredEvents: DigestDeferredEvent[],
@@ -1387,6 +1395,7 @@ async function recordFailedDigestRun(
     operations,
     skippedOperations,
     deferredEvents,
+    claimTexts: collectDigestRunClaimTexts(claims, { operations, skippedOperations, deferredEvents }),
     proseSnapshot,
     newNoteCount,
     status: "failed",
@@ -1398,10 +1407,44 @@ async function recordFailedDigestRun(
   await releaseDigestRefreshLock(executor, lockStartedAt);
 }
 
+type DigestRunClaimText = {
+  claimId: string;
+  text: string;
+};
+
+// run이 id로만 참조하는 claim의 문구를 pre-run 원장에서 스냅샷한다. revise 이후의 새
+// 문구는 op 자체에 있으므로, 히스토리가 사후 수정에 오염되지 않으려면 op가 겨냥한
+// 당시 문구를 보존해야 한다.
+function collectDigestRunClaimTexts(
+  claims: DigestClaim[],
+  run: {
+    operations: DigestOperation[];
+    skippedOperations: DigestSkippedOperation[];
+    deferredEvents: DigestDeferredEvent[];
+  }
+): DigestRunClaimText[] {
+  const textsByClaimId = new Map(claims.map((claim) => [claim.id, claim.text]));
+  const referencedClaimIds = new Set([
+    ...run.operations.flatMap(digestOperationClaimIds),
+    ...run.skippedOperations.flatMap((skipped) => digestOperationClaimIds(skipped.operation)),
+    ...run.deferredEvents.map((event) => event.claimId)
+  ]);
+  const claimTexts: DigestRunClaimText[] = [];
+  for (const claimId of [...referencedClaimIds].sort()) {
+    const text = textsByClaimId.get(claimId);
+    // 원장에 없는 claim을 겨냥해 스킵된 op(claim_not_active 등)는 관측할 문구 자체가 없다.
+    if (text !== undefined) {
+      claimTexts.push({ claimId, text });
+    }
+  }
+  return claimTexts;
+}
+
 async function insertDigestRun(executor: DigestQueryExecutor, input: {
   operations: DigestOperation[];
   skippedOperations: DigestSkippedOperation[];
   deferredEvents: DigestDeferredEvent[];
+  claimTexts: DigestRunClaimText[];
   proseSnapshot: DigestProse;
   newNoteCount: number;
   status: "succeeded" | "failed";
@@ -1428,6 +1471,13 @@ async function insertDigestRun(executor: DigestQueryExecutor, input: {
       input.runKind
     ]
   );
+  for (const claimText of input.claimTexts) {
+    await executor.query(
+      `INSERT INTO digest_run_claim_texts (run_id, claim_id, text)
+      VALUES ($1, $2, $3)`,
+      [input.runId, claimText.claimId, claimText.text]
+    );
+  }
 }
 
 function mapDigestClaimRow(row: pg.QueryResultRow): DigestClaim {

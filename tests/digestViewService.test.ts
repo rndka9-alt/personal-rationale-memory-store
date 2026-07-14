@@ -125,6 +125,10 @@ describe("digest view service", () => {
         targetLayer: "longterm",
         reason: "observation_span_below_7_days"
       }],
+      claim_texts: {
+        "claim-now": "요즘 claim",
+        short: "짧게 관측된 claim"
+      },
       prose_snapshot: createProse("snapshot"),
       run_kind: "synthesis"
     }]]);
@@ -147,6 +151,10 @@ describe("digest view service", () => {
         targetLayer: "longterm",
         reason: "observation_span_below_7_days"
       }],
+      claimTexts: {
+        "claim-now": "요즘 claim",
+        short: "짧게 관측된 claim"
+      },
       proseSnapshot: createProse("snapshot"),
       runKind: "synthesis"
     }]);

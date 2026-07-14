@@ -53,6 +53,8 @@ const digestRunRowSchema = z.object({
   ops: z.array(digestOperationSchema),
   skipped_operations: z.array(digestSkippedOperationSchema),
   deferred_events: z.array(digestDeferredEventSchema),
+  // run 시점 문구 스냅샷(claimId → text). 스냅샷 도입 이전 run은 빈 객체다.
+  claim_texts: z.record(z.string()),
   prose_snapshot: digestProseSchema,
   run_kind: z.enum(["synthesis", "maintenance"])
 });
@@ -131,10 +133,17 @@ export class DigestViewService {
   async listRuns(limit: number) {
     const result = await this.pool.query(
       `SELECT
-        id, run_at, status, error, new_note_count, ops, skipped_operations,
-        deferred_events, prose_snapshot, run_kind
-      FROM digest_runs
-      ORDER BY run_at DESC, id DESC
+        runs.id, runs.run_at, runs.status, runs.error, runs.new_note_count, runs.ops,
+        runs.skipped_operations, runs.deferred_events, runs.prose_snapshot, runs.run_kind,
+        COALESCE(
+          jsonb_object_agg(texts.claim_id, texts.text)
+            FILTER (WHERE texts.claim_id IS NOT NULL),
+          '{}'::jsonb
+        ) AS claim_texts
+      FROM digest_runs AS runs
+      LEFT JOIN digest_run_claim_texts AS texts ON texts.run_id = runs.id
+      GROUP BY runs.id
+      ORDER BY runs.run_at DESC, runs.id DESC
       LIMIT $1`,
       [limit]
     );
@@ -178,6 +187,7 @@ function mapDigestRunRow(row: pg.QueryResultRow) {
     ops: run.ops,
     skippedOperations: run.skipped_operations,
     deferredEvents: run.deferred_events,
+    claimTexts: run.claim_texts,
     proseSnapshot: run.prose_snapshot,
     runKind: run.run_kind
   };

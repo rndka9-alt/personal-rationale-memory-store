@@ -436,6 +436,9 @@ describe("digest publish boundary", () => {
       if (sql.includes("INSERT INTO digest_runs")) {
         return createQueryResult([]);
       }
+      if (sql.includes("INSERT INTO digest_run_claim_texts")) {
+        return createQueryResult([]);
+      }
       if (sql.includes("SET refresh_started_at = NULL")) {
         return createQueryResult([]);
       }
@@ -469,6 +472,9 @@ describe("digest publish boundary", () => {
     expect(query.mock.calls.some(([text]) => String(text).includes("INSERT INTO digest_runs"))).toBe(true);
     const failedRunCall = query.mock.calls.find(([text]) => String(text).includes("INSERT INTO digest_runs"));
     expect(String(failedRunCall?.[1]?.[2])).toContain("고친 claim");
+    const claimTextCall = query.mock.calls.find(([text]) => String(text).includes("INSERT INTO digest_run_claim_texts"));
+    expect(claimTextCall?.[1]?.[1]).toBe("claim-1");
+    expect(claimTextCall?.[1]?.[2]).toBe("기존 claim");
   });
 });
 

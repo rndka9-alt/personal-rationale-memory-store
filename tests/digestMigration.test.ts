@@ -19,3 +19,17 @@ describe("digest evidence migration", () => {
     expect(migration).toContain("DROP COLUMN IF EXISTS evidence_count");
   });
 });
+
+describe("digest run claim text migration", () => {
+  it("guards replay-sensitive schema operations and cascades run deletion", async () => {
+    const migration = await readFile(
+      path.resolve(process.cwd(), "migrations/018_digest_run_claim_texts.sql"),
+      "utf8"
+    );
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS digest_run_claim_texts");
+    expect(migration).toContain("CREATE INDEX IF NOT EXISTS digest_run_claim_texts_claim_id_idx");
+    expect(migration).toContain("REFERENCES digest_runs(id) ON DELETE CASCADE");
+    expect(migration).toContain("PRIMARY KEY (run_id, claim_id)");
+  });
+});

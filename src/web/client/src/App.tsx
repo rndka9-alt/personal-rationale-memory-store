@@ -998,7 +998,11 @@ function DigestRunItem(props: { run: DigestRun }) {
         ) : (
           <ol className="space-y-2.5">
             {run.ops.map((operation, index) => (
-              <DigestOperationItem key={`${operation.type}-${index}`} operation={operation} />
+              <DigestOperationItem
+                key={`${operation.type}-${index}`}
+                operation={operation}
+                claimTexts={run.claimTexts}
+              />
             ))}
           </ol>
         )}
@@ -1006,11 +1010,15 @@ function DigestRunItem(props: { run: DigestRun }) {
           <div className="mt-5">
             <p className="mb-2 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-muted">Skipped</p>
             <ul className="space-y-2 text-xs text-faint">
-              {run.skippedOperations.map((skipped, index) => (
-                <li key={`${skipped.reason}-${index}`} className="rounded-2xl border border-stroke bg-white px-4 py-3">
-                  {digestOperationLabels[skipped.operation.type]} · {skipped.reason}
-                </li>
-              ))}
+              {run.skippedOperations.map((skipped, index) => {
+                const targetText = skippedOperationTargetText(skipped.operation, run.claimTexts);
+                return (
+                  <li key={`${skipped.reason}-${index}`} className="rounded-2xl border border-stroke bg-white px-4 py-3">
+                    {digestOperationLabels[skipped.operation.type]}
+                    {targetText ? ` · ${targetText}` : ""} · {skipped.reason}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ) : null}
@@ -1020,7 +1028,7 @@ function DigestRunItem(props: { run: DigestRun }) {
             <ul className="space-y-2 text-xs text-faint">
               {run.deferredEvents.map((event, index) => (
                 <li key={`${event.claimId}-${event.action}-${index}`} className="rounded-2xl border border-stroke bg-white px-4 py-3">
-                  {event.action} · {event.claimId} → {digestLayerDetails[event.targetLayer].label} · {event.reason}
+                  {event.action} · {run.claimTexts[event.claimId] ?? event.claimId} → {digestLayerDetails[event.targetLayer].label} · {event.reason}
                 </li>
               ))}
             </ul>
@@ -1031,19 +1039,19 @@ function DigestRunItem(props: { run: DigestRun }) {
   );
 }
 
-function DigestOperationItem(props: { operation: DigestOperation }) {
+function DigestOperationItem(props: { operation: DigestOperation; claimTexts: Record<string, string> }) {
   const operation = props.operation;
   return (
     <li className="flex items-start gap-3 rounded-2xl border border-stroke bg-white px-4 py-3.5">
       <span className={`mt-0.5 shrink-0 rounded-full px-2 py-1 text-[0.62rem] font-semibold ${digestOperationBadgeClassName(operation.type)}`}>
         {digestOperationLabels[operation.type]}
       </span>
-      <DigestOperationContent operation={operation} />
+      <DigestOperationContent operation={operation} claimTexts={props.claimTexts} />
     </li>
   );
 }
 
-function DigestOperationContent(props: { operation: DigestOperation }) {
+function DigestOperationContent(props: { operation: DigestOperation; claimTexts: Record<string, string> }) {
   const operation = props.operation;
   if (operation.type === "add") {
     return (
@@ -1056,49 +1064,83 @@ function DigestOperationContent(props: { operation: DigestOperation }) {
   if (operation.type === "strengthen") {
     return (
       <div className="min-w-0">
-        <p className="break-all font-mono text-xs leading-5 text-ink">{operation.claimId}</p>
+        <DigestClaimText claimTexts={props.claimTexts} claimId={operation.claimId} />
         <p className="mt-1 text-[0.67rem] text-faint">신규 근거 {operation.noteIds.length}개</p>
       </div>
     );
   }
   if (operation.type === "revise") {
+    const previousText = props.claimTexts[operation.claimId];
+    const detailParts = [
+      // 새 문구가 본문일 때만 수정 전 문구를 대상으로 병기한다. 문구 변경이 없는
+      // revise는 본문이 이미 그 claim이라 대상 표기가 중복이다.
+      ...(operation.text ? [`대상 ${previousText ?? operation.claimId}`] : []),
+      ...(operation.layer ? [`${digestLayerDetails[operation.layer].label}로 이동`] : []),
+      ...(operation.noteIds ? [`근거 ${operation.noteIds.length}개`] : [])
+    ];
     return (
       <div className="min-w-0">
-        <p className={`break-words leading-5 text-ink ${operation.text ? "text-sm" : "font-mono text-xs"}`}>
-          {operation.text ?? operation.claimId}
-        </p>
-        <p className="mt-1 break-all text-[0.67rem] leading-5 text-faint">
-          대상 {operation.claimId}
-          {operation.layer ? ` · ${digestLayerDetails[operation.layer].label}로 이동` : ""}
-          {operation.noteIds ? ` · 근거 ${operation.noteIds.length}개` : ""}
-        </p>
+        {operation.text ? (
+          <p className="break-words text-sm leading-5 text-ink" title={operation.claimId}>{operation.text}</p>
+        ) : (
+          <DigestClaimText claimTexts={props.claimTexts} claimId={operation.claimId} />
+        )}
+        {detailParts.length > 0 ? (
+          <p className="mt-1 break-all text-[0.67rem] leading-5 text-faint">{detailParts.join(" · ")}</p>
+        ) : null}
       </div>
     );
   }
   if (operation.type === "promote") {
     return (
       <div className="min-w-0">
-        <p className="break-all font-mono text-xs leading-5 text-ink">{operation.claimId}</p>
+        <DigestClaimText claimTexts={props.claimTexts} claimId={operation.claimId} />
         <p className="mt-1 text-[0.67rem] text-faint">{digestLayerDetails[operation.layer].label}로 승격</p>
       </div>
     );
   }
   if (operation.type === "merge") {
+    const parentText = props.claimTexts[operation.parentClaimId];
     return (
       <div className="min-w-0">
-        <p className="break-words text-sm leading-5 text-ink">{operation.text ?? operation.parentClaimId}</p>
+        {operation.text ? (
+          <p className="break-words text-sm leading-5 text-ink" title={operation.parentClaimId}>{operation.text}</p>
+        ) : (
+          <DigestClaimText claimTexts={props.claimTexts} claimId={operation.parentClaimId} />
+        )}
         <p className="mt-1 break-all text-[0.67rem] leading-5 text-faint">
-          부모 {operation.parentClaimId} · 자식 {operation.childClaimIds.length}개
+          {operation.text ? `부모 ${parentText ?? operation.parentClaimId} · ` : ""}자식 {operation.childClaimIds.length}개
         </p>
       </div>
     );
   }
   return (
     <div className="min-w-0">
-      <p className="break-all font-mono text-xs leading-5 text-ink">{operation.claimId}</p>
+      <DigestClaimText claimTexts={props.claimTexts} claimId={operation.claimId} />
       <p className="mt-1 text-[0.67rem] text-faint">활성 원장에서 제외</p>
     </div>
   );
+}
+
+function DigestClaimText(props: { claimTexts: Record<string, string>; claimId: string }) {
+  const claimText = props.claimTexts[props.claimId];
+  // 스냅샷 도입 이전 run이거나 원장에 없던 claim을 겨냥한 op는 문구가 없어 id로 남긴다.
+  if (claimText === undefined) {
+    return <p className="break-all font-mono text-xs leading-5 text-ink">{props.claimId}</p>;
+  }
+  return (
+    <p className="break-words text-sm leading-5 text-ink" title={props.claimId}>
+      {claimText}
+    </p>
+  );
+}
+
+function skippedOperationTargetText(operation: DigestOperation, claimTexts: Record<string, string>) {
+  if (operation.type === "add") {
+    return operation.text;
+  }
+  const claimId = operation.type === "merge" ? operation.parentClaimId : operation.claimId;
+  return claimTexts[claimId];
 }
 
 function SectionHeading(props: { eyebrow: string; title: string; detail: string }) {

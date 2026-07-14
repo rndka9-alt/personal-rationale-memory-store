@@ -645,7 +645,7 @@ function digestOperationPriority(operation: DigestOperation) {
   return 100;
 }
 
-function digestOperationClaimIds(operation: DigestOperation) {
+export function digestOperationClaimIds(operation: DigestOperation) {
   if (operation.type === "add") {
     return [];
   }

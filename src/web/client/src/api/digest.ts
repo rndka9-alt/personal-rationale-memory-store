@@ -61,6 +61,8 @@ export type DigestRun = {
   ops: DigestOperation[];
   skippedOperations: DigestSkippedOperation[];
   deferredEvents: DigestDeferredEvent[];
+  // run 시점의 claim 문구 스냅샷(claimId → text). 스냅샷 도입 이전 run은 빈 객체다.
+  claimTexts: Record<string, string>;
   proseSnapshot: DigestProse;
   runKind: "synthesis" | "maintenance";
 };
@@ -155,6 +157,7 @@ function parseDigestRun(value: unknown): DigestRun {
     ops: value.ops.map(parseDigestOperation),
     skippedOperations: value.skippedOperations.map(parseDigestSkippedOperation),
     deferredEvents: value.deferredEvents.map(parseDigestDeferredEvent),
+    claimTexts: readStringRecord(value, "claimTexts"),
     proseSnapshot: parseDigestProse(value.proseSnapshot),
     runKind
   };
@@ -277,6 +280,21 @@ function readOptionalString(value: Record<string, unknown>, key: string) {
 
 function readNullableString(value: Record<string, unknown>, key: string) {
   return value[key] === null ? null : readString(value, key);
+}
+
+function readStringRecord(value: Record<string, unknown>, key: string): Record<string, string> {
+  const field = value[key];
+  if (!isRecord(field)) {
+    throw new Error(`Expected ${key} to be a string record.`);
+  }
+  const record: Record<string, string> = {};
+  for (const [recordKey, recordValue] of Object.entries(field)) {
+    if (typeof recordValue !== "string") {
+      throw new Error(`Expected ${key} to be a string record.`);
+    }
+    record[recordKey] = recordValue;
+  }
+  return record;
 }
 
 function readStringArray(value: Record<string, unknown>, key: string) {
