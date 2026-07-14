@@ -105,9 +105,10 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       metadata: toolInvocationMetadata("쪽지 적는 중..", "쪽지 적엇어요!"),
       handler: async (input: unknown) => {
         const parsedInput = recordNoteToolInputSchema.parse(input);
-        return jsonToolResult(compactNoteResult(
-          await services.noteService.recordNote(toRecordNoteInput(parsedInput))
-        ));
+        // 노트 id(N…)는 어떤 MCP 툴도 입력으로 받지 않으므로(평가는 slot, archive는 웹 전용)
+        // 응답에 싣지 않는다.
+        await services.noteService.recordNote(toRecordNoteInput(parsedInput));
+        return jsonToolResult({ ok: true });
       }
     },
     {
@@ -160,10 +161,11 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
       metadata: toolInvocationMetadata("메모를 평가하는 중..", "평가 완료!"),
-      handler: async (input: unknown) =>
-        jsonToolResult(compactUsageFeedbackWriteResult(
-          await services.rationaleService.recordUsageFeedback(recordUsageFeedbackToolInputSchema.parse(input))
-        ))
+      handler: async (input: unknown) => {
+        // id·eventType은 호출자가 넣은 입력 에코라 응답에 싣지 않는다.
+        await services.rationaleService.recordUsageFeedback(recordUsageFeedbackToolInputSchema.parse(input));
+        return jsonToolResult({ ok: true });
+      }
     }
   ];
 
@@ -294,9 +296,6 @@ function compactSearchResult(result: {
     title: string;
     summary?: string;
     type: string;
-    acceptanceState: string;
-    reviewState: string;
-    decisionState: string;
   }>;
   warnings: Array<{
     kind: string;
@@ -309,9 +308,6 @@ function compactSearchResult(result: {
       id: string;
       title: string;
       type: string;
-      acceptanceState: string;
-      reviewState: string;
-      decisionState: string;
       summary?: string;
     }>;
     warnings?: Array<{
@@ -334,32 +330,25 @@ function compactSearchResult(result: {
   return response;
 }
 
+// acceptanceState·reviewState·decisionState는 리뷰 워크플로우를 실제로 돌리지 않아
+// 항상 초기값이라, 검색 응답에서는 제외한다(결과 개수만큼 곱해지는 노이즈).
 function compactSearchEntry(entry: {
   id: string;
   currentRevisionId?: string;
   title: string;
   summary?: string;
   type: string;
-  acceptanceState: string;
-  reviewState: string;
-  decisionState: string;
 }) {
   const revisionId = readCurrentRevisionId(entry);
   const response: {
     id: string;
     title: string;
     type: string;
-    acceptanceState: string;
-    reviewState: string;
-    decisionState: string;
     summary?: string;
   } = {
     id: revisionId,
     title: entry.title,
-    type: entry.type,
-    acceptanceState: entry.acceptanceState,
-    reviewState: entry.reviewState,
-    decisionState: entry.decisionState
+    type: entry.type
   };
 
   if (entry.summary) {
@@ -393,24 +382,6 @@ function compactRationaleWriteResult(result: RationaleWriteResult) {
   }
 
   return response;
-}
-
-function compactNoteResult(result: { id: string }) {
-  return {
-    ok: true,
-    id: result.id
-  };
-}
-
-function compactUsageFeedbackWriteResult(result: {
-  id: string;
-  eventType: string;
-}) {
-  return {
-    ok: true,
-    id: result.id,
-    eventType: result.eventType
-  };
 }
 
 function readCurrentRevisionId(entry: { id: string; currentRevisionId?: string }) {

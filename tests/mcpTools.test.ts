@@ -166,9 +166,6 @@ describe("MCP write tool results", () => {
         id: "V20260604T000000000Z-search",
         title: "Keep search responses compact",
         type: "rationale",
-        acceptanceState: "candidate",
-        reviewState: "unreviewed",
-        decisionState: "unknown",
         summary: "Search callers only need enough detail to choose a follow-up read."
       }],
       warnings: [{
@@ -303,26 +300,14 @@ describe("MCP write tool results", () => {
     });
   });
 
-  it("returns compact success metadata for notes", async () => {
+  it("returns only ok for recorded notes", async () => {
     const services = createToolServices();
     const result = await getTool(services, "record_note").handler({
       content: "쭈인님은 노트 원문을 다시 도구 응답에 싣지 않길 원한다."
     });
 
-    const payload = parseToolJson(result);
-
-    expect(payload).toEqual({
-      ok: true,
-      id: "N20260604T000000000Z-compact"
-    });
-    expect(payload).not.toHaveProperty("upvotes");
-    expect(payload).not.toHaveProperty("downvotes");
-    expect(payload).not.toHaveProperty("archived");
-    expect(payload).not.toHaveProperty("createdAt");
-    expect(payload).not.toHaveProperty("updatedAt");
-    expect(payload).not.toHaveProperty("content");
-    expect(payload).not.toHaveProperty("topic");
-    expect(payload).not.toHaveProperty("sourceConversation");
+    // 노트 id는 MCP 툴 입력으로 쓸 곳이 없어 응답에 싣지 않는다.
+    expect(parseToolJson(result)).toEqual({ ok: true });
   });
 
   it("groups note provenance into one public source context", async () => {
@@ -386,22 +371,15 @@ describe("MCP write tool results", () => {
     expect(typeof payload.reason).toBe("string");
   });
 
-  it("returns compact success metadata for usage feedback", async () => {
+  it("returns only ok for usage feedback", async () => {
     const services = createToolServices();
     const result = await getTool(services, "record_usage_feedback").handler({
       id: "V20260604T000000000Z-current",
       eventType: "user_helpful"
     });
 
-    const payload = parseToolJson(result);
-
-    expect(payload).toEqual({
-      ok: true,
-      id: "V20260604T000000000Z-current",
-      eventType: "user_helpful"
-    });
-    expect(payload).not.toHaveProperty("useCount");
-    expect(payload).not.toHaveProperty("lastUsedAt");
+    // id·eventType은 호출자 입력 에코라 응답에 싣지 않는다.
+    expect(parseToolJson(result)).toEqual({ ok: true });
   });
 });
 
