@@ -116,6 +116,31 @@ describe("digest operation planner", () => {
     expect(plan.operations).toEqual([]);
     expect(plan.skippedOperations[0]?.reason).toBe("evidence_note_not_in_current_batch");
   });
+
+  it("skips claim texts above the hard cap while allowing the boundary length", () => {
+    const claim = createClaim("claim", "now", [createEvidence("note-1", "2026-07-01T00:00:00.000Z")]);
+    const parent = createClaim("parent", "now", [createEvidence("note-1", "2026-07-01T00:00:00.000Z")]);
+    const child = createClaim("child", "now", [createEvidence("note-1", "2026-07-01T00:00:00.000Z")]);
+    const overLengthText = "가".repeat(251);
+    const boundaryText = "가".repeat(250);
+    const newNotes = [createNote("note-2", "2026-07-10T00:00:00.000Z")];
+    const plan = planDigestOperations([claim, parent, child], [
+      { type: "add", layer: "now", text: overLengthText, noteIds: ["note-2"] },
+      { type: "revise", claimId: "claim", text: overLengthText },
+      { type: "revise", claimId: "claim", text: boundaryText },
+      { type: "merge", parentClaimId: "parent", childClaimIds: ["child"], text: overLengthText }
+    ], newNotes, {
+      promoteMinSpanDays: 7,
+      runId: "run-1"
+    });
+
+    expect(plan.operations).toEqual([{ type: "revise", claimId: "claim", text: boundaryText }]);
+    expect(plan.skippedOperations.map((skipped) => skipped.reason)).toEqual([
+      "claim_text_over_250_chars",
+      "claim_text_over_250_chars",
+      "claim_text_over_250_chars"
+    ]);
+  });
 });
 
 describe("digest operation application", () => {
@@ -436,9 +461,6 @@ describe("digest publish boundary", () => {
       if (sql.includes("INSERT INTO digest_runs")) {
         return createQueryResult([]);
       }
-      if (sql.includes("INSERT INTO digest_run_claim_texts")) {
-        return createQueryResult([]);
-      }
       if (sql.includes("SET refresh_started_at = NULL")) {
         return createQueryResult([]);
       }
@@ -473,8 +495,8 @@ describe("digest publish boundary", () => {
     const failedRunCall = query.mock.calls.find(([text]) => String(text).includes("INSERT INTO digest_runs"));
     expect(String(failedRunCall?.[1]?.[2])).toContain("고친 claim");
     const claimTextCall = query.mock.calls.find(([text]) => String(text).includes("INSERT INTO digest_run_claim_texts"));
-    expect(claimTextCall?.[1]?.[1]).toBe("claim-1");
-    expect(claimTextCall?.[1]?.[2]).toBe("기존 claim");
+    expect(String(claimTextCall?.[1]?.[10])).toContain("claim-1");
+    expect(String(claimTextCall?.[1]?.[10])).toContain("기존 claim");
   });
 });
 

@@ -131,18 +131,17 @@ export class DigestViewService {
   }
 
   async listRuns(limit: number) {
+    // LIMIT 이전에 전체 히스토리를 조인·집계하지 않도록 run별 상관 서브쿼리로 스냅샷을 모은다.
     const result = await this.pool.query(
       `SELECT
         runs.id, runs.run_at, runs.status, runs.error, runs.new_note_count, runs.ops,
         runs.skipped_operations, runs.deferred_events, runs.prose_snapshot, runs.run_kind,
-        COALESCE(
-          jsonb_object_agg(texts.claim_id, texts.text)
-            FILTER (WHERE texts.claim_id IS NOT NULL),
-          '{}'::jsonb
-        ) AS claim_texts
+        COALESCE((
+          SELECT jsonb_object_agg(texts.claim_id, texts.text)
+          FROM digest_run_claim_texts AS texts
+          WHERE texts.run_id = runs.id
+        ), '{}'::jsonb) AS claim_texts
       FROM digest_runs AS runs
-      LEFT JOIN digest_run_claim_texts AS texts ON texts.run_id = runs.id
-      GROUP BY runs.id
       ORDER BY runs.run_at DESC, runs.id DESC
       LIMIT $1`,
       [limit]

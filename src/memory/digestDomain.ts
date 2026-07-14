@@ -4,6 +4,9 @@ export const digestLayers = ["now", "recent", "longterm", "about"] as const;
 export const digestLayerSchema = z.enum(digestLayers);
 export const digestStableLayerSchema = z.enum(["longterm", "about"]);
 export const digestProseHardMaxLength = 1200;
+// claim이 단일 명제를 넘어 작업 로그처럼 살찌는 것을 막는 하드캡. 프롬프트 가이드(150자)의
+// 초과분은 merge가 자식 의미를 부모 text에 보존할 때 필요한 여유다.
+export const digestClaimTextMaxLength = 250;
 
 export const digestProseSchema = z.object({
   now: z.string().max(digestProseHardMaxLength),
@@ -567,11 +570,18 @@ function combineDigestOperations(left: DigestOperation, right: DigestOperation):
   return left;
 }
 
+// zod 스키마에 max를 걸면 판단 출력 전체 파싱이 실패해 run이 통째로 죽으므로,
+// 길이 위반은 op 단위 skip으로 격리해 나머지 op와 히스토리 기록을 살린다.
+const claimTextTooLongReason = `claim_text_over_${digestClaimTextMaxLength}_chars`;
+
 function validateDigestOperation(
   operation: DigestOperation,
   activeClaims: Map<string, DigestClaim>,
   newNoteIds: Set<string>
 ) {
+  if ("text" in operation && operation.text !== undefined && operation.text.length > digestClaimTextMaxLength) {
+    return claimTextTooLongReason;
+  }
   if (operation.type === "add") {
     if (operation.layer === "longterm" || operation.layer === "about") {
       return "stable_layer_add_requires_promotion";

@@ -1140,7 +1140,8 @@ function skippedOperationTargetText(operation: DigestOperation, claimTexts: Reco
     return operation.text;
   }
   const claimId = operation.type === "merge" ? operation.parentClaimId : operation.claimId;
-  return claimTexts[claimId];
+  // 스냅샷 없는 과거 run에서도 같은 사유의 skip끼리 구분되도록 id로 남긴다.
+  return claimTexts[claimId] ?? claimId;
 }
 
 function SectionHeading(props: { eyebrow: string; title: string; detail: string }) {

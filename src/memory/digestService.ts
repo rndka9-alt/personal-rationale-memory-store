@@ -20,6 +20,7 @@ import {
 } from "./llmRequestLogService.js";
 import {
   applyDigestOperations,
+  digestClaimTextMaxLength,
   digestJudgmentOutputSchema,
   digestLayerSchema,
   digestLayers,
@@ -44,6 +45,7 @@ import {
 
 export {
   applyDigestOperations,
+  digestClaimTextMaxLength,
   digestLayerSchema,
   digestLayers,
   digestOperationSchema,
@@ -116,7 +118,8 @@ const digestNoteRowSchema = z.object({
 export const digestSeedInputSchema = z.object({
   claims: z.array(z.object({
     layer: digestLayerSchema,
-    text: z.string().min(1),
+    // 판단 planner의 하드캡을 seed가 우회해 비대 claim을 심지 못하게 같은 상한을 건다.
+    text: z.string().min(1).max(digestClaimTextMaxLength),
     sampleNoteIds: z.array(z.string().min(1))
   }).strict()),
   prose: digestProseSchema
@@ -579,16 +582,18 @@ function createDigestJudgmentSystemPrompt(input: {
 
 판단 계약:
 1. 입력 노트는 어시스턴트 시점에서 기록되었으므로 claim은 사용자를 중심으로 서술한다.
-2. 가치 우선순위는 모순·직접 정정에 따른 고침 > 새로운 확장 > 반복이다. 모순은 기존 claim의 revise 또는 retire로 먼저 해소한다.
-3. 반복은 편집 가치가 0이어도 관측 가치가 있다. 같은 내용의 신규 노트는 add 대신 strengthen로 연결해 관측일을 보존한다.
-4. 한 세션의 에코나 어시스턴트가 재진술한 파생 노트를 서로 독립된 성향으로 증식시키지 않는다.
-5. longterm/about 진입은 promote만 사용한다. add는 now/recent에서 시작하고, revise의 레이어 이동도 now/recent 사이에서만 사용한다.
-6. merge는 같은 레이어의 parent와 child 사이에서만 사용한다. 부모는 설명력이 넓은 claim으로 고르고 자식의 의미를 text에 보존한다.
-7. lastObservedAt이 현재 시각보다 3주 이상 오래된 now claim은 recent로 옮기는 revise 또는 retire를 검토한다.
-8. longterm/about claim의 retire는 신규 노트가 명백히 모순하거나 직접 정정하는 경우에 사용한다.
-9. now/recent active claim 합계가 60개를 넘으면 새 add보다 같은 레이어의 merge와 불필요 claim retire를 우선한다.
-10. 건강 등 민감 영역은 구체적인 사생활을 반복하지 않고 한 줄 수준으로 추상화한다.
-11. noteIds에는 이번 입력의 신규 노트 id만 넣는다. 존재하는 claim 전체를 재출력하지 않고 실제 변화의 ops만 만든다.
+2. 가치 우선순위는 모순·직접 정정에 따른 고침 > 새로운 확장 > 반복이다. 모순은 기존 claim의 revise 또는 retire로 먼저 해소한다. 새로운 확장은 기존 claim을 불리는 revise가 아니라 add로 반영한다.
+3. claim은 단일 명제다. 서로 다른 사실·사건·성과를 한 claim에 나열하지 않으며, 문구는 150자 이내를 지향한다.
+4. revise의 text 변경은 정정·압축·명료화 전용이다. 같은 주제라도 새로운 전개는 add, 순수 반복은 strengthen을 사용한다. 150자를 크게 넘는 claim을 만나면 핵심 명제 하나로 압축하는 revise를 검토한다.
+5. 반복은 편집 가치가 0이어도 관측 가치가 있다. 같은 내용의 신규 노트는 add 대신 strengthen로 연결해 관측일을 보존한다.
+6. 한 세션의 에코나 어시스턴트가 재진술한 파생 노트를 서로 독립된 성향으로 증식시키지 않는다.
+7. longterm/about 진입은 promote만 사용한다. add는 now/recent에서 시작하고, revise의 레이어 이동도 now/recent 사이에서만 사용한다.
+8. merge는 같은 레이어의 parent와 child 사이에서만 사용한다. 부모는 설명력이 넓은 claim으로 고르고 자식의 의미를 text에 보존한다.
+9. lastObservedAt이 현재 시각보다 3주 이상 오래된 now claim은 recent로 옮기는 revise 또는 retire를 검토한다.
+10. longterm/about claim의 retire는 신규 노트가 명백히 모순하거나 직접 정정하는 경우에 사용한다.
+11. now/recent active claim 합계가 60개를 넘으면 새 add보다 같은 레이어의 merge와 불필요 claim retire를 우선한다.
+12. 건강 등 민감 영역은 구체적인 사생활을 반복하지 않고 한 줄 수준으로 추상화한다.
+13. noteIds에는 이번 입력의 신규 노트 id만 넣는다. 존재하는 claim 전체를 재출력하지 않고 실제 변화의 ops만 만든다.
 
 ${stableLayerPressureRules}
 
@@ -1453,11 +1458,18 @@ async function insertDigestRun(executor: DigestQueryExecutor, input: {
   runId: string;
   runKind: "synthesis" | "maintenance";
 }) {
+  // run 행과 claim 스냅샷이 따로 커밋되면 중간 실패 시 감사 기록이 반쪽만 남는다.
+  // 실패 경로는 트랜잭션 없이 pool로 직접 기록하므로, 한 문장(CTE)으로 묶어 원자성을 얻는다.
   await executor.query(
-    `INSERT INTO digest_runs (
-      id, run_at, ops, skipped_operations, deferred_events, prose_snapshot,
-      new_note_count, status, error, run_kind
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `WITH inserted_run AS (
+      INSERT INTO digest_runs (
+        id, run_at, ops, skipped_operations, deferred_events, prose_snapshot,
+        new_note_count, status, error, run_kind
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    )
+    INSERT INTO digest_run_claim_texts (run_id, claim_id, text)
+    SELECT $1, entries.claim_id, entries.text
+    FROM jsonb_to_recordset($11::jsonb) AS entries(claim_id TEXT, text TEXT)`,
     [
       input.runId,
       input.runAt,
@@ -1468,16 +1480,13 @@ async function insertDigestRun(executor: DigestQueryExecutor, input: {
       input.newNoteCount,
       input.status,
       input.error,
-      input.runKind
+      input.runKind,
+      JSON.stringify(input.claimTexts.map((claimText) => ({
+        claim_id: claimText.claimId,
+        text: claimText.text
+      })))
     ]
   );
-  for (const claimText of input.claimTexts) {
-    await executor.query(
-      `INSERT INTO digest_run_claim_texts (run_id, claim_id, text)
-      VALUES ($1, $2, $3)`,
-      [input.runId, claimText.claimId, claimText.text]
-    );
-  }
 }
 
 function mapDigestClaimRow(row: pg.QueryResultRow): DigestClaim {

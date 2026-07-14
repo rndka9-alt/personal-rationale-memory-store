@@ -30,6 +30,8 @@ describe("digest run claim text migration", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS digest_run_claim_texts");
     expect(migration).toContain("CREATE INDEX IF NOT EXISTS digest_run_claim_texts_claim_id_idx");
     expect(migration).toContain("REFERENCES digest_runs(id) ON DELETE CASCADE");
+    expect(migration).toContain("REFERENCES digest_claims(id) ON DELETE RESTRICT");
+    expect(migration).toContain("confdeltype = 'c'");
     expect(migration).toContain("PRIMARY KEY (run_id, claim_id)");
   });
 });
