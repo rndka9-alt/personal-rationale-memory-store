@@ -999,13 +999,17 @@ export type RetrievalQueryEventInsert = {
   topScore?: number;
   warningKinds: string[];
   projectName?: string;
+  clientName?: string;
+  clientVersion?: string;
+  userAgent?: string;
 };
 
 export async function recordRetrievalQueryEvent(pool: pg.Pool, event: RetrievalQueryEventInsert) {
   await pool.query(
     `INSERT INTO retrieval_query_events (
-      id, source_kind, query, result_count, top_score, warning_kinds, project_name
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      id, source_kind, query, result_count, top_score, warning_kinds, project_name,
+      client_name, client_version, user_agent
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       randomUUID(),
       event.sourceKind,
@@ -1013,7 +1017,10 @@ export async function recordRetrievalQueryEvent(pool: pg.Pool, event: RetrievalQ
       event.resultCount,
       event.topScore,
       event.warningKinds,
-      event.projectName
+      event.projectName,
+      event.clientName,
+      event.clientVersion,
+      event.userAgent
     ]
   );
   logInfo("DB record retrieval query event completed.", {

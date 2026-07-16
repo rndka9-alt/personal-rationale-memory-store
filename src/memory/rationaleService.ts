@@ -29,7 +29,7 @@ import type {
   RetrievalQuerySourceKind
 } from "../db/queries.js";
 import type { AppConfig } from "../config.js";
-import { logError, logInfo, logWarn } from "../diagnostics/index.js";
+import { logError, logInfo, logWarn, readClientContext } from "../diagnostics/index.js";
 import type { EmbeddingProvider } from "../embeddings/embeddingProvider.js";
 import { classifyTask } from "../ontology/taskClassifier.js";
 import { MemoryFileStore } from "./fileStore.js";
@@ -904,13 +904,17 @@ export class RationaleService {
     });
 
     try {
+      const clientContext = readClientContext();
       await recordRetrievalQueryEvent(this.pool, {
         sourceKind,
         query: parsedInput.query,
         resultCount: results.length,
         topScore: results[0]?.searchScore,
         warningKinds: warnings.map((warning) => warning.kind),
-        projectName: parsedInput.project?.name
+        projectName: parsedInput.project?.name,
+        clientName: clientContext?.clientName,
+        clientVersion: clientContext?.clientVersion,
+        userAgent: clientContext?.userAgent
       });
     } catch (error) {
       // Query logging is observability-only; a lost event must not break retrieval.

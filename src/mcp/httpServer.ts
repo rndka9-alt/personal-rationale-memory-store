@@ -8,7 +8,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig } from "../config.js";
 import type { McpServices } from "./server.js";
 import { configureMcpServer } from "./server.js";
-import { logError, logInfo, logWarn } from "../diagnostics/index.js";
+import { logError, logInfo, logWarn, runWithClientContext, type ClientContext } from "../diagnostics/index.js";
 import {
   createOAuthAuthorizationServer,
   handleOAuthRequest,
@@ -16,8 +16,12 @@ import {
   type OAuthAuthorizationServer
 } from "./oauth.js";
 
+// initialize 요청에만 실리는 clientInfo를 이후 세션 요청에서도 참조하기 위한 세션 단위 보관소.
+type SessionClientInfo = Pick<ClientContext, "clientName" | "clientVersion">;
+
 export async function startHttpMcpServer(config: AppConfig, services: McpServices) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
+  const clientInfoBySession = new Map<string, SessionClientInfo>();
   const oauthServer = createOAuthAuthorizationServer(config.mcp.oauth);
 
   const requestHandler = async (request: IncomingMessage, response: ServerResponse) => {
@@ -62,12 +66,12 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
       }
 
       if (request.method === "POST") {
-        await handlePostRequest(request, response, services, transports);
+        await handlePostRequest(request, response, services, transports, clientInfoBySession);
         return;
       }
 
       if (request.method === "GET" || request.method === "DELETE") {
-        await handleSessionRequest(request, response, transports);
+        await handleSessionRequest(request, response, transports, clientInfoBySession);
         return;
       }
 
@@ -108,7 +112,8 @@ async function handlePostRequest(
   request: IncomingMessage,
   response: ServerResponse,
   services: McpServices,
-  transports: Map<string, StreamableHTTPServerTransport>
+  transports: Map<string, StreamableHTTPServerTransport>,
+  clientInfoBySession: Map<string, SessionClientInfo>
 ) {
   const sessionId = readHeader(request, "mcp-session-id");
   if (sessionId) {
@@ -128,7 +133,10 @@ async function handlePostRequest(
       url: request.url,
       sessionId
     });
-    await transport.handleRequest(request, response);
+    await runWithClientContext(
+      buildClientContext(request, clientInfoBySession.get(sessionId)),
+      () => transport.handleRequest(request, response)
+    );
     return;
   }
 
@@ -142,6 +150,11 @@ async function handlePostRequest(
     return;
   }
 
+  const sessionClientInfo: SessionClientInfo = {
+    clientName: body.params.clientInfo.name,
+    clientVersion: body.params.clientInfo.version
+  };
+
   let transport: StreamableHTTPServerTransport | undefined;
   transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
@@ -150,9 +163,12 @@ async function handlePostRequest(
         throw new Error("Transport was not created before session initialization.");
       }
       logInfo("MCP session initialized.", {
-        sessionId: initializedSessionId
+        sessionId: initializedSessionId,
+        clientName: sessionClientInfo.clientName,
+        clientVersion: sessionClientInfo.clientVersion
       });
       transports.set(initializedSessionId, transport);
+      clientInfoBySession.set(initializedSessionId, sessionClientInfo);
     }
   });
 
@@ -163,18 +179,23 @@ async function handlePostRequest(
         sessionId: initializedSessionId
       });
       transports.delete(initializedSessionId);
+      clientInfoBySession.delete(initializedSessionId);
     }
   };
 
   const server = createConfiguredServer(services);
   await server.connect(transport);
-  await transport.handleRequest(request, response, body);
+  await runWithClientContext(
+    buildClientContext(request, sessionClientInfo),
+    () => transport.handleRequest(request, response, body)
+  );
 }
 
 async function handleSessionRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  transports: Map<string, StreamableHTTPServerTransport>
+  transports: Map<string, StreamableHTTPServerTransport>,
+  clientInfoBySession: Map<string, SessionClientInfo>
 ) {
   const sessionId = readHeader(request, "mcp-session-id");
   if (!sessionId) {
@@ -202,7 +223,10 @@ async function handleSessionRequest(
     url: request.url,
     sessionId
   });
-  await transport.handleRequest(request, response);
+  await runWithClientContext(
+    buildClientContext(request, clientInfoBySession.get(sessionId)),
+    () => transport.handleRequest(request, response)
+  );
 }
 
 async function loadTlsOptions(config: AppConfig) {
@@ -305,6 +329,16 @@ function setUnauthorizedChallenge(response: ServerResponse, oauthServer: OAuthAu
   }
 
   response.setHeader("WWW-Authenticate", "Bearer");
+}
+
+function buildClientContext(
+  request: IncomingMessage,
+  sessionClientInfo: SessionClientInfo | undefined
+): ClientContext {
+  return {
+    ...sessionClientInfo,
+    userAgent: readHeader(request, "user-agent")
+  };
 }
 
 function readHeader(request: IncomingMessage, name: string) {
