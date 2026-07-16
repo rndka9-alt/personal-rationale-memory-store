@@ -17,10 +17,10 @@ const legacyComposeExcludedTypes = ["note"];
 const vectorSimilarityFloor = 0.4;
 // Feedback only flows if the context pack itself asks for it: the loop is fully
 // wired server-side, but production data showed near-zero feedback because
-// clients had no in-context trigger to call record_usage_feedback.
+// clients had no in-context trigger to call rate_memory.
 const feedbackFooter = [
   "## Feedback",
-  "- After acting on this pack, call record_usage_feedback per memory id: eventType \"applied\" if it shaped your work, \"dismissed\" if it was retrieved but not useful."
+  "- After acting on this pack, call rate_memory per memory id: eventType \"applied\" if it shaped your work, \"dismissed\" if it was retrieved but not useful."
 ].join("\n");
 
 export type ComposeContextInput = {

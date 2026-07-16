@@ -20,7 +20,7 @@ describe("MCP write tool results", () => {
       "compose_notes_context",
       "auto_capture_rationale",
       "update_rationale",
-      "record_usage_feedback"
+      "rate_memory"
     ]);
   });
 
@@ -33,8 +33,8 @@ describe("MCP write tool results", () => {
       ["continue_context", ["계속해서 훑어보는 중..", "추가 확인 완료!"]],
       ["get_rationale", ["특정 메모 확인하는 중..", "메모 확인 완료!"]],
       ["rate_note", ["쪽지 평가 중..", "쪽지 평가 완료!"]],
+      ["rate_memory", ["메모를 평가하는 중..", "평가 완료!"]],
       ["record_note", ["쪽지 적는 중..", "쪽지 적엇어요!"]],
-      ["record_usage_feedback", ["메모를 평가하는 중..", "평가 완료!"]],
       ["search_rationales", ["괜찮은 메모가 있나 찾아보는 중..", "찾아보기 완료!"]],
       ["update_rationale", ["메모 수정 중..", "메모 수정 완료!"]]
     ]);
@@ -80,13 +80,13 @@ describe("MCP write tool results", () => {
     expect(Object.keys(getTool(services, "compose_context").schema)).toEqual(["task", "project"]);
     expect(Object.keys(getTool(services, "continue_context").schema)).toEqual(["cursor"]);
     expect(Object.keys(getTool(services, "record_note").schema)).toEqual(["content", "sourceContext"]);
-    expect(Object.keys(getTool(services, "auto_capture_rationale").schema)).toEqual(["title", "body", "type", "project"]);
+    expect(Object.keys(getTool(services, "auto_capture_rationale").schema)).toEqual(["title", "body", "project"]);
     expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["id", "reason", "title", "body"]);
-    expect(Object.keys(getTool(services, "record_usage_feedback").schema)).toEqual(["id", "eventType"]);
+    expect(Object.keys(getTool(services, "rate_memory").schema)).toEqual(["id", "eventType"]);
     expect(getRequiredInputKeys(getTool(services, "record_note"))).toEqual(["content"]);
     expect(getRequiredInputKeys(getTool(services, "auto_capture_rationale"))).toEqual(["title", "body"]);
     expect(getRequiredInputKeys(getTool(services, "update_rationale"))).toEqual(["id", "reason", "title", "body"]);
-    expect(getRequiredInputKeys(getTool(services, "record_usage_feedback"))).toEqual(["id", "eventType"]);
+    expect(getRequiredInputKeys(getTool(services, "rate_memory"))).toEqual(["id", "eventType"]);
   });
 
   it("explains when note conversation provenance should be captured", () => {
@@ -373,7 +373,7 @@ describe("MCP write tool results", () => {
 
   it("returns only ok for usage feedback", async () => {
     const services = createToolServices();
-    const result = await getTool(services, "record_usage_feedback").handler({
+    const result = await getTool(services, "rate_memory").handler({
       id: "V20260604T000000000Z-current",
       eventType: "user_helpful"
     });

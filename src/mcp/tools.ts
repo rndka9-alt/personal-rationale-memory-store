@@ -79,7 +79,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task. Describe the task in Korean while keeping code identifiers and proper nouns unchanged. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
+      description: "Compose bounded prompt-ready rationale context for a task. The task field is a retrieval query, not an instruction to an agent: state the topic in 1-3 Korean sentences packed with key entities and terms, keeping code identifiers and proper nouns unchanged, and do not ask for judgment or actions. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
       schema: composeInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -155,15 +155,15 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         jsonToolResult(await services.rationaleService.updateRationaleFromRevision(updateRationaleToolInputSchema.parse(input)))
     },
     {
-      name: "record_usage_feedback",
-      description: "Record explicit feedback for the revision snapshot that was applied, helpful, unhelpful, or dismissed. Ranking aggregates feedback across the whole memory entry.",
-      schema: recordUsageFeedbackToolInputSchema.shape,
+      name: "rate_memory",
+      description: "Rate a memory after acting on retrieved context, using the revision id shown by compose_context or search_rationales. Call it once per memory you actually weighed: \"applied\" if it shaped your answer or work, \"dismissed\" if it was retrieved but not useful this time, \"user_helpful\"/\"user_unhelpful\" only when the user explicitly reacted to an outcome the memory influenced. Ranking aggregates feedback across the whole memory entry.",
+      schema: rateMemoryToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
       metadata: toolInvocationMetadata("메모를 평가하는 중..", "평가 완료!"),
       handler: async (input: unknown) => {
         // id·eventType은 호출자가 넣은 입력 에코라 응답에 싣지 않는다.
-        await services.rationaleService.recordUsageFeedback(recordUsageFeedbackToolInputSchema.parse(input));
+        await services.rationaleService.recordUsageFeedback(rateMemoryToolInputSchema.parse(input));
         return jsonToolResult({ ok: true });
       }
     }
@@ -202,7 +202,7 @@ const searchToolInputSchema = z.object({
 const composeInputSchema = z.object({
   task: z.string()
     .min(1)
-    .describe("Task description in Korean; keep code identifiers and proper nouns unchanged."),
+    .describe("Retrieval query, not an instruction to an agent: 1-3 Korean sentences stating the topic with its key entities and terms; keep code identifiers and proper nouns unchanged. Questions, requests for judgment, and long narratives degrade matching."),
   project: searchProjectFilterSchema.optional()
 });
 
@@ -230,7 +230,6 @@ const autoCaptureRationaleToolInputSchema = z.object({
     .describe("Concise rationale title in Korean; keep code identifiers and proper nouns unchanged."),
   body: autoCaptureRationaleInputSchema.shape.body
     .describe("Self-contained Markdown body in Korean; keep code identifiers and proper nouns unchanged."),
-  type: autoCaptureRationaleInputSchema.shape.type,
   project: searchProjectFilterSchema.optional()
 });
 
@@ -244,7 +243,7 @@ const updateRationaleToolInputSchema = z.object({
     .describe("Complete replacement Markdown body in Korean; keep code identifiers and proper nouns unchanged.")
 });
 
-const recordUsageFeedbackToolInputSchema = z.object({
+const rateMemoryToolInputSchema = z.object({
   id: recordUsageFeedbackInputSchema.shape.id,
   eventType: recordUsageFeedbackInputSchema.shape.eventType
 });

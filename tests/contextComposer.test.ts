@@ -47,7 +47,7 @@ describe("compose context relevance floor", () => {
     const context = await composer.compose({ task: "test task" });
 
     expect(context).toContain("## Feedback");
-    expect(context).toContain("record_usage_feedback");
+    expect(context).toContain("rate_memory");
   });
 
   it("omits the feedback footer when nothing survives the floor", async () => {

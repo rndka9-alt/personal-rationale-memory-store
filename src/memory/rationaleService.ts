@@ -314,7 +314,6 @@ export class RationaleService {
     const result = await this.recordCandidate({
       title: validatedInput.title,
       body: validatedInput.body,
-      type: validatedInput.type,
       source: {
         kind: "auto_capture",
         ref: "llm-autonomous"

@@ -62,24 +62,14 @@ describe("autoCaptureRationaleInputSchema", () => {
     })).toThrow();
   });
 
-  it("accepts agent-assignable memory types and rejects principle and note", () => {
+  it("does not accept a caller-assigned memory type", () => {
     const input = autoCaptureRationaleInputSchema.parse({
       title: "Prefer fail-fast over silent fallback",
       body: "Silent fallbacks hide corrupted data until it is expensive to repair.",
       type: "preference"
     });
 
-    expect(input.type).toBe("preference");
-    expect(() => autoCaptureRationaleInputSchema.parse({
-      title: "Promote to principle directly",
-      body: "Principles must come from promoting accepted rationale.",
-      type: "principle"
-    })).toThrow();
-    expect(() => autoCaptureRationaleInputSchema.parse({
-      title: "Remember a small personal detail",
-      body: "Notes belong in the plain note surface, not rationale memory.",
-      type: "note"
-    })).toThrow();
+    expect(input).not.toHaveProperty("type");
   });
 });
 

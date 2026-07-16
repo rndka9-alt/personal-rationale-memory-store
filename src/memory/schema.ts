@@ -77,10 +77,11 @@ export const recordCandidateInputSchema = z.object({
   metadata: z.record(z.unknown()).optional()
 });
 
+// type은 MCP 표면에서 받지 않는다: 검색·랭킹이 쓰지 않는 분류를 호출자가 고르게 하는
+// 비용만 있었다. 캡처는 전부 rationale로 저장되고, principle은 승격 플로우 전용이다.
 export const autoCaptureRationaleInputSchema = z.object({
   title: recordCandidateInputSchema.shape.title,
   body: recordCandidateInputSchema.shape.body,
-  type: recordCandidateInputSchema.shape.type,
   project: projectContextSchema.optional()
 });
 
