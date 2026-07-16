@@ -62,7 +62,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "get_rationale",
-      description: "Read the latest rationale for the memory identified by a revision id. If the supplied revision is stale, returns the latest revision's content and id.",
+      description: "Read the latest revision of the rationale memory identified by a revision id. If the supplied revision id is stale, returns the latest revision's content and id.",
       schema: { id: z.string().min(1) },
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -79,7 +79,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task. The task field is a retrieval query, not an instruction to an agent: state the topic in 1-3 Korean sentences packed with key entities and terms, keeping code identifiers and proper nouns unchanged, and do not ask for judgment or actions. Pass project (current repo) to boost memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
+      description: "Compose bounded prompt-ready rationale context for a task. The task field is a retrieval query, not an instruction to an agent: state the topic in 1-3 Korean sentences packed with key entities and terms, keeping code identifiers and proper nouns unchanged, and do not ask for judgment or actions. Pass project (current repo) to boost rationale memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
       schema: composeInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -88,7 +88,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "continue_context",
-      description: "Continue a previous compose_context retrieval from a stateful in-memory cursor.",
+      description: "Continue a previous compose_context retrieval from a stateful ephemeral server-side cursor.",
       schema: continueInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -98,7 +98,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "record_note",
       description:
-        "Record a lightweight personal note — raw material for a synthesized long-term memory of the user. Write content and topic in Korean while keeping code identifiers and proper nouns unchanged. When it comes from the current conversation, include sourceContext with 1–4 relevant user/assistant messages preserving their original language, roles, text, and order. Omit sourceContext only for standalone notes.",
+        "Record a lightweight personal note — raw material for the synthesized user digest. Write content and topic in Korean while keeping code identifiers and proper nouns unchanged. When it comes from the current conversation, include sourceContext with 1–4 relevant user/assistant messages preserving their original language, roles, text, and order. Omit sourceContext only for standalone notes.",
       schema: recordNoteToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -123,7 +123,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_notes_context",
-      description: "Retrieve memory about the user: a synthesized digest of who they are (current interests, recent context, long-term background, personality and preferences) followed by original personal notes. Call this early in a conversation to ground responses in what is already known about the user. Notes are selected by weighted random first, then score ordering, within a character budget. The output ends with a rate_note nudge; note bodies are never rewritten.",
+      description: "Retrieve the synthesized user digest — who they are (current interests, recent context, long-term background, personality and preferences) — followed by original personal notes. Call this early in a conversation to ground responses in what is already known about the user. Notes are selected by weighted random first, then score ordering, within a character budget. The output ends with a rate_note nudge; note bodies are never rewritten.",
       schema: composeNotesContextInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -134,7 +134,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record reusable rationale memory as a title and self-contained Markdown body. Write title and body in Korean while keeping code identifiers and proper nouns unchanged. Use record_note for casual or lightweight personal notes.",
+        "Record a reusable rationale memory as a title and self-contained Markdown body. Write title and body in Korean while keeping code identifiers and proper nouns unchanged. Use record_note for casual or lightweight personal notes.",
       schema: autoCaptureRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -146,7 +146,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "update_rationale",
-      description: "Replace a rationale title and body from a base revision snapshot id. A stale id returns the latest id without applying the replacement. Write reason, title, and body in Korean while keeping code identifiers and proper nouns unchanged.",
+      description: "Replace a rationale memory's title and body from a base revision snapshot id. A stale id returns the latest id without applying the replacement. Write reason, title, and body in Korean while keeping code identifiers and proper nouns unchanged.",
       schema: updateRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -156,7 +156,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "rate_memory",
-      description: "Rate a memory after acting on retrieved context, using the revision id shown by compose_context or search_rationales. Call it once per memory you actually weighed: \"applied\" if it shaped your answer or work, \"dismissed\" if it was retrieved but not useful this time, \"user_helpful\"/\"user_unhelpful\" only when the user explicitly reacted to an outcome the memory influenced. Ranking aggregates feedback across the whole memory entry.",
+      description: "Rate a rationale memory after acting on retrieved context, using the revision id shown by compose_context or search_rationales. Call it once per memory you actually weighed: \"applied\" if it shaped your answer or work, \"dismissed\" if it was retrieved but not useful this time, \"user_helpful\"/\"user_unhelpful\" only when the user explicitly reacted to an outcome the memory influenced. Ranking aggregates feedback across all revisions of the memory.",
       schema: rateMemoryToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,

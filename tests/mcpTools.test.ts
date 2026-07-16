@@ -100,8 +100,8 @@ describe("MCP write tool results", () => {
   it("explains that stale get ids resolve to the latest snapshot", () => {
     const getToolDefinition = getTool(createToolServices(), "get_rationale");
 
-    expect(getToolDefinition.description).toContain("latest rationale");
-    expect(getToolDefinition.description).toContain("supplied revision is stale");
+    expect(getToolDefinition.description).toContain("latest revision of the rationale memory");
+    expect(getToolDefinition.description).toContain("supplied revision id is stale");
   });
 
   it("guides embedding-relevant natural-language inputs to Korean", () => {
