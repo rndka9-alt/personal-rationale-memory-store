@@ -2,12 +2,14 @@ import { readFile } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
 import { randomUUID } from "node:crypto";
+import type pg from "pg";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig } from "../config.js";
 import type { McpServices } from "./server.js";
 import { configureMcpServer } from "./server.js";
+import { upsertMcpSession } from "../db/queries.js";
 import { logError, logInfo, logWarn, runWithClientContext, type ClientContext } from "../diagnostics/index.js";
 import {
   createOAuthAuthorizationServer,
@@ -19,7 +21,7 @@ import {
 // initialize 요청에만 실리는 clientInfo를 이후 세션 요청에서도 참조하기 위한 세션 단위 보관소.
 type SessionClientInfo = Pick<ClientContext, "clientName" | "clientVersion">;
 
-export async function startHttpMcpServer(config: AppConfig, services: McpServices) {
+export async function startHttpMcpServer(config: AppConfig, services: McpServices, pool: pg.Pool) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
   const clientInfoBySession = new Map<string, SessionClientInfo>();
   const oauthServer = createOAuthAuthorizationServer(config.mcp.oauth);
@@ -66,7 +68,7 @@ export async function startHttpMcpServer(config: AppConfig, services: McpService
       }
 
       if (request.method === "POST") {
-        await handlePostRequest(request, response, services, transports, clientInfoBySession);
+        await handlePostRequest(request, response, services, transports, clientInfoBySession, pool);
         return;
       }
 
@@ -113,7 +115,8 @@ async function handlePostRequest(
   response: ServerResponse,
   services: McpServices,
   transports: Map<string, StreamableHTTPServerTransport>,
-  clientInfoBySession: Map<string, SessionClientInfo>
+  clientInfoBySession: Map<string, SessionClientInfo>,
+  pool: pg.Pool
 ) {
   const sessionId = readHeader(request, "mcp-session-id");
   if (sessionId) {
@@ -134,7 +137,7 @@ async function handlePostRequest(
       sessionId
     });
     await runWithClientContext(
-      buildClientContext(request, clientInfoBySession.get(sessionId)),
+      buildClientContext(request, clientInfoBySession.get(sessionId), sessionId),
       () => transport.handleRequest(request, response)
     );
     return;
@@ -169,6 +172,16 @@ async function handlePostRequest(
       });
       transports.set(initializedSessionId, transport);
       clientInfoBySession.set(initializedSessionId, sessionClientInfo);
+      // 관측 전용 업서트: 세션 메타데이터 기록 실패가 세션 초기화를 막으면 안 되므로
+      // 응답 경로를 기다리지 않고 fire-and-forget으로 던지고 실패는 삼킨다.
+      void upsertMcpSession(pool, {
+        id: initializedSessionId,
+        clientName: sessionClientInfo.clientName,
+        clientVersion: sessionClientInfo.clientVersion,
+        userAgent: readHeader(request, "user-agent")
+      }).catch((error) => {
+        logError("Recording MCP session failed.", error, { sessionId: initializedSessionId });
+      });
     }
   });
 
@@ -186,7 +199,9 @@ async function handlePostRequest(
   const server = createConfiguredServer(services);
   await server.connect(transport);
   await runWithClientContext(
-    buildClientContext(request, sessionClientInfo),
+    // 초기화 요청 자체는 도메인 쓰기를 하지 않는다. 세션 id는 handleRequest 도중 발급되므로
+    // 이 시점엔 아직 undefined일 수 있다(관측 로그에 영향 없음).
+    buildClientContext(request, sessionClientInfo, transport.sessionId),
     () => transport.handleRequest(request, response, body)
   );
 }
@@ -224,7 +239,7 @@ async function handleSessionRequest(
     sessionId
   });
   await runWithClientContext(
-    buildClientContext(request, clientInfoBySession.get(sessionId)),
+    buildClientContext(request, clientInfoBySession.get(sessionId), sessionId),
     () => transport.handleRequest(request, response)
   );
 }
@@ -333,11 +348,13 @@ function setUnauthorizedChallenge(response: ServerResponse, oauthServer: OAuthAu
 
 function buildClientContext(
   request: IncomingMessage,
-  sessionClientInfo: SessionClientInfo | undefined
+  sessionClientInfo: SessionClientInfo | undefined,
+  sessionId: string | undefined
 ): ClientContext {
   return {
     ...sessionClientInfo,
-    userAgent: readHeader(request, "user-agent")
+    userAgent: readHeader(request, "user-agent"),
+    sessionId
   };
 }
 

@@ -6,6 +6,9 @@ export type ClientContext = {
   clientName?: string;
   clientVersion?: string;
   userAgent?: string;
+  // 이 요청이 속한 MCP transport 세션 id. 관측 로그를 mcp_sessions로 되잇는 조인 키다.
+  // stdio 등 세션이 없는 경로에서는 undefined.
+  sessionId?: string;
 };
 
 // 관측 전용 데이터를 도메인 서비스 시그니처에 싣지 않기 위한 요청 스코프 저장소.

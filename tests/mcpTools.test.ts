@@ -79,11 +79,11 @@ describe("MCP write tool results", () => {
     expect(Object.keys(getTool(services, "search_rationales").schema)).toEqual(["query", "project"]);
     expect(Object.keys(getTool(services, "compose_context").schema)).toEqual(["task", "project"]);
     expect(Object.keys(getTool(services, "continue_context").schema)).toEqual(["cursor"]);
-    expect(Object.keys(getTool(services, "record_note").schema)).toEqual(["content", "sourceContext"]);
+    expect(Object.keys(getTool(services, "record_note").schema)).toEqual(["content", "topic", "sourceContext"]);
     expect(Object.keys(getTool(services, "auto_capture_rationale").schema)).toEqual(["title", "body", "project"]);
     expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["id", "reason", "title", "body"]);
     expect(Object.keys(getTool(services, "rate_memory").schema)).toEqual(["id", "eventType"]);
-    expect(getRequiredInputKeys(getTool(services, "record_note"))).toEqual(["content"]);
+    expect(getRequiredInputKeys(getTool(services, "record_note"))).toEqual(["content", "topic"]);
     expect(getRequiredInputKeys(getTool(services, "auto_capture_rationale"))).toEqual(["title", "body"]);
     expect(getRequiredInputKeys(getTool(services, "update_rationale"))).toEqual(["id", "reason", "title", "body"]);
     expect(getRequiredInputKeys(getTool(services, "rate_memory"))).toEqual(["id", "eventType"]);
@@ -303,7 +303,8 @@ describe("MCP write tool results", () => {
   it("returns only ok for recorded notes", async () => {
     const services = createToolServices();
     const result = await getTool(services, "record_note").handler({
-      content: "쭈인님은 노트 원문을 다시 도구 응답에 싣지 않길 원한다."
+      content: "쭈인님은 노트 원문을 다시 도구 응답에 싣지 않길 원한다.",
+      topic: "노트 응답 최소화"
     });
 
     // 노트 id는 MCP 툴 입력으로 쓸 곳이 없어 응답에 싣지 않는다.
@@ -320,8 +321,8 @@ describe("MCP write tool results", () => {
 
     await getTool(services, "record_note").handler({
       content: "Keep the source context compact.",
+      topic: "MCP schema design",
       sourceContext: {
-        topic: "MCP schema design",
         messages: [{ role: "user", text: "Group related provenance." }]
       }
     });

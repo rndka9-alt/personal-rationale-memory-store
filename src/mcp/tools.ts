@@ -98,7 +98,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "record_note",
       description:
-        "Record a lightweight personal note — raw material for the synthesized user digest. Write content and topic in Korean while keeping code identifiers and proper nouns unchanged. When it comes from the current conversation, include sourceContext with 1–4 relevant user/assistant messages preserving their original language, roles, text, and order. Omit sourceContext only for standalone notes.",
+        "Record a lightweight personal note — raw material for the synthesized user digest. Always provide a topic: a short subject label used to group notes over time. Write content and topic in Korean while keeping code identifiers and proper nouns unchanged. When the note comes from the current conversation, include sourceContext with 1–4 relevant user/assistant messages preserving their original language, roles, text, and order. Omit sourceContext only for standalone notes.",
       schema: recordNoteToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -213,13 +213,13 @@ const continueInputSchema = z.object({
 const recordNoteToolInputSchema = z.object({
   content: recordNoteInputSchema.shape.content
     .describe("Lightweight note in Korean; keep code identifiers and proper nouns unchanged. When stating a judgment or trait about the user, attach the observed grounds (mechanism → conclusion, e.g. \"남에게 줄 영향을 고민하는 편이다. 그래서 메타인지가 뛰어나다\"), never a bare label — fragmentary conclusions without their reasons cannot be re-verified against later observations. Mark your own inferences as such, distinct from the user's direct statements."),
-  // Topic-only context remains valid for existing callers, while the public guidance asks
-  // conversational captures to preserve the relevant source messages.
+  // topic은 항상 필수. digest 합성이 노트를 묶는 그룹 라벨이라 폴더명처럼 짧고 구체적으로 짓게 유도한다.
+  topic: noteTopicSchema
+    .describe("Required. Short Korean label for what this note is about, like a folder name — specific but not a full sentence (e.g. '발주GAP 하위호환 검증')."),
+  // sourceContext는 대화에서 파생된 노트의 출처(원문 메시지)만 담는다. standalone 노트에선 생략한다.
   sourceContext: z.object({
-    topic: noteTopicSchema.describe("Short Korean label for the source conversation."),
     messages: noteSourceConversationSchema.shape.messages
       .describe("One to four relevant messages preserving their original language, speaker roles, text, and order.")
-      .optional()
   })
     .optional()
     .describe("Conversation provenance for notes derived from a conversation; omit for standalone notes.")
@@ -249,21 +249,12 @@ const rateMemoryToolInputSchema = z.object({
 });
 
 function toRecordNoteInput(input: z.infer<typeof recordNoteToolInputSchema>) {
-  if (!input.sourceContext) {
-    return { content: input.content };
-  }
-  if (!input.sourceContext.messages) {
-    return {
-      content: input.content,
-      topic: input.sourceContext.topic
-    };
-  }
   return {
     content: input.content,
-    topic: input.sourceContext.topic,
-    sourceConversation: {
-      messages: input.sourceContext.messages
-    }
+    topic: input.topic,
+    sourceConversation: input.sourceContext
+      ? { messages: input.sourceContext.messages }
+      : undefined
   };
 }
 

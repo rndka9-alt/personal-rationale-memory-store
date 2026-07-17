@@ -115,8 +115,11 @@ describe("note input schemas", () => {
     expect(() => recordNoteInputSchema.parse({ content: "x".repeat(1001) })).toThrow();
     expect(() => recordNoteInputSchema.parse({
       content: "invalid role",
+      topic: "역할 검증",
       sourceConversation: { messages: [{ role: "system", text: "hidden" }] }
     })).toThrow();
+    // topic이 필수가 됐음을 확인: content만으로는 통과하지 못한다.
+    expect(() => recordNoteInputSchema.parse({ content: "topic 없이 기록" })).toThrow();
   });
 
   it("accepts note rating values", () => {

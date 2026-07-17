@@ -284,7 +284,8 @@ export class RationaleService {
         metadata: {
           source_kind: validatedInput.source?.kind,
           source_ref: validatedInput.source?.ref
-        }
+        },
+        sessionId: readClientContext()?.sessionId
       });
       await setMemoryEntryCurrentRevision(this.pool, id, revision.id);
       await completeRationaleContentFingerprint(this.pool, contentFingerprint, id);
@@ -539,7 +540,8 @@ export class RationaleService {
         reason,
         metadata: {
           base_revision_id: baseRevision.id
-        }
+        },
+        sessionId: readClientContext()?.sessionId
       });
       await this.indexingService.writePreparedIndex(client, preparedIndex);
       await setMemoryEntryCurrentRevision(client, baseRevision.entryId, revision.id);
@@ -913,7 +915,8 @@ export class RationaleService {
         projectName: parsedInput.project?.name,
         clientName: clientContext?.clientName,
         clientVersion: clientContext?.clientVersion,
-        userAgent: clientContext?.userAgent
+        userAgent: clientContext?.userAgent,
+        sessionId: clientContext?.sessionId
       });
     } catch (error) {
       // Query logging is observability-only; a lost event must not break retrieval.
@@ -934,7 +937,11 @@ export class RationaleService {
     logInfo("Recording rationale usage events started.", {
       eventCount: parsedEvents.length
     });
-    const recordedCount = await recordMemoryUsageEvents(this.pool, parsedEvents);
+    const sessionId = readClientContext()?.sessionId;
+    const recordedCount = await recordMemoryUsageEvents(
+      this.pool,
+      parsedEvents.map((event) => ({ ...event, sessionId }))
+    );
     logInfo("Recording rationale usage events completed.", {
       recordedCount
     });

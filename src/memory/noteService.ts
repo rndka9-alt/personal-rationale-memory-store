@@ -8,7 +8,7 @@ import {
   restoreNoteRecord
 } from "../db/queries.js";
 import type { NoteListOptions } from "../db/queries.js";
-import { logInfo } from "../diagnostics/index.js";
+import { logInfo, readClientContext } from "../diagnostics/index.js";
 import type { DigestService } from "./digestService.js";
 import {
   archiveNoteInputSchema,
@@ -84,7 +84,8 @@ export class NoteService {
       id: createNoteId(),
       content: validatedInput.content,
       topic: validatedInput.topic,
-      sourceConversation: validatedInput.sourceConversation
+      sourceConversation: validatedInput.sourceConversation,
+      sessionId: readClientContext()?.sessionId
     });
     logInfo("Note recorded.", {
       noteId: note.id,

@@ -57,12 +57,13 @@ describe("recordRetrievalQueryEvent client metadata", () => {
       warningKinds: [],
       clientName: "claude-code",
       clientVersion: "2.1.0",
-      userAgent: "claude-code/2.1.0"
+      userAgent: "claude-code/2.1.0",
+      sessionId: "sess-1"
     });
 
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, values] = query.mock.calls[0];
-    expect(String(sql)).toContain("client_name, client_version, user_agent");
-    expect(values.slice(-3)).toEqual(["claude-code", "2.1.0", "claude-code/2.1.0"]);
+    expect(String(sql)).toContain("client_name, client_version, user_agent, session_id");
+    expect(values.slice(-4)).toEqual(["claude-code", "2.1.0", "claude-code/2.1.0", "sess-1"]);
   });
 });

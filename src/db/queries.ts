@@ -36,6 +36,7 @@ export type MemoryUsageEventInsert = {
   sourceRef?: string;
   task?: string;
   metadata: Record<string, unknown>;
+  sessionId?: string;
 };
 
 export type MemoryUsageFeedbackCounts = {
@@ -54,6 +55,7 @@ export type MemoryRevisionInsert = {
   content: string;
   reason: string;
   metadata: Record<string, unknown>;
+  sessionId?: string;
 };
 
 export type NoteInsert = {
@@ -61,6 +63,15 @@ export type NoteInsert = {
   content: string;
   topic?: string;
   sourceConversation?: NoteRecord["sourceConversation"];
+  sessionId?: string;
+};
+
+// MCP transport 세션의 클라이언트 메타데이터 업서트 입력. 값은 initialize 핸드셰이크와 헤더에서만 온다.
+export type McpSessionUpsert = {
+  id: string;
+  clientName?: string;
+  clientVersion?: string;
+  userAgent?: string;
 };
 
 export type NoteListOptions = {
@@ -334,8 +345,8 @@ export async function insertMemoryRevision(executor: QueryExecutor, revision: Me
   });
   const result = await executor.query(
     `INSERT INTO memory_revisions (
-      id, entry_id, revision_number, content, reason, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6)
+      id, entry_id, revision_number, content, reason, metadata, session_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING *`,
     [
       revision.id,
@@ -343,7 +354,8 @@ export async function insertMemoryRevision(executor: QueryExecutor, revision: Me
       revision.revisionNumber,
       revision.content,
       revision.reason,
-      revision.metadata
+      revision.metadata,
+      revision.sessionId
     ]
   );
   const row = result.rows[0];
@@ -433,10 +445,10 @@ export async function insertNote(pool: pg.Pool, note: NoteInsert) {
     contentLength: note.content.length
   });
   const result = await pool.query(
-    `INSERT INTO notes (id, content, topic, source_conversation)
-    VALUES ($1, $2, $3, $4)
+    `INSERT INTO notes (id, content, topic, source_conversation, session_id)
+    VALUES ($1, $2, $3, $4, $5)
     RETURNING *`,
-    [note.id, note.content, note.topic, note.sourceConversation]
+    [note.id, note.content, note.topic, note.sourceConversation, note.sessionId]
   );
   const row = result.rows[0];
   if (!row) {
@@ -599,8 +611,8 @@ export async function recordMemoryUsageEvents(pool: pg.Pool, events: MemoryUsage
     for (const event of events) {
       await client.query(
         `INSERT INTO memory_usage_events (
-          id, entry_id, revision_id, event_type, source_kind, source_ref, task, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          id, entry_id, revision_id, event_type, source_kind, source_ref, task, metadata, session_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           randomUUID(),
           event.entryId,
@@ -609,7 +621,8 @@ export async function recordMemoryUsageEvents(pool: pg.Pool, events: MemoryUsage
           event.sourceKind,
           event.sourceRef,
           event.task,
-          event.metadata
+          event.metadata,
+          event.sessionId
         ]
       );
 
@@ -1002,14 +1015,15 @@ export type RetrievalQueryEventInsert = {
   clientName?: string;
   clientVersion?: string;
   userAgent?: string;
+  sessionId?: string;
 };
 
 export async function recordRetrievalQueryEvent(pool: pg.Pool, event: RetrievalQueryEventInsert) {
   await pool.query(
     `INSERT INTO retrieval_query_events (
       id, source_kind, query, result_count, top_score, warning_kinds, project_name,
-      client_name, client_version, user_agent
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      client_name, client_version, user_agent, session_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       randomUUID(),
       event.sourceKind,
@@ -1020,13 +1034,28 @@ export async function recordRetrievalQueryEvent(pool: pg.Pool, event: RetrievalQ
       event.projectName,
       event.clientName,
       event.clientVersion,
-      event.userAgent
+      event.userAgent,
+      event.sessionId
     ]
   );
   logInfo("DB record retrieval query event completed.", {
     sourceKind: event.sourceKind,
     resultCount: event.resultCount
   });
+}
+
+// 세션 초기화 시 1회 업서트한다. 재연결로 같은 id가 다시 와도 클라이언트 값만 갱신하고
+// created_at은 최초 연결 시각으로 보존한다. 관측 전용이라 호출자는 실패를 삼켜야 한다.
+export async function upsertMcpSession(pool: pg.Pool, session: McpSessionUpsert) {
+  await pool.query(
+    `INSERT INTO mcp_sessions (id, client_name, client_version, user_agent)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (id) DO UPDATE SET
+      client_name = EXCLUDED.client_name,
+      client_version = EXCLUDED.client_version,
+      user_agent = EXCLUDED.user_agent`,
+    [session.id, session.clientName, session.clientVersion, session.userAgent]
+  );
 }
 
 export async function getRetrievalQueryStatus(pool: pg.Pool, windowDays = 7) {

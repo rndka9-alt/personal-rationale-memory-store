@@ -61,5 +61,5 @@ if (config.mcp.transport === "stdio") {
   await startStdioMcpServer(mcpServices);
 } else {
   logInfo("Starting HTTP MCP server.");
-  await startHttpMcpServer(config, mcpServices);
+  await startHttpMcpServer(config, mcpServices, pool);
 }

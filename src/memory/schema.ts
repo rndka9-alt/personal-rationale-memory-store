@@ -120,7 +120,9 @@ export const noteTopicSchema = z.string().min(1).max(120);
 
 export const recordNoteInputSchema = z.object({
   content: noteContentSchema,
-  topic: noteTopicSchema.optional(),
+  // topic은 digest 합성 시 노트를 묶는 그룹 라벨이라 항상 필요하다. DB 컬럼은 nullable로 남겨
+  // topic 도입 이전 노트를 구분 가능한 상태로 보존하되, 신규 기록은 여기서 필수로 강제한다.
+  topic: noteTopicSchema,
   sourceConversation: noteSourceConversationSchema.optional()
 });
 
