@@ -120,7 +120,8 @@ export const digestSeedInputSchema = z.object({
     layer: digestLayerSchema,
     // 판단 planner의 하드캡을 seed가 우회해 비대 claim을 심지 못하게 같은 상한을 건다.
     text: z.string().min(1).max(digestClaimTextMaxLength),
-    sampleNoteIds: z.array(z.string().min(1))
+    // evidence 없는 claim은 관측 시각이 없어 노후화 판정 대상에서 빠지므로 seed 단계에서 거른다.
+    sampleNoteIds: z.array(z.string().min(1)).min(1)
   }).strict()),
   prose: digestProseSchema
 }).strict();
@@ -1218,13 +1219,14 @@ async function hasDigestMaintenanceWork(
       OR EXISTS (
         SELECT 1
         FROM digest_claims AS claims
-        JOIN digest_claim_evidence AS evidence ON evidence.claim_id = claims.id
+        LEFT JOIN digest_claim_evidence AS evidence ON evidence.claim_id = claims.id
         LEFT JOIN digest_deferred_promotions AS deferred ON deferred.claim_id = claims.id
         WHERE claims.retired_at IS NULL
           AND claims.layer = 'recent'
           AND deferred.claim_id IS NULL
         GROUP BY claims.id
-        HAVING MAX(evidence.observed_at) <= $2::timestamptz - make_interval(weeks => $3)
+        -- evidence 없는 claim은 getDigestClaimStats와 같은 기준으로 생성 시각을 관측 하한으로 본다
+        HAVING COALESCE(MAX(evidence.observed_at), claims.created_at) <= $2::timestamptz - make_interval(weeks => $3)
       )
     ) AS has_maintenance_work`,
     [config.promoteMinSpanDays, now, config.recentRetireWeeks]

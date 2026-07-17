@@ -7,6 +7,7 @@ import {
   createDigestTextGenerator,
   DigestService,
   digestProseSchema,
+  digestSeedInputSchema,
   extractLlmRequestUsage,
   formatDigestSection,
   getDigestClaimStats,
@@ -33,6 +34,16 @@ describe("digest evidence", () => {
       firstObservedAt: "2026-07-01T14:30:00.000Z",
       lastObservedAt: "2026-07-01T16:00:00.000Z",
       observedDays: 2
+    });
+  });
+
+  it("falls back to the claim creation time when no evidence exists", () => {
+    const claim = createClaim("claim", "now", []);
+
+    expect(getDigestClaimStats(claim)).toEqual({
+      firstObservedAt: "2026-07-01T00:00:00.000Z",
+      lastObservedAt: "2026-07-01T00:00:00.000Z",
+      observedDays: 1
     });
   });
 });
@@ -238,6 +249,29 @@ describe("deferred promotion and retention maintenance", () => {
 
     expect(result.claims.find((claim) => claim.id === "deferred")?.retiredAt).toBeNull();
     expect(result.claims.find((claim) => claim.id === "stale")?.retiredAt).toBe("2026-07-10T00:00:00.000Z");
+  });
+
+  it("retires an evidence-less recent claim once its creation time exceeds the retention window", () => {
+    const claim = createClaim("stale", "recent", []);
+    const result = maintainDigestClaims([claim], [], [], {
+      promoteMinSpanDays: 7,
+      recentRetireWeeks: 8,
+      now: new Date("2026-09-01T00:00:00.000Z")
+    });
+
+    expect(result.claims[0]?.retiredAt).toBe("2026-09-01T00:00:00.000Z");
+    expect(result.appliedOperations).toEqual([{ type: "retire", claimId: "stale" }]);
+  });
+});
+
+describe("digest seed input", () => {
+  it("rejects a seed claim without sample notes", () => {
+    const result = digestSeedInputSchema.safeParse({
+      claims: [{ layer: "now", text: "evidence 없는 claim", sampleNoteIds: [] }],
+      prose: { now: "", recent: "", longterm: "", about: "" }
+    });
+
+    expect(result.success).toBe(false);
   });
 });
 

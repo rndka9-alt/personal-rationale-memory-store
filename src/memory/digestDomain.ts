@@ -103,8 +103,8 @@ export type DigestNote = {
 
 export type DigestClaimStats = {
   // 사용자의 하루 경계와 서버 UTC 경계가 다르므로 observedDays는 KST 원천 증거에서 계산한다.
-  firstObservedAt: string | null;
-  lastObservedAt: string | null;
+  firstObservedAt: string;
+  lastObservedAt: string;
   observedDays: number;
 };
 
@@ -159,12 +159,16 @@ type MaintainDigestOptions = {
 const digestTimeZone = "Asia/Seoul";
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
 
-export function getDigestClaimStats(claim: Pick<DigestClaim, "evidence">): DigestClaimStats {
+export function getDigestClaimStats(
+  claim: Pick<DigestClaim, "evidence" | "createdAt">
+): DigestClaimStats {
   if (claim.evidence.length === 0) {
+    // evidence 없는 claim(과거 seed 산출물)이 관측 시각 부재로 노후화 판정에서 영원히
+    // 빠지지 않도록 생성 시각을 관측 하한으로 쓴다. 신규 경로는 스키마가 evidence를 강제한다.
     return {
-      firstObservedAt: null,
-      lastObservedAt: null,
-      observedDays: 0
+      firstObservedAt: claim.createdAt,
+      lastObservedAt: claim.createdAt,
+      observedDays: 1
     };
   }
 
@@ -179,9 +183,6 @@ export function getDigestClaimStats(claim: Pick<DigestClaim, "evidence">): Diges
 
 export function hasMinimumObservationSpan(claim: DigestClaim, minimumSpanDays: number) {
   const stats = getDigestClaimStats(claim);
-  if (!stats.firstObservedAt || !stats.lastObservedAt) {
-    return false;
-  }
   return parseTimestamp(stats.lastObservedAt) - parseTimestamp(stats.firstObservedAt)
     >= minimumSpanDays * millisecondsPerDay;
 }
@@ -460,8 +461,7 @@ export function maintainDigestClaims(
     if (claim.retiredAt || claim.layer !== "recent" || deferredByClaimId.has(claim.id)) {
       continue;
     }
-    const lastObservedAt = getDigestClaimStats(claim).lastObservedAt;
-    if (!lastObservedAt || parseTimestamp(lastObservedAt) > recentRetireThreshold) {
+    if (parseTimestamp(getDigestClaimStats(claim).lastObservedAt) > recentRetireThreshold) {
       continue;
     }
     claim.retiredAt = nowTimestamp;
