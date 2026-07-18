@@ -5,6 +5,8 @@ const embeddingModeSchema = z.enum(["standard", "contextualized", "mock"]);
 const embeddingDtypeSchema = z.enum(["float", "int8", "uint8", "binary", "ubinary"]);
 const mcpTransportSchema = z.enum(["stdio", "http", "https"]);
 const digestLlmProviderSchema = z.enum(["anthropic", "openai", "vercel"]);
+// OpenAI Chat Completions service_tier 값과 동일한 집합. flex는 지연을 감수하고 단가를 낮춘다.
+const digestLlmServiceTierSchema = z.enum(["auto", "default", "flex", "priority", "scale"]);
 const optionalUrlSchema = z.preprocess(emptyStringToUndefined, z.string().url().optional());
 const optionalEmailSchema = z.preprocess(emptyStringToUndefined, z.string().email().optional());
 const optionalStringSchema = z.preprocess(emptyStringToUndefined, z.string().min(1).optional());
@@ -47,6 +49,7 @@ const environmentSchema = z.object({
   DIGEST_LLM_PROVIDER: z.preprocess(emptyStringToUndefined, digestLlmProviderSchema.optional()),
   DIGEST_LLM_MODEL: optionalStringSchema,
   DIGEST_LLM_API_KEY: optionalStringSchema,
+  DIGEST_LLM_SERVICE_TIER: z.preprocess(emptyStringToUndefined, digestLlmServiceTierSchema.optional()),
   DIGEST_LLM_MAX_TOKENS: z.coerce.number().int().positive().default(8192),
   DIGEST_IMMEDIATE_NOTES: z.coerce.number().int().positive().default(10),
   DIGEST_MIN_INTERVAL_HOURS: z.coerce.number().positive().default(24),
@@ -167,12 +170,17 @@ function resolveDigestConfig(
   if (!environment.DIGEST_LLM_API_KEY) {
     throw new Error("DIGEST_LLM_API_KEY is required when DIGEST_ENABLED=true.");
   }
+  if (environment.DIGEST_LLM_SERVICE_TIER && environment.DIGEST_LLM_PROVIDER === "anthropic") {
+    // service_tier는 OpenAI Chat Completions 계약이라 anthropic provider에는 전달 경로가 없다.
+    throw new Error("DIGEST_LLM_SERVICE_TIER is only supported when DIGEST_LLM_PROVIDER is openai or vercel.");
+  }
 
   return {
     enabled: true as const,
     provider: environment.DIGEST_LLM_PROVIDER,
     model: environment.DIGEST_LLM_MODEL,
     apiKey: environment.DIGEST_LLM_API_KEY,
+    serviceTier: environment.DIGEST_LLM_SERVICE_TIER,
     maxTokens: environment.DIGEST_LLM_MAX_TOKENS,
     ...sharedConfig
   };

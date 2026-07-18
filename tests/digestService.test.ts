@@ -650,6 +650,65 @@ describe("digest LLM usage logging", () => {
   });
 });
 
+describe("digest service tier", () => {
+  it("sends the configured service tier in the chat completions body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const config = loadConfig({
+        DIGEST_ENABLED: "true",
+        DIGEST_LLM_PROVIDER: "vercel",
+        DIGEST_LLM_MODEL: "openai/gpt-test",
+        DIGEST_LLM_API_KEY: "test-key",
+        DIGEST_LLM_SERVICE_TIER: "flex"
+      }).digest;
+      if (!config.enabled) {
+        throw new Error("Expected digest config to be enabled.");
+      }
+      const generator = createDigestTextGenerator(config);
+
+      await generator.generate("system", "user");
+
+      const requestInit = fetchMock.mock.calls[0]?.[1];
+      const requestBody: unknown = JSON.parse(String(requestInit?.body));
+      expect(requestBody).toMatchObject({ service_tier: "flex" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("omits service_tier from the body when no tier is configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const config = loadConfig({
+        DIGEST_ENABLED: "true",
+        DIGEST_LLM_PROVIDER: "vercel",
+        DIGEST_LLM_MODEL: "openai/gpt-test",
+        DIGEST_LLM_API_KEY: "test-key"
+      }).digest;
+      if (!config.enabled) {
+        throw new Error("Expected digest config to be enabled.");
+      }
+      const generator = createDigestTextGenerator(config);
+
+      await generator.generate("system", "user");
+
+      const requestInit = fetchMock.mock.calls[0]?.[1];
+      const requestBody: unknown = JSON.parse(String(requestInit?.body));
+      expect(requestBody).not.toHaveProperty("service_tier");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("digest config", () => {
   it("is disabled by default and validates merge hysteresis", () => {
     expect(loadConfig({}).digest.enabled).toBe(false);
@@ -657,6 +716,25 @@ describe("digest config", () => {
       DIGEST_STABLE_LAYER_MERGE_TRIGGER: "20",
       DIGEST_STABLE_LAYER_MERGE_RELEASE: "20"
     })).toThrow("DIGEST_STABLE_LAYER_MERGE_RELEASE must be lower");
+  });
+
+  it("keeps the service tier and rejects it for the anthropic provider", () => {
+    const config = loadConfig({
+      DIGEST_ENABLED: "true",
+      DIGEST_LLM_PROVIDER: "vercel",
+      DIGEST_LLM_MODEL: "openai/gpt-test",
+      DIGEST_LLM_API_KEY: "test-key",
+      DIGEST_LLM_SERVICE_TIER: "flex"
+    }).digest;
+
+    expect(config.enabled && config.serviceTier).toBe("flex");
+    expect(() => loadConfig({
+      DIGEST_ENABLED: "true",
+      DIGEST_LLM_PROVIDER: "anthropic",
+      DIGEST_LLM_MODEL: "claude-test",
+      DIGEST_LLM_API_KEY: "test-key",
+      DIGEST_LLM_SERVICE_TIER: "flex"
+    })).toThrow("DIGEST_LLM_SERVICE_TIER is only supported");
   });
 
   it("returns configured digest policies", () => {

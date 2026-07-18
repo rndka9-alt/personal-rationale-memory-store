@@ -819,7 +819,12 @@ export function createDigestTextGenerator(config: EnabledDigestConfig): DigestTe
     : new OpenAIProvider({ apiKey: config.apiKey });
   const llm = new Llm({
     fetch: responseCapture.fetch,
-    format: new OpenAIChatCompletionsFormat({ model: config.model }),
+    format: new OpenAIChatCompletionsFormat({
+      model: config.model,
+      // Vercel AI Gateway도 chat completions body의 최상위 service_tier를 OpenAI로 전달하므로
+      // provider 분기 없이 format extraBody 한 곳에서 처리한다.
+      extraBody: config.serviceTier === undefined ? undefined : { service_tier: config.serviceTier }
+    }),
     provider
   });
   return {
