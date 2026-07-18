@@ -8,6 +8,21 @@ const reportTimeZone = "Asia/Seoul";
 const windowStartExpression =
   `(((now() AT TIME ZONE '${reportTimeZone}')::date - ($1::int - 1))::timestamp AT TIME ZONE '${reportTimeZone}')`;
 
+// rev0(신규 캡처)의 활동 시각은 revision row 생성 시각이 아니라 entry의 원 캡처 시각으로 센다.
+// 백필·재적재로 revision row가 뒤늦게 생겨도(예: 012 백필 876건이 2분에 몰림) 활동이
+// 실제 캡처일로 집계되도록 하는 의미론이며, 평상시 rev0은 두 시각이 사실상 같다.
+export const rationaleActivitiesSubquery = `(
+  SELECT
+    CASE WHEN memory_revisions.revision_number = 0
+      THEN memory_entries.created_at
+      ELSE memory_revisions.created_at
+    END AS created_at,
+    memory_revisions.revision_number,
+    memory_entries.metadata -> 'project' ->> 'name' AS project_name
+  FROM memory_revisions
+  JOIN memory_entries ON memory_entries.id = memory_revisions.entry_id
+) AS rationale_activities`;
+
 const recapDailyRowSchema = z.object({
   date: z.string(),
   note_count: z.coerce.number().int().nonnegative(),
@@ -171,19 +186,18 @@ export class RecapService {
         `SELECT
           COUNT(*) FILTER (WHERE revision_number = 0)::int AS captured_count,
           COUNT(*) FILTER (WHERE revision_number > 0)::int AS revised_count
-        FROM memory_revisions
+        FROM ${rationaleActivitiesSubquery}
         WHERE created_at >= ${windowStartExpression}`,
         parameters
       ),
       this.pool.query(
         `SELECT
-          memory_entries.metadata -> 'project' ->> 'name' AS project_name,
+          rationale_activities.project_name,
           COUNT(*)::int AS revision_count
-        FROM memory_revisions
-        JOIN memory_entries ON memory_entries.id = memory_revisions.entry_id
-        WHERE memory_revisions.created_at >= ${windowStartExpression}
+        FROM ${rationaleActivitiesSubquery}
+        WHERE created_at >= ${windowStartExpression}
         GROUP BY 1
-        ORDER BY revision_count DESC, project_name ASC NULLS LAST
+        ORDER BY revision_count DESC, rationale_activities.project_name ASC NULLS LAST
         LIMIT 10`,
         parameters
       ),
@@ -317,7 +331,7 @@ function createDailyQuery() {
   ),
   revision_counts AS (
     SELECT (created_at AT TIME ZONE '${reportTimeZone}')::date AS day, COUNT(*)::int AS rationale_revision_count
-    FROM memory_revisions
+    FROM ${rationaleActivitiesSubquery}
     WHERE created_at >= ${windowStartExpression}
     GROUP BY 1
   )
@@ -344,7 +358,7 @@ function createCombinedEventQuery(bucketExpression: string, bucketName: string) 
     UNION ALL
     SELECT created_at FROM memory_usage_events WHERE created_at >= ${windowStartExpression}
     UNION ALL
-    SELECT created_at FROM memory_revisions WHERE created_at >= ${windowStartExpression}
+    SELECT created_at FROM ${rationaleActivitiesSubquery} WHERE created_at >= ${windowStartExpression}
   )
   SELECT ${bucketExpression}, COUNT(*)::int AS event_count
   FROM events

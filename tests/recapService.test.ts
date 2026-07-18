@@ -60,6 +60,23 @@ describe("recap report", () => {
       expect(String(sql)).toContain("$1::int - 1");
     }
   });
+
+  it("counts rev0 rationale activity by the entry capture time, not the revision row time", async () => {
+    const query = vi.fn().mockImplementation((sql) => Promise.resolve(resolveRecapQuery(String(sql))));
+    const service = new RecapService({ query });
+
+    await service.getRecap({ days: 30 });
+
+    // 백필로 revision row가 한 시점에 몰려도 캡처 활동이 원래 날짜로 집계되어야 한다.
+    const rationaleQueries = query.mock.calls
+      .map(([sql]) => String(sql))
+      .filter((sql) => sql.includes("memory_revisions"));
+    expect(rationaleQueries.length).toBeGreaterThanOrEqual(4);
+    for (const sql of rationaleQueries) {
+      expect(sql).toContain("CASE WHEN memory_revisions.revision_number = 0");
+      expect(sql).toContain("THEN memory_entries.created_at");
+    }
+  });
 });
 
 function resolveRecapQuery(sql: string): pg.QueryResult {
