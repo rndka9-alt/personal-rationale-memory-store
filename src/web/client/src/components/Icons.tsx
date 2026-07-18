@@ -91,6 +91,16 @@ export function NoteIcon(props: IconProps) {
   );
 }
 
+export function RecapIcon(props: IconProps) {
+  return (
+    <IconFrame {...props}>
+      <path d="M4.5 12a7.5 7.5 0 1 0 2.1-5.2L4.5 8.9" />
+      <path d="M4.5 4.4v4.5H9" />
+      <path d="M12 8.5V12l2.8 1.7" />
+    </IconFrame>
+  );
+}
+
 export function RestoreIcon(props: IconProps) {
   return (
     <IconFrame {...props}>

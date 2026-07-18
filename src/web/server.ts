@@ -11,6 +11,7 @@ import { IndexingService } from "../memory/indexingService.js";
 import { LlmRequestLogService } from "../memory/llmRequestLogService.js";
 import { NoteService } from "../memory/noteService.js";
 import { RationaleService } from "../memory/rationaleService.js";
+import { RecapService } from "../memory/recapService.js";
 import type {
   ReviewQueueSignalFilter,
   ReviewQueueSortMode
@@ -24,6 +25,8 @@ const defaultLlmRequestLimit = 50;
 const maximumLlmRequestLimit = 200;
 const defaultDigestRunLimit = 20;
 const maximumDigestRunLimit = 100;
+const defaultRecapDays = 30;
+const maximumRecapDays = 365;
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl);
@@ -34,6 +37,7 @@ const rationaleService = new RationaleService(pool, fileStore, indexingService, 
 const noteService = new NoteService(pool);
 const llmRequestLogService = new LlmRequestLogService(pool);
 const digestViewService = new DigestViewService(pool);
+const recapService = new RecapService(pool);
 const clientDirectory = path.resolve(process.cwd(), "dist/web/client");
 
 await runMigrations(pool);
@@ -151,6 +155,14 @@ async function routeApiRequest(
   if (method === "GET" && url.pathname === "/api/llm-requests/summary") {
     const summary = await llmRequestLogService.getSummary();
     writeJson(response, 200, summary);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/recap") {
+    const recap = await recapService.getRecap({
+      days: readRecapDays(url.searchParams.get("days"))
+    });
+    writeJson(response, 200, recap);
     return;
   }
 
@@ -319,6 +331,14 @@ function readPageSize(value: string | null) {
     throw new Error(`pageSize cannot exceed ${maximumPageSize}.`);
   }
   return pageSize;
+}
+
+function readRecapDays(value: string | null) {
+  const days = readPositiveInteger(value, defaultRecapDays, "days");
+  if (days > maximumRecapDays) {
+    throw new Error(`days cannot exceed ${maximumRecapDays}.`);
+  }
+  return days;
 }
 
 function readLlmRequestPageSize(value: string | null) {

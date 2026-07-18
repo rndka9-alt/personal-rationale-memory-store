@@ -31,6 +31,11 @@ import {
   type MemoryCatalogStatus
 } from "./api/memories";
 import {
+  fetchRecap,
+  type RecapDailyPoint,
+  type RecapReport
+} from "./api/recap";
+import {
   archiveNote,
   fetchNotes,
   restoreNote,
@@ -47,6 +52,7 @@ import {
   LlmIcon,
   MemoryIcon,
   NoteIcon,
+  RecapIcon,
   RestoreIcon,
   SearchIcon,
   XIcon
@@ -55,7 +61,7 @@ import type { NoteRecord } from "./types/note";
 import type { Pagination } from "./types/pagination";
 import type { ProjectContext, UsageFeedbackCounts } from "./types/review";
 
-type MainView = "memories" | "notes" | "digest" | "llm";
+type MainView = "memories" | "notes" | "digest" | "llm" | "recap";
 
 type ToastState = {
   message: string;
@@ -98,6 +104,31 @@ const digestOperationLabels: Record<DigestOperation["type"], string> = {
   merge: "병합"
 };
 
+const recapPeriodOptions = [
+  { days: 7, label: "최근 7일" },
+  { days: 30, label: "최근 30일" },
+  { days: 90, label: "최근 90일" }
+];
+
+// dataviz 팔레트 검증기(6-checks)를 통과한 4색. 시리즈-색 대응은 고정 순서로만 쓴다.
+const recapActivitySeries = [
+  { dataKey: "noteCount", label: "노트", color: "#348353" },
+  { dataKey: "retrievalCount", label: "검색", color: "#4a7dbf" },
+  { dataKey: "usageEventCount", label: "재사용", color: "#c0862e" },
+  { dataKey: "rationaleRevisionCount", label: "Rationale", color: "#a05a92" }
+] as const;
+
+const recapWeekdayLabels = ["월", "화", "수", "목", "금", "토", "일"];
+
+const recapUsageEventTypeLabels: Record<string, string> = {
+  retrieved: "검색됨",
+  composed: "컨텍스트 합성",
+  applied: "작업에 반영",
+  dismissed: "반영 안 함",
+  user_helpful: "도움됨 피드백",
+  user_unhelpful: "아쉬움 피드백"
+};
+
 function useDebouncedValue(value: string, delayMilliseconds: number) {
   const [debouncedValue, setDebouncedValue] = useState(value);
 
@@ -137,13 +168,14 @@ export function App() {
       {mainView === "notes" ? <NotesLibrary /> : null}
       {mainView === "digest" ? <DigestDashboard /> : null}
       {mainView === "llm" ? <LlmDashboard /> : null}
+      {mainView === "recap" ? <RecapDashboard /> : null}
     </main>
   );
 }
 
 function readMainViewFromLocation(): MainView {
   const tab = new URLSearchParams(window.location.search).get("tab");
-  if (tab === "notes" || tab === "digest" || tab === "llm") {
+  if (tab === "notes" || tab === "digest" || tab === "llm" || tab === "recap") {
     return tab;
   }
   return "memories";
@@ -189,6 +221,12 @@ function AppHeader(props: {
             icon={<LlmIcon className="h-4 w-4" />}
             label="LLM"
             onClick={() => props.onViewChange("llm")}
+          />
+          <NavigationButton
+            active={props.mainView === "recap"}
+            icon={<RecapIcon className="h-4 w-4" />}
+            label="Recap"
+            onClick={() => props.onViewChange("recap")}
           />
         </nav>
       </div>
@@ -1491,6 +1529,480 @@ function LlmRequestTable(props: {
       </div>
     </section>
   );
+}
+
+function RecapDashboard() {
+  const [periodDays, setPeriodDays] = useState(30);
+  const recapQuery = useQuery({
+    queryKey: ["recap", periodDays],
+    queryFn: () => fetchRecap(periodDays),
+    placeholderData: (previousData) => previousData
+  });
+
+  if (recapQuery.isLoading) {
+    return (
+      <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8" aria-label="Loading recap">
+        <div className="h-12 w-52 animate-pulse rounded-xl bg-stroke" />
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((item) => <div key={item} className="h-28 animate-pulse rounded-3xl bg-white shadow-soft" />)}
+        </div>
+      </section>
+    );
+  }
+
+  if (recapQuery.error) {
+    return (
+      <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <InlineError message={recapQuery.error.message} />
+      </section>
+    );
+  }
+
+  const recap = recapQuery.data;
+  if (!recap) {
+    throw new Error("Recap query completed without data.");
+  }
+
+  const totalActivityCount = recap.totals.noteCount
+    + recap.totals.retrievalCount
+    + recap.totals.usageEventCount
+    + recap.totals.rationaleRevisionCount;
+
+  return (
+    <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+      <header className="mb-8 flex flex-wrap items-end justify-between gap-6 sm:mb-12">
+        <div>
+          <p className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.17em] text-muted">Look back</p>
+          <h1 className="font-display text-[2.7rem] leading-none tracking-[-0.045em] text-ink sm:text-5xl">돌아보기</h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
+            노트·검색·재사용·rationale 활동을 기간별로 되짚어 봅니다. Asia/Seoul 기준.
+          </p>
+        </div>
+        <div className="flex items-center rounded-full bg-canvas p-1" role="group" aria-label="Recap period">
+          {recapPeriodOptions.map((option) => (
+            <button
+              key={option.days}
+              type="button"
+              className={`h-9 rounded-full px-4 text-xs font-semibold transition-all ${
+                option.days === periodDays ? "bg-white text-ink shadow-soft" : "text-muted hover:text-ink"
+              }`}
+              aria-pressed={option.days === periodDays}
+              onClick={() => setPeriodDays(option.days)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      {totalActivityCount === 0 ? (
+        <EmptyState
+          title="아직 돌아볼 활동이 없어요"
+          description="이 기간에는 기록된 노트, 검색, rationale 활동이 없습니다. 다른 기간을 선택해 보세요."
+        />
+      ) : (
+        <div className={recapQuery.isPlaceholderData ? "opacity-60 transition-opacity" : "transition-opacity"}>
+          <RecapSummaryTiles recap={recap} />
+
+          <section className="mt-6 rounded-3xl border border-stroke bg-white p-5 shadow-soft sm:p-7">
+            <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted">
+                  최근 {recap.periodDays}일
+                </p>
+                <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">일별 활동</h2>
+              </div>
+              <RecapSeriesLegend />
+            </div>
+            <div className="h-72 w-full" aria-label="일별 활동 스택 차트">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={recap.daily} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <CartesianGrid stroke="#e4e4df" strokeDasharray="2 5" vertical={false} />
+                  <XAxis
+                    axisLine={false}
+                    dataKey="date"
+                    interval={recap.periodDays > 60 ? 13 : recap.periodDays > 10 ? 4 : 0}
+                    tick={{ fill: "#a2a49f", fontSize: 10 }}
+                    tickFormatter={(date: string) => date.slice(5)}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    axisLine={false}
+                    tick={{ fill: "#a2a49f", fontSize: 10 }}
+                    tickLine={false}
+                    width={40}
+                  />
+                  <Tooltip content={<RecapDailyTooltip />} cursor={{ fill: "#eef3ee" }} />
+                  {recapActivitySeries.map((series) => (
+                    <Bar
+                      key={series.dataKey}
+                      dataKey={series.dataKey}
+                      fill={series.color}
+                      maxBarSize={22}
+                      stackId="activity"
+                      stroke="#ffffff"
+                      strokeWidth={1}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <RecapBucketChartCard
+              title="요일별 활동"
+              eyebrow="언제 움직였나"
+              points={recap.byWeekday.map((entry) => ({
+                label: recapWeekdayLabel(entry.weekday),
+                eventCount: entry.eventCount
+              }))}
+              tickInterval={0}
+            />
+            <RecapBucketChartCard
+              title="시간대별 활동"
+              eyebrow="하루 리듬"
+              points={recap.byHour.map((entry) => ({
+                label: `${entry.hour}시`,
+                eventCount: entry.eventCount
+              }))}
+              tickInterval={2}
+            />
+          </div>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <RecapCountTable
+              title="노트 주제"
+              labelTitle="Topic"
+              countTitle="Notes"
+              shareTitle="비중"
+              rows={recap.topics.map((topic) => ({
+                key: topic.topic ?? "(주제 없음)",
+                label: topic.topic ?? "(주제 없음)",
+                mutedLabel: topic.topic === null,
+                count: topic.noteCount,
+                share: recap.totals.noteCount === 0 ? undefined : topic.noteCount / recap.totals.noteCount
+              }))}
+            />
+            <RecapCountTable
+              title="메모리 재사용"
+              labelTitle="Event"
+              countTitle="Count"
+              rows={recap.usageByEventType.map((usage) => ({
+                key: usage.eventType,
+                label: recapUsageEventTypeLabels[usage.eventType] ?? usage.eventType,
+                mutedLabel: false,
+                count: usage.eventCount
+              }))}
+            />
+          </div>
+
+          <section className="mt-10">
+            <SectionHeading
+              eyebrow="Retrieval"
+              title="검색 활동"
+              detail={recapRetrievalDetailText(recap)}
+            />
+            <div className="grid gap-6 lg:grid-cols-2">
+              <RecapCountTable
+                title="클라이언트별 질의"
+                labelTitle="Client"
+                countTitle="Queries"
+                rows={recap.retrieval.byClient.map((client) => ({
+                  key: client.clientName ?? "(미확인)",
+                  label: client.clientName ?? "(미확인)",
+                  mutedLabel: client.clientName === null,
+                  count: client.queryCount
+                }))}
+              />
+              <RecapCountTable
+                title="프로젝트별 질의"
+                labelTitle="Project"
+                countTitle="Queries"
+                rows={recap.retrieval.byProject.map((project) => ({
+                  key: project.projectName ?? "(프로젝트 없음)",
+                  label: project.projectName ?? "(프로젝트 없음)",
+                  mutedLabel: project.projectName === null,
+                  count: project.queryCount
+                }))}
+              />
+            </div>
+            <RecapRecentQueryTable queries={recap.retrieval.recentQueries} />
+          </section>
+
+          <section className="mt-10">
+            <SectionHeading
+              eyebrow="Rationale"
+              title="판단 기록"
+              detail={`신규 캡처 ${formatInteger(recap.rationales.capturedCount)}건 · 수정 ${formatInteger(recap.rationales.revisedCount)}건`}
+            />
+            <RecapCountTable
+              title="프로젝트별 rationale 활동"
+              labelTitle="Project"
+              countTitle="Revisions"
+              rows={recap.rationales.byProject.map((project) => ({
+                key: project.projectName ?? "(프로젝트 없음)",
+                label: project.projectName ?? "(프로젝트 없음)",
+                mutedLabel: project.projectName === null,
+                count: project.revisionCount
+              }))}
+            />
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RecapSummaryTiles(props: { recap: RecapReport }) {
+  const tiles = [
+    {
+      label: "노트",
+      value: formatInteger(props.recap.totals.noteCount),
+      detail: `${props.recap.periodDays}일 중 ${props.recap.totals.activeDayCount}일 활동`
+    },
+    {
+      label: "검색 질의",
+      value: formatInteger(props.recap.retrieval.queryCount),
+      detail: `제로 히트 ${formatInteger(props.recap.retrieval.zeroHitCount)}건`
+    },
+    {
+      label: "Rationale",
+      value: formatInteger(props.recap.totals.rationaleRevisionCount),
+      detail: `신규 ${formatInteger(props.recap.rationales.capturedCount)} · 수정 ${formatInteger(props.recap.rationales.revisedCount)}`
+    },
+    {
+      label: "LLM 비용",
+      value: formatUsd(props.recap.llm.costUsd),
+      detail: `${formatInteger(props.recap.llm.requestCount)}회 호출 · ${formatInteger(props.recap.llm.totalTokens)} tokens`
+    }
+  ];
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {tiles.map((tile) => (
+        <article key={tile.label} className="rounded-3xl border border-stroke bg-white p-5 shadow-soft sm:p-6">
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted">{tile.label}</p>
+          <p className="mt-4 font-display text-[2rem] leading-none tracking-[-0.04em] text-ink">{tile.value}</p>
+          <p className="mt-3 text-xs text-faint">{tile.detail}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function RecapSeriesLegend() {
+  return (
+    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1" aria-label="Series legend">
+      {recapActivitySeries.map((series) => (
+        <li key={series.dataKey} className="flex items-center gap-1.5 text-xs text-muted">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: series.color }} aria-hidden="true" />
+          {series.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RecapDailyTooltip(props: {
+  active?: boolean;
+  payload?: Array<{ payload?: RecapDailyPoint }>;
+}) {
+  const point = props.payload?.[0]?.payload;
+  if (!props.active || !point) {
+    return null;
+  }
+  return (
+    <div className="rounded-2xl border border-stroke bg-white px-4 py-3 shadow-toast">
+      <p className="text-[0.68rem] font-semibold text-muted">{formatChartDate(point.date)}</p>
+      {recapActivitySeries.map((series) => (
+        <p key={series.dataKey} className="mt-1 flex items-center gap-1.5 text-xs text-ink">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: series.color }} aria-hidden="true" />
+          {series.label}
+          <span className="ml-auto pl-3 font-semibold tabular-nums">{formatInteger(point[series.dataKey])}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function RecapBucketChartCard(props: {
+  title: string;
+  eyebrow: string;
+  points: Array<{ label: string; eventCount: number }>;
+  tickInterval: number;
+}) {
+  return (
+    <section className="rounded-3xl border border-stroke bg-white p-5 shadow-soft sm:p-7">
+      <div className="mb-6">
+        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted">{props.eyebrow}</p>
+        <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">{props.title}</h2>
+      </div>
+      <div className="h-52 w-full" aria-label={`${props.title} 차트`}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={props.points} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+            <CartesianGrid stroke="#e4e4df" strokeDasharray="2 5" vertical={false} />
+            <XAxis
+              axisLine={false}
+              dataKey="label"
+              interval={props.tickInterval}
+              tick={{ fill: "#a2a49f", fontSize: 10 }}
+              tickLine={false}
+            />
+            <YAxis
+              allowDecimals={false}
+              axisLine={false}
+              tick={{ fill: "#a2a49f", fontSize: 10 }}
+              tickLine={false}
+              width={36}
+            />
+            <Tooltip content={<RecapBucketTooltip />} cursor={{ fill: "#eef3ee" }} />
+            <Bar dataKey="eventCount" fill="#59715e" maxBarSize={22} radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  );
+}
+
+function RecapBucketTooltip(props: {
+  active?: boolean;
+  payload?: Array<{ payload?: { label: string; eventCount: number } }>;
+}) {
+  const point = props.payload?.[0]?.payload;
+  if (!props.active || !point) {
+    return null;
+  }
+  return (
+    <div className="rounded-2xl border border-stroke bg-white px-4 py-3 shadow-toast">
+      <p className="text-[0.68rem] font-semibold text-muted">{point.label}</p>
+      <p className="mt-1 text-sm font-semibold tabular-nums text-ink">{formatInteger(point.eventCount)}</p>
+    </div>
+  );
+}
+
+function RecapCountTable(props: {
+  title: string;
+  labelTitle: string;
+  countTitle: string;
+  shareTitle?: string;
+  rows: Array<{ key: string; label: string; mutedLabel: boolean; count: number; share?: number }>;
+}) {
+  return (
+    <section className="overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
+      <div className="border-b border-stroke px-5 py-5 sm:px-7">
+        <h2 className="font-display text-xl tracking-[-0.025em] text-ink">{props.title}</h2>
+      </div>
+      {props.rows.length === 0 ? (
+        <p className="px-5 py-6 text-xs text-faint sm:px-7">이 기간에는 기록이 없어요.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[24rem] text-left text-xs">
+            <thead className="text-[0.62rem] uppercase tracking-[0.12em] text-faint">
+              <tr>
+                <th className="px-5 py-3 font-semibold sm:px-7">{props.labelTitle}</th>
+                <th className="px-4 py-3 text-right font-semibold">{props.countTitle}</th>
+                {props.shareTitle ? (
+                  <th className="px-5 py-3 text-right font-semibold sm:px-7">{props.shareTitle}</th>
+                ) : null}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stroke">
+              {props.rows.map((row) => (
+                <tr key={row.key}>
+                  <td className={`max-w-xs break-words px-5 py-4 sm:px-7 ${row.mutedLabel ? "text-faint" : "font-medium text-ink"}`}>
+                    {row.label}
+                  </td>
+                  <td className="px-4 py-4 text-right tabular-nums text-muted">{formatInteger(row.count)}</td>
+                  {props.shareTitle ? (
+                    <td className="px-5 py-4 text-right font-semibold tabular-nums text-ink sm:px-7">
+                      {row.share === undefined ? "—" : formatPercentage(row.share)}
+                    </td>
+                  ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RecapRecentQueryTable(props: {
+  queries: Array<{
+    query: string;
+    sourceKind: string;
+    projectName: string | null;
+    resultCount: number;
+    createdAt: string;
+  }>;
+}) {
+  return (
+    <section className="mt-6 overflow-hidden rounded-3xl border border-stroke bg-white shadow-soft">
+      <div className="border-b border-stroke px-5 py-5 sm:px-7">
+        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted">무엇을 다시 찾았나</p>
+        <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">최근 질의</h2>
+      </div>
+      {props.queries.length === 0 ? (
+        <p className="px-5 py-6 text-xs text-faint sm:px-7">이 기간에는 질의가 없어요.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[44rem] text-left text-xs">
+            <thead className="text-[0.62rem] uppercase tracking-[0.12em] text-faint">
+              <tr>
+                <th className="px-5 py-3 font-semibold sm:px-7">Time</th>
+                <th className="px-4 py-3 font-semibold">Query</th>
+                <th className="px-4 py-3 font-semibold">Kind</th>
+                <th className="px-4 py-3 font-semibold">Project</th>
+                <th className="px-5 py-3 text-right font-semibold sm:px-7">Results</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stroke">
+              {props.queries.map((entry) => (
+                <tr key={`${entry.createdAt}-${entry.query}`}>
+                  <td className="whitespace-nowrap px-5 py-4 text-muted sm:px-7">{formatRequestDateTime(entry.createdAt)}</td>
+                  <td className="max-w-md break-words px-4 py-4 font-medium text-ink">{entry.query}</td>
+                  <td className="px-4 py-4">
+                    <span className="inline-flex rounded-full bg-canvas px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.08em] text-muted">
+                      {entry.sourceKind}
+                    </span>
+                  </td>
+                  <td className={`px-4 py-4 ${entry.projectName === null ? "text-faint" : "text-muted"}`}>
+                    {entry.projectName ?? "(프로젝트 없음)"}
+                  </td>
+                  <td className={`px-5 py-4 text-right font-semibold tabular-nums sm:px-7 ${
+                    entry.resultCount === 0 ? "text-danger" : "text-ink"
+                  }`}>
+                    {formatInteger(entry.resultCount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function recapWeekdayLabel(weekday: number) {
+  const label = recapWeekdayLabels[weekday - 1];
+  if (!label) {
+    throw new Error(`Invalid ISO weekday in recap: ${weekday}`);
+  }
+  return label;
+}
+
+function recapRetrievalDetailText(recap: RecapReport) {
+  const zeroHitRateText = recap.retrieval.queryCount === 0
+    ? "질의 없음"
+    : `제로 히트율 ${formatPercentage(recap.retrieval.zeroHitCount / recap.retrieval.queryCount)}`;
+  const averageScoreText = recap.retrieval.averageTopScore === null
+    ? ""
+    : ` · 평균 top score ${recap.retrieval.averageTopScore.toFixed(2)}`;
+  return `${zeroHitRateText}${averageScoreText}`;
 }
 
 function NoteCard(props: {
