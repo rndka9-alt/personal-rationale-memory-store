@@ -32,8 +32,14 @@ import {
 } from "./api/memories";
 import {
   fetchRecap,
+  fetchRecapRun,
+  fetchRecapSnapshot,
+  requestRecapRefresh,
+  type RecapCard,
   type RecapDailyPoint,
-  type RecapReport
+  type RecapReport,
+  type RecapSnapshot,
+  type RecapFreshness
 } from "./api/recap";
 import {
   archiveNote,
@@ -1595,6 +1601,8 @@ function RecapDashboard() {
         </div>
       </header>
 
+      <RecapSnapshotSection periodDays={periodDays} />
+
       {totalActivityCount === 0 ? (
         <EmptyState
           title="아직 돌아볼 활동이 없어요"
@@ -1753,6 +1761,235 @@ function RecapDashboard() {
       )}
     </section>
   );
+}
+
+function RecapSnapshotSection(props: { periodDays: number }) {
+  const queryClient = useQueryClient();
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+
+  const snapshotQuery = useQuery({
+    queryKey: ["recap-snapshot", props.periodDays],
+    queryFn: () => fetchRecapSnapshot(props.periodDays)
+  });
+  const runQuery = useQuery({
+    queryKey: ["recap-run", activeRunId],
+    queryFn: () => {
+      if (activeRunId === null) {
+        throw new Error("Recap run polling started without a run id.");
+      }
+      return fetchRecapRun(activeRunId);
+    },
+    enabled: activeRunId !== null,
+    refetchInterval: (query) => (query.state.data?.status === "running" || query.state.data === undefined ? 2500 : false)
+  });
+
+  useEffect(() => {
+    const run = runQuery.data;
+    if (!run || run.id !== activeRunId) {
+      return;
+    }
+    if (run.status === "succeeded") {
+      setActiveRunId(null);
+      void queryClient.invalidateQueries({ queryKey: ["recap-snapshot"] });
+    }
+    if (run.status === "failed") {
+      setActiveRunId(null);
+      setRunError(run.error ?? "회고 생성에 실패했어요. 잠시 후 다시 시도해 주세요.");
+    }
+  }, [activeRunId, queryClient, runQuery.data]);
+
+  const refreshMutation = useMutation({
+    mutationFn: () => requestRecapRefresh(props.periodDays),
+    onSuccess: (result) => {
+      setRunError(null);
+      if (result.status === "exists") {
+        void queryClient.invalidateQueries({ queryKey: ["recap-snapshot"] });
+        return;
+      }
+      setActiveRunId(result.runId);
+    },
+    onError: (error) => {
+      setRunError(error.message);
+    }
+  });
+
+  if (snapshotQuery.isLoading) {
+    return <div className="mb-8 h-40 animate-pulse rounded-3xl bg-white shadow-soft" />;
+  }
+  if (snapshotQuery.error) {
+    return (
+      <div className="mb-8">
+        <InlineError message={snapshotQuery.error.message} />
+      </div>
+    );
+  }
+  const snapshotResponse = snapshotQuery.data;
+  if (!snapshotResponse) {
+    throw new Error("Recap snapshot query completed without data.");
+  }
+
+  const snapshot = snapshotResponse.snapshot;
+  const generating = activeRunId !== null;
+  const upToDate = snapshot !== null
+    && snapshotResponse.freshness !== null
+    && !snapshotResponse.freshness.newPeriodAvailable;
+
+  return (
+    <section className="mb-10">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted">Snapshot</p>
+          <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">기간 회고</h2>
+          {snapshot ? (
+            <p className="mt-1 text-xs text-faint">
+              {formatRecapPeriodRange(snapshot.periodStart, snapshot.periodEnd)} · {formatRequestDateTime(snapshot.generatedAt)} 생성
+            </p>
+          ) : null}
+        </div>
+        {snapshotResponse.synthesisEnabled ? (
+          <button
+            type="button"
+            className="h-10 rounded-full bg-ink px-5 text-xs font-semibold text-white transition-opacity disabled:opacity-40"
+            disabled={generating || refreshMutation.isPending || upToDate}
+            title={upToDate ? "오늘 기준 회고는 이미 최신이에요." : undefined}
+            onClick={() => refreshMutation.mutate()}
+          >
+            {generating || refreshMutation.isPending
+              ? "회고 생성 중..."
+              : snapshot === null
+                ? "회고 만들기"
+                : upToDate
+                  ? "최신 상태"
+                  : "새 기간 회고 만들기"}
+          </button>
+        ) : (
+          <p className="text-xs text-faint">합성은 DIGEST_ENABLED=true에서만 가능해요</p>
+        )}
+      </div>
+
+      {runError ? <div className="mb-4"><InlineError message={runError} /></div> : null}
+      {generating ? (
+        <div className="mb-4 rounded-3xl border border-stroke bg-white p-5 text-xs text-muted shadow-soft">
+          지난 기간을 되짚는 중이에요... 완성되면 여기 나타나요. 페이지를 떠나도 생성은 계속돼요.
+        </div>
+      ) : null}
+
+      {snapshot === null ? (
+        !generating ? (
+          <div className="rounded-3xl border border-dashed border-stroke bg-white/60 p-8 text-center">
+            <p className="text-sm font-semibold text-ink">아직 만들어진 회고가 없어요</p>
+            <p className="mt-2 text-xs text-muted">버튼을 누르면 완결된 지난 {props.periodDays}일을 정리해 드려요.</p>
+          </div>
+        ) : null
+      ) : (
+        <>
+          <blockquote className="rounded-3xl border border-stroke bg-white p-6 shadow-soft sm:p-8">
+            <p className="font-display text-xl leading-relaxed tracking-[-0.02em] text-ink sm:text-2xl">
+              {snapshot.result.opening}
+            </p>
+          </blockquote>
+
+          {snapshot.result.cards.length > 0 ? (
+            <div className="mt-5 grid gap-5 md:grid-cols-2">
+              {snapshot.result.cards.map((card) => (
+                <RecapHighlightCard key={card.kind} card={card} />
+              ))}
+            </div>
+          ) : null}
+
+          {snapshot.result.themes.length > 0 ? (
+            <div className="mt-5 rounded-3xl border border-stroke bg-white p-5 shadow-soft sm:p-6">
+              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted">이 기간의 테마</p>
+              <ul className="mt-3 flex flex-wrap gap-2">
+                {snapshot.result.themes.slice(0, 6).map((theme) => (
+                  <li
+                    key={theme.name}
+                    className="rounded-full bg-canvas px-3.5 py-1.5 text-xs text-ink"
+                    title={theme.topics.join(", ")}
+                  >
+                    <span className="font-semibold">{theme.name}</span>
+                    <span className="ml-1.5 tabular-nums text-muted">{theme.currentCount}</span>
+                    {theme.comparisonCount !== theme.currentCount ? (
+                      <span className="ml-1 text-[0.65rem] tabular-nums text-faint">← {theme.comparisonCount}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          <RecapFreshnessNote freshness={snapshotResponse.freshness} />
+        </>
+      )}
+    </section>
+  );
+}
+
+function RecapHighlightCard(props: { card: RecapCard }) {
+  return (
+    <article className="rounded-3xl border border-stroke bg-white p-5 shadow-soft sm:p-6">
+      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted">{props.card.stat.label}</p>
+      <h3 className="mt-2 font-display text-xl tracking-[-0.025em] text-ink">{props.card.title}</h3>
+      <p className="mt-2 font-display text-[1.6rem] leading-none tracking-[-0.03em] text-sage">
+        {props.card.stat.value}
+      </p>
+      {props.card.stat.comparison ? (
+        <p className="mt-1 text-xs tabular-nums text-faint">{props.card.stat.comparison}</p>
+      ) : null}
+      <p className="mt-3 text-sm leading-6 text-muted">{props.card.body}</p>
+      {props.card.evidence.length > 0 ? (
+        <ul className="mt-4 space-y-2 border-t border-stroke pt-4">
+          {props.card.evidence.map((item, index) => (
+            <li key={index} className="flex items-start gap-2 text-xs text-muted">
+              <span className="mt-0.5 inline-flex shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.08em] text-faint">
+                {recapEvidenceTypeLabels[item.type]}
+              </span>
+              <span className="min-w-0">
+                <span className="break-words">{item.text}</span>
+                {item.detail ? <span className="text-faint"> · {item.detail}</span> : null}
+                {item.date ? <span className="text-faint"> · {item.date}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-3 text-[0.65rem] leading-4 text-faint">선정 기준: {props.card.reason}</p>
+    </article>
+  );
+}
+
+function RecapFreshnessNote(props: { freshness: RecapFreshness | null }) {
+  if (!props.freshness) {
+    return null;
+  }
+  if (!props.freshness.isStale && !props.freshness.newPeriodAvailable) {
+    return null;
+  }
+  const parts = [
+    { label: "노트", count: props.freshness.newNoteEvents },
+    { label: "질의", count: props.freshness.newRetrievalEvents },
+    { label: "재사용", count: props.freshness.newUsageEvents },
+    { label: "rationale", count: props.freshness.newRevisionEvents }
+  ].filter((part) => part.count > 0);
+  return (
+    <p className="mt-4 text-xs text-faint">
+      {props.freshness.newPeriodAvailable ? "새 기간이 열렸어요." : "스냅샷 이후 활동이 있어요."}
+      {parts.length > 0 ? ` 이후 새 활동 — ${parts.map((part) => `${part.label} ${formatInteger(part.count)}`).join(" · ")}` : ""}
+    </p>
+  );
+}
+
+const recapEvidenceTypeLabels: Record<RecapCard["evidence"][number]["type"], string> = {
+  note: "노트",
+  query: "질의",
+  rationale: "판단"
+};
+
+function formatRecapPeriodRange(startDate: string, endDateExclusive: string) {
+  const lastDay = new Date(`${endDateExclusive}T00:00:00Z`);
+  lastDay.setUTCDate(lastDay.getUTCDate() - 1);
+  return `${startDate} ~ ${lastDay.toISOString().slice(0, 10)}`;
 }
 
 function RecapSummaryTiles(props: { recap: RecapReport }) {

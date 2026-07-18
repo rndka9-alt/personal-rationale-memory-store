@@ -148,6 +148,204 @@ export async function fetchRecap(days: number): Promise<RecapReport> {
   };
 }
 
+export type RecapCardEvidence = {
+  type: "note" | "query" | "rationale";
+  text: string;
+  date: string;
+  detail: string | null;
+};
+
+export type RecapCard = {
+  kind: string;
+  title: string;
+  body: string;
+  stat: { label: string; value: string; comparison: string | null };
+  reason: string;
+  evidence: RecapCardEvidence[];
+};
+
+export type RecapSnapshotResult = {
+  opening: string;
+  cards: RecapCard[];
+  themes: Array<{ name: string; currentCount: number; comparisonCount: number; topics: string[] }>;
+};
+
+export type RecapSnapshot = {
+  id: string;
+  periodDays: number;
+  periodStart: string;
+  periodEnd: string;
+  comparisonStart: string;
+  comparisonEnd: string;
+  generatedAt: string;
+  result: RecapSnapshotResult;
+};
+
+export type RecapFreshness = {
+  isStale: boolean;
+  newPeriodAvailable: boolean;
+  newNoteEvents: number;
+  newRetrievalEvents: number;
+  newUsageEvents: number;
+  newRevisionEvents: number;
+};
+
+export type RecapSnapshotResponse = {
+  snapshot: RecapSnapshot | null;
+  freshness: RecapFreshness | null;
+  synthesisEnabled: boolean;
+};
+
+export type RecapRefreshResponse =
+  | { status: "exists"; snapshotId: string }
+  | { status: "already_running" | "started"; runId: string };
+
+export type RecapRun = {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  periodDays: number;
+  requestedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  snapshotId: string | null;
+};
+
+export async function fetchRecapSnapshot(days: number): Promise<RecapSnapshotResponse> {
+  const params = new URLSearchParams({ days: String(days) });
+  const data = await requestJson(`/api/recap/snapshot?${params.toString()}`);
+  if (!isRecord(data) || typeof data.synthesisEnabled !== "boolean") {
+    throw new Error("Invalid recap snapshot response.");
+  }
+  return {
+    snapshot: data.snapshot === null ? null : parseSnapshot(data.snapshot),
+    freshness: data.freshness === null ? null : parseFreshness(data.freshness),
+    synthesisEnabled: data.synthesisEnabled
+  };
+}
+
+export async function requestRecapRefresh(days: number): Promise<RecapRefreshResponse> {
+  const data = await requestJson("/api/recap/refresh", { method: "POST", body: { days } });
+  if (!isRecord(data)) {
+    throw new Error("Invalid recap refresh response.");
+  }
+  if (data.status === "exists") {
+    return { status: "exists", snapshotId: readString(data, "snapshotId") };
+  }
+  if (data.status === "already_running" || data.status === "started") {
+    return { status: data.status, runId: readString(data, "runId") };
+  }
+  throw new Error("Invalid recap refresh status.");
+}
+
+export async function fetchRecapRun(runId: string): Promise<RecapRun> {
+  const data = await requestJson(`/api/recap/runs/${encodeURIComponent(runId)}`);
+  if (!isRecord(data)) {
+    throw new Error("Invalid recap run response.");
+  }
+  const status = data.status;
+  if (status !== "running" && status !== "succeeded" && status !== "failed") {
+    throw new Error("Invalid recap run status.");
+  }
+  return {
+    id: readString(data, "id"),
+    status,
+    periodDays: readNumber(data, "periodDays"),
+    requestedAt: readString(data, "requestedAt"),
+    finishedAt: readNullableString(data, "finishedAt"),
+    error: readNullableString(data, "error"),
+    snapshotId: readNullableString(data, "snapshotId")
+  };
+}
+
+function parseSnapshot(value: unknown): RecapSnapshot {
+  const record = readRecordValue(value, "recap snapshot");
+  return {
+    id: readString(record, "id"),
+    periodDays: readNumber(record, "periodDays"),
+    periodStart: readString(record, "periodStart"),
+    periodEnd: readString(record, "periodEnd"),
+    comparisonStart: readString(record, "comparisonStart"),
+    comparisonEnd: readString(record, "comparisonEnd"),
+    generatedAt: readString(record, "generatedAt"),
+    result: parseSnapshotResult(record.result)
+  };
+}
+
+function parseSnapshotResult(value: unknown): RecapSnapshotResult {
+  const record = readRecordValue(value, "recap snapshot result");
+  if (!Array.isArray(record.cards) || !Array.isArray(record.themes)) {
+    throw new Error("Invalid recap snapshot result.");
+  }
+  return {
+    opening: readString(record, "opening"),
+    cards: record.cards.map(parseCard),
+    themes: record.themes.map((theme) => {
+      const themeRecord = readRecordValue(theme, "recap theme");
+      if (!Array.isArray(themeRecord.topics)) {
+        throw new Error("Invalid recap theme topics.");
+      }
+      return {
+        name: readString(themeRecord, "name"),
+        currentCount: readNumber(themeRecord, "currentCount"),
+        comparisonCount: readNumber(themeRecord, "comparisonCount"),
+        topics: themeRecord.topics.map((topic) => {
+          if (typeof topic !== "string") {
+            throw new Error("Invalid recap theme topic.");
+          }
+          return topic;
+        })
+      };
+    })
+  };
+}
+
+function parseCard(value: unknown): RecapCard {
+  const record = readRecordValue(value, "recap card");
+  const statRecord = readRecordValue(record.stat, "recap card stat");
+  if (!Array.isArray(record.evidence)) {
+    throw new Error("Invalid recap card evidence.");
+  }
+  return {
+    kind: readString(record, "kind"),
+    title: readString(record, "title"),
+    body: readString(record, "body"),
+    stat: {
+      label: readString(statRecord, "label"),
+      value: readString(statRecord, "value"),
+      comparison: readNullableString(statRecord, "comparison")
+    },
+    reason: readString(record, "reason"),
+    evidence: record.evidence.map((item) => {
+      const evidenceRecord = readRecordValue(item, "recap card evidence");
+      const type = evidenceRecord.type;
+      if (type !== "note" && type !== "query" && type !== "rationale") {
+        throw new Error("Invalid recap evidence type.");
+      }
+      return {
+        type,
+        text: readString(evidenceRecord, "text"),
+        date: readString(evidenceRecord, "date"),
+        detail: readNullableString(evidenceRecord, "detail")
+      };
+    })
+  };
+}
+
+function parseFreshness(value: unknown): RecapFreshness {
+  const record = readRecordValue(value, "recap freshness");
+  if (typeof record.isStale !== "boolean" || typeof record.newPeriodAvailable !== "boolean") {
+    throw new Error("Invalid recap freshness response.");
+  }
+  return {
+    isStale: record.isStale,
+    newPeriodAvailable: record.newPeriodAvailable,
+    newNoteEvents: readNumber(record, "newNoteEvents"),
+    newRetrievalEvents: readNumber(record, "newRetrievalEvents"),
+    newUsageEvents: readNumber(record, "newUsageEvents"),
+    newRevisionEvents: readNumber(record, "newRevisionEvents")
+  };
+}
+
 function parseDailyPoint(value: unknown): RecapDailyPoint {
   const record = readRecordValue(value, "recap daily entry");
   return {

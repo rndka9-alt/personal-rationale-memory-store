@@ -149,6 +149,9 @@ export type DigestSnapshot = {
 
 export type DigestLlmPurpose = "digest_judgment" | "digest_render" | "digest_repair";
 
+// recap 등 다른 합성 파이프라인도 같은 generator 인프라를 공유하므로 purpose는 열어 둔다.
+export type LlmPurpose = DigestLlmPurpose | (string & {});
+
 export type DigestTextGeneration = {
   text: string;
   usage?: LlmUsage;
@@ -160,7 +163,7 @@ export type DigestTextGenerator = {
   generate(
     systemPrompt: string,
     userPrompt: string,
-    purpose?: DigestLlmPurpose
+    purpose?: LlmPurpose
   ): Promise<string | DigestTextGeneration>;
 };
 

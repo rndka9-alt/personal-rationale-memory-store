@@ -12,6 +12,7 @@ import { LlmRequestLogService } from "../memory/llmRequestLogService.js";
 import { NoteService } from "../memory/noteService.js";
 import { RationaleService } from "../memory/rationaleService.js";
 import { RecapService } from "../memory/recapService.js";
+import { RecapSnapshotService } from "../memory/recapSnapshotService.js";
 import type {
   ReviewQueueSignalFilter,
   ReviewQueueSortMode
@@ -38,6 +39,8 @@ const noteService = new NoteService(pool);
 const llmRequestLogService = new LlmRequestLogService(pool);
 const digestViewService = new DigestViewService(pool);
 const recapService = new RecapService(pool);
+const digestConfig = config.digest;
+const recapSnapshotService = new RecapSnapshotService(pool, digestConfig.enabled ? digestConfig : null);
 const clientDirectory = path.resolve(process.cwd(), "dist/web/client");
 
 await runMigrations(pool);
@@ -163,6 +166,42 @@ async function routeApiRequest(
       days: readRecapDays(url.searchParams.get("days"))
     });
     writeJson(response, 200, recap);
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/recap/refresh") {
+    if (!recapSnapshotService.synthesisEnabled) {
+      writeJson(response, 503, { error: "Recap synthesis requires DIGEST_ENABLED=true." });
+      return;
+    }
+    const body = await readJsonBody(request);
+    const result = await recapSnapshotService.requestRefresh(
+      readRecapRefreshDays(body),
+      readRecapForceFlag(body)
+    );
+    writeJson(response, 202, result);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/recap/snapshot") {
+    const snapshot = await recapSnapshotService.getLatestSnapshot(
+      readRecapDays(url.searchParams.get("days"))
+    );
+    writeJson(response, 200, {
+      ...snapshot,
+      synthesisEnabled: recapSnapshotService.synthesisEnabled
+    });
+    return;
+  }
+
+  const recapRunMatch = matchRecapRunPath(url.pathname);
+  if (recapRunMatch && method === "GET") {
+    const run = await recapSnapshotService.getRun(recapRunMatch.id);
+    if (!run) {
+      writeJson(response, 404, { error: "Recap run not found" });
+      return;
+    }
+    writeJson(response, 200, run);
     return;
   }
 
@@ -339,6 +378,33 @@ function readRecapDays(value: string | null) {
     throw new Error(`days cannot exceed ${maximumRecapDays}.`);
   }
   return days;
+}
+
+function readRecapRefreshDays(body: unknown) {
+  if (!isRecord(body)) {
+    throw new Error("Recap refresh body must be an object.");
+  }
+  const days = body.days;
+  if (typeof days !== "number" || !Number.isInteger(days) || days < 1 || days > maximumRecapDays) {
+    throw new Error(`days must be an integer between 1 and ${maximumRecapDays}.`);
+  }
+  return days;
+}
+
+function readRecapForceFlag(body: unknown) {
+  if (!isRecord(body) || body.force === undefined) {
+    return false;
+  }
+  if (typeof body.force !== "boolean") {
+    throw new Error("force must be a boolean.");
+  }
+  return body.force;
+}
+
+function matchRecapRunPath(pathname: string) {
+  const match = /^\/api\/recap\/runs\/([^/]+)$/.exec(pathname);
+  const id = match?.[1];
+  return id ? { id: decodeURIComponent(id) } : undefined;
 }
 
 function readLlmRequestPageSize(value: string | null) {
