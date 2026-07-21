@@ -8,7 +8,6 @@ const digestLlmProviderSchema = z.enum(["anthropic", "openai", "vercel"]);
 // OpenAI Chat Completions service_tier 값과 동일한 집합. flex는 지연을 감수하고 단가를 낮춘다.
 const digestLlmServiceTierSchema = z.enum(["auto", "default", "flex", "priority", "scale"]);
 const optionalUrlSchema = z.preprocess(emptyStringToUndefined, z.string().url().optional());
-const optionalEmailSchema = z.preprocess(emptyStringToUndefined, z.string().email().optional());
 const optionalStringSchema = z.preprocess(emptyStringToUndefined, z.string().min(1).optional());
 
 const environmentSchema = z.object({
@@ -32,8 +31,6 @@ const environmentSchema = z.object({
   MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(7 * 24 * 60 * 60),
   MCP_OAUTH_LOGIN_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(30 * 24 * 60 * 60),
   MCP_OAUTH_USER_SUBJECT: z.string().default("mtdl"),
-  MCP_OAUTH_USER_EMAIL: optionalEmailSchema,
-  MCP_OAUTH_USER_NAME: z.string().default("Rationale Memory Owner"),
   MCP_OAUTH_SCOPES: z.string().default("openid email profile rationale:read rationale:write"),
   MCP_OAUTH_REQUIRED_SCOPES: z.string().default("rationale:read rationale:write"),
   WEB_HOST: z.string().default("0.0.0.0"),
@@ -112,8 +109,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
         accessTokenTtlSeconds: parsedEnvironment.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
         loginSessionTtlSeconds: parsedEnvironment.MCP_OAUTH_LOGIN_SESSION_TTL_SECONDS,
         userSubject: parsedEnvironment.MCP_OAUTH_USER_SUBJECT,
-        userEmail: parsedEnvironment.MCP_OAUTH_USER_EMAIL,
-        userName: parsedEnvironment.MCP_OAUTH_USER_NAME,
         scopes: splitSpaceSeparatedList(parsedEnvironment.MCP_OAUTH_SCOPES),
         requiredScopes: splitSpaceSeparatedList(parsedEnvironment.MCP_OAUTH_REQUIRED_SCOPES)
       }

@@ -63,8 +63,6 @@ type AuthorizationCodeRecord = {
 
 type VerifiedToken = {
   subject: string;
-  email: string | undefined;
-  name: string;
   scope: string;
 };
 
@@ -322,8 +320,6 @@ export class OAuthAuthorizationServer {
 
     return {
       subject: payload.sub,
-      email: this.config.userEmail,
-      name: this.config.userName,
       scope: payload.scope
     };
   }
@@ -334,11 +330,9 @@ export class OAuthAuthorizationServer {
       throw new OAuthHttpError(401, "invalid_token", "Access token is invalid.");
     }
 
+    // OIDC userinfo에서 필수 claim은 sub뿐이다. 단일 소유자 전용 서버라 프로필 claim은 제공하지 않는다.
     return {
-      sub: verifiedToken.subject,
-      name: verifiedToken.name,
-      email: verifiedToken.email,
-      email_verified: Boolean(verifiedToken.email)
+      sub: verifiedToken.subject
     };
   }
 
@@ -401,9 +395,7 @@ export class OAuthAuthorizationServer {
         iat: nowSeconds,
         scope,
         token_use: tokenUse,
-        resource: this.resource,
-        email: this.config.userEmail,
-        name: this.config.userName
+        resource: this.resource
       },
       this.privateKey
     );

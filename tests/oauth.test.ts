@@ -66,8 +66,6 @@ describe("OAuthAuthorizationServer", () => {
     }
     expect(oauthServer.verifyBearerToken(accessToken)).toMatchObject({
       subject: "mtdl",
-      email: "owner@example.com",
-      name: "Rationale Memory Owner",
       scope: "openid email profile rationale:read rationale:write"
     });
   });
@@ -281,8 +279,7 @@ describe("OAuthAuthorizationServer", () => {
     }
 
     expect(secondOAuthServer.verifyBearerToken(accessToken)).toMatchObject({
-      subject: "mtdl",
-      email: "owner@example.com"
+      subject: "mtdl"
     });
   });
 });
@@ -295,7 +292,6 @@ function createOAuthServer(overrides: NodeJS.ProcessEnv = {}) {
     MCP_OAUTH_CLIENT_ID: "mtdl-memory-mcp",
     MCP_OAUTH_REDIRECT_URI: "https://chatgpt.com/connector/oauth/ZT7uG4vEQ1CV",
     MCP_OAUTH_LOGIN_CODE: "test-login-code",
-    MCP_OAUTH_USER_EMAIL: "owner@example.com",
     ...overrides
   });
   return new OAuthAuthorizationServer(config.mcp.oauth);

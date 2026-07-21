@@ -108,8 +108,6 @@ MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH=/app/data/oauth-private-key.pem
 MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS=604800
 MCP_OAUTH_LOGIN_SESSION_TTL_SECONDS=2592000
 MCP_OAUTH_USER_SUBJECT=mtdl
-MCP_OAUTH_USER_EMAIL=you@example.com
-MCP_OAUTH_USER_NAME=Rationale Memory Owner
 MCP_OAUTH_SCOPES=openid email profile rationale:read rationale:write
 MCP_OAUTH_REQUIRED_SCOPES=rationale:read rationale:write
 ```
