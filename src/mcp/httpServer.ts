@@ -11,12 +11,8 @@ import type { McpServices } from "./server.js";
 import { configureMcpServer } from "./server.js";
 import { upsertMcpSession } from "../db/queries.js";
 import { logError, logInfo, logWarn, runWithClientContext, type ClientContext } from "../diagnostics/index.js";
-import {
-  createOAuthAuthorizationServer,
-  handleOAuthRequest,
-  readBearerToken,
-  type OAuthAuthorizationServer
-} from "./oauth.js";
+import { handleOAuthRequest, readBearerToken, OAuthAuthorizationServer } from "./oauth.js";
+import { resolveOAuthServerOptions } from "./oauthOptions.js";
 
 // initialize 요청에만 실리는 clientInfo를 이후 세션 요청에서도 참조하기 위한 세션 단위 보관소.
 type SessionClientInfo = Pick<ClientContext, "clientName" | "clientVersion">;
@@ -24,7 +20,8 @@ type SessionClientInfo = Pick<ClientContext, "clientName" | "clientVersion">;
 export async function startHttpMcpServer(config: AppConfig, services: McpServices, pool: pg.Pool) {
   const transports = new Map<string, StreamableHTTPServerTransport>();
   const clientInfoBySession = new Map<string, SessionClientInfo>();
-  const oauthServer = createOAuthAuthorizationServer(config.mcp.oauth);
+  const oauthServerOptions = resolveOAuthServerOptions(config.mcp.oauth);
+  const oauthServer = oauthServerOptions ? new OAuthAuthorizationServer(oauthServerOptions) : undefined;
 
   const requestHandler = async (request: IncomingMessage, response: ServerResponse) => {
     try {

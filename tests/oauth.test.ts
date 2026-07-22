@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { OAuthAuthorizationServer } from "../src/mcp/oauth.js";
+import { resolveOAuthServerOptions } from "../src/mcp/oauthOptions.js";
 
 describe("OAuthAuthorizationServer", () => {
   it("publishes MCP OAuth and OpenID metadata", () => {
@@ -294,7 +295,11 @@ function createOAuthServer(overrides: NodeJS.ProcessEnv = {}) {
     MCP_OAUTH_LOGIN_CODE: "test-login-code",
     ...overrides
   });
-  return new OAuthAuthorizationServer(config.mcp.oauth);
+  const oauthServerOptions = resolveOAuthServerOptions(config.mcp.oauth);
+  if (!oauthServerOptions) {
+    throw new Error("Test configuration did not enable OAuth.");
+  }
+  return new OAuthAuthorizationServer(oauthServerOptions);
 }
 
 function createPkceChallenge(codeVerifier: string) {

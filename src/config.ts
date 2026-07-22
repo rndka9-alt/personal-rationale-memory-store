@@ -70,21 +70,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     parsedEnvironment.MCP_OAUTH_ALLOWED_REDIRECT_URIS
   );
 
-  if (oauthEnabled) {
-    if (!parsedEnvironment.MCP_PUBLIC_URL) {
-      throw new Error("MCP_PUBLIC_URL is required when MCP_OAUTH_ENABLED=true.");
-    }
-    if (oauthRedirectUris.length === 0) {
-      throw new Error("At least one OAuth redirect URI is required when MCP_OAUTH_ENABLED=true.");
-    }
-    if (!parsedEnvironment.MCP_OAUTH_LOGIN_CODE) {
-      throw new Error("MCP_OAUTH_LOGIN_CODE is required when MCP_OAUTH_ENABLED=true.");
-    }
-    if (parsedEnvironment.MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH && parsedEnvironment.MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM) {
-      throw new Error("Set only one of MCP_OAUTH_SIGNING_PRIVATE_KEY_PATH or MCP_OAUTH_SIGNING_PRIVATE_KEY_PEM.");
-    }
-  }
-
   const digest = resolveDigestConfig(parsedEnvironment, digestEnabled);
 
   return {

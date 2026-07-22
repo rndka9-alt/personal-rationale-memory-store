@@ -1,11 +1,26 @@
-import { readFileSync } from "node:fs";
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign, timingSafeEqual, verify } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
-import type { AppConfig } from "../config.js";
 
-type OAuthConfig = AppConfig["mcp"]["oauth"];
+/**
+ * authorization server 동작에 필요한 값 전부.
+ * 환경변수 이름이나 키 파일 경로처럼 앱 레이어에서만 의미 있는 표현은 담지 않는다 —
+ * 해석은 호출자가 끝내고 여기에는 값만 넘긴다.
+ */
+export type OAuthServerOptions = {
+  issuer: string;
+  clientId: string;
+  redirectUris: string[];
+  loginCode: string;
+  // 없으면 기동할 때마다 RSA 키를 새로 만든다. 그 경우 재시작 이전에 발급한 토큰은 모두 검증에 실패한다.
+  signingPrivateKeyPem: string | undefined;
+  accessTokenTtlSeconds: number;
+  loginSessionTtlSeconds: number;
+  userSubject: string;
+  scopes: string[];
+  requiredScopes: string[];
+};
 
 const authorizationRequestSchema = z.object({
   response_type: z.literal("code"),
@@ -80,13 +95,6 @@ type RsaPublicJwk = {
 const authorizationCodeTtlMilliseconds = 5 * 60 * 1000;
 const loginSessionCookieName = "__Host-rationale_memory_oauth_session";
 
-export function createOAuthAuthorizationServer(config: OAuthConfig) {
-  if (!config.enabled) {
-    return undefined;
-  }
-  return new OAuthAuthorizationServer(config);
-}
-
 export class OAuthAuthorizationServer {
   private readonly authorizationCodes = new Map<string, AuthorizationCodeRecord>();
   private readonly privateKey: KeyObject;
@@ -95,11 +103,10 @@ export class OAuthAuthorizationServer {
   private readonly issuer: string;
   private readonly resource: string;
 
-  constructor(private readonly config: OAuthConfig) {
-    const configuredPrivateKey = loadConfiguredPrivateKey(config);
-    if (configuredPrivateKey) {
-      this.privateKey = configuredPrivateKey;
-      this.publicKey = createPublicKey(configuredPrivateKey);
+  constructor(private readonly options: OAuthServerOptions) {
+    if (options.signingPrivateKeyPem) {
+      this.privateKey = createPrivateKey(options.signingPrivateKeyPem);
+      this.publicKey = createPublicKey(this.privateKey);
     } else {
       const keyPair = generateKeyPairSync("rsa", {
         modulusLength: 2048
@@ -108,7 +115,7 @@ export class OAuthAuthorizationServer {
       this.publicKey = keyPair.publicKey;
     }
     this.keyId = createKeyId(this.publicKey);
-    this.issuer = requireConfiguredValue(config.publicUrl, "MCP_PUBLIC_URL");
+    this.issuer = options.issuer;
     this.resource = this.issuer;
   }
 
@@ -116,7 +123,7 @@ export class OAuthAuthorizationServer {
     return {
       resource: this.resource,
       authorization_servers: [this.issuer],
-      scopes_supported: this.config.scopes,
+      scopes_supported: this.options.scopes,
       resource_documentation: `${this.issuer}/`
     };
   }
@@ -131,7 +138,7 @@ export class OAuthAuthorizationServer {
       grant_types_supported: ["authorization_code"],
       token_endpoint_auth_methods_supported: ["none"],
       code_challenge_methods_supported: ["S256"],
-      scopes_supported: this.config.scopes,
+      scopes_supported: this.options.scopes,
       subject_types_supported: ["public"],
       id_token_signing_alg_values_supported: ["RS256"],
       userinfo_endpoint: `${this.issuer}/oauth/userinfo`
@@ -205,7 +212,7 @@ export class OAuthAuthorizationServer {
 
   authorize(searchParams: URLSearchParams): AuthorizationResult {
     const loginCode = searchParams.get("login_code");
-    if (loginCode === null || !secureEquals(loginCode, requireConfiguredValue(this.config.loginCode, "MCP_OAUTH_LOGIN_CODE"))) {
+    if (loginCode === null || !secureEquals(loginCode, this.options.loginCode)) {
       throw new OAuthHttpError(401, "invalid_login", "Invalid login code.");
     }
 
@@ -250,7 +257,7 @@ export class OAuthAuthorizationServer {
       "resource"
     ]));
 
-    if (request.client_id !== this.config.clientId) {
+    if (request.client_id !== this.options.clientId) {
       throw new OAuthHttpError(400, "invalid_client", "Unknown OAuth client.");
     }
 
@@ -280,12 +287,12 @@ export class OAuthAuthorizationServer {
     const response: Record<string, string | number> = {
       access_token: accessToken,
       token_type: "Bearer",
-      expires_in: this.config.accessTokenTtlSeconds,
+      expires_in: this.options.accessTokenTtlSeconds,
       scope: codeRecord.scope
     };
 
     if (codeRecord.scope.split(" ").includes("openid")) {
-      response.id_token = this.signToken("id", codeRecord.scope, this.config.clientId);
+      response.id_token = this.signToken("id", codeRecord.scope, this.options.clientId);
     }
 
     return response;
@@ -312,7 +319,7 @@ export class OAuthAuthorizationServer {
     }
 
     const tokenScopes = payload.scope.split(" ");
-    for (const requiredScope of this.config.requiredScopes) {
+    for (const requiredScope of this.options.requiredScopes) {
       if (!tokenScopes.includes(requiredScope)) {
         return undefined;
       }
@@ -337,7 +344,7 @@ export class OAuthAuthorizationServer {
   }
 
   createAuthenticateHeader() {
-    return `Bearer resource_metadata="${this.issuer}/.well-known/oauth-protected-resource", scope="${this.config.requiredScopes.join(" ")}"`;
+    return `Bearer resource_metadata="${this.issuer}/.well-known/oauth-protected-resource", scope="${this.options.requiredScopes.join(" ")}"`;
   }
 
   private parseAuthorizationRequest(searchParams: URLSearchParams) {
@@ -352,10 +359,10 @@ export class OAuthAuthorizationServer {
       "resource"
     ]));
 
-    if (request.client_id !== this.config.clientId) {
+    if (request.client_id !== this.options.clientId) {
       throw new OAuthHttpError(400, "invalid_client", "Unknown OAuth client.");
     }
-    if (!this.config.redirectUris.includes(request.redirect_uri)) {
+    if (!this.options.redirectUris.includes(request.redirect_uri)) {
       throw new OAuthHttpError(400, "invalid_request", "Redirect URI is not allowed.");
     }
     if (request.resource && !resourceIdentifiersMatch(request.resource, this.resource)) {
@@ -370,9 +377,9 @@ export class OAuthAuthorizationServer {
   }
 
   private resolveScope(scope: string | undefined) {
-    const requestedScopes = scope ? scope.split(" ").filter((part) => part.length > 0) : this.config.scopes;
+    const requestedScopes = scope ? scope.split(" ").filter((part) => part.length > 0) : this.options.scopes;
     for (const requestedScope of requestedScopes) {
-      if (!this.config.scopes.includes(requestedScope)) {
+      if (!this.options.scopes.includes(requestedScope)) {
         throw new OAuthHttpError(400, "invalid_scope", `Unsupported scope: ${requestedScope}`);
       }
     }
@@ -389,9 +396,9 @@ export class OAuthAuthorizationServer {
       },
       {
         iss: this.issuer,
-        sub: this.config.userSubject,
+        sub: this.options.userSubject,
         aud: audience,
-        exp: nowSeconds + this.config.accessTokenTtlSeconds,
+        exp: nowSeconds + this.options.accessTokenTtlSeconds,
         iat: nowSeconds,
         scope,
         token_use: tokenUse,
@@ -411,9 +418,9 @@ export class OAuthAuthorizationServer {
       },
       {
         iss: this.issuer,
-        sub: this.config.userSubject,
+        sub: this.options.userSubject,
         aud: this.issuer,
-        exp: nowSeconds + this.config.loginSessionTtlSeconds,
+        exp: nowSeconds + this.options.loginSessionTtlSeconds,
         iat: nowSeconds,
         token_use: "login_session"
       },
@@ -421,7 +428,7 @@ export class OAuthAuthorizationServer {
     );
     return [
       `${loginSessionCookieName}=${token}`,
-      `Max-Age=${this.config.loginSessionTtlSeconds}`,
+      `Max-Age=${this.options.loginSessionTtlSeconds}`,
       "Path=/",
       "HttpOnly",
       "Secure",
@@ -443,7 +450,7 @@ export class OAuthAuthorizationServer {
     const payload = parsedPayload.data;
     const nowSeconds = Math.floor(Date.now() / 1000);
     return payload.iss === this.issuer
-      && payload.sub === this.config.userSubject
+      && payload.sub === this.options.userSubject
       && payload.aud === this.issuer
       && payload.exp > nowSeconds;
   }
@@ -593,22 +600,6 @@ function signJwt(header: Record<string, unknown>, payload: Record<string, unknow
   return `${encodedHeader}.${encodedPayload}.${base64UrlEncode(signature)}`;
 }
 
-function loadConfiguredPrivateKey(config: OAuthConfig) {
-  if (config.signingPrivateKeyPath && config.signingPrivateKeyPem) {
-    throw new Error("Set only one OAuth signing private key source.");
-  }
-
-  if (config.signingPrivateKeyPath) {
-    return createPrivateKey(readFileSync(config.signingPrivateKeyPath, "utf8"));
-  }
-
-  if (config.signingPrivateKeyPem) {
-    return createPrivateKey(config.signingPrivateKeyPem.replace(/\\n/g, "\n"));
-  }
-
-  return undefined;
-}
-
 function createKeyId(publicKey: KeyObject) {
   const publicJwk = exportRsaPublicJwk(publicKey);
   return createHash("sha256")
@@ -703,13 +694,6 @@ function secureEquals(actual: string, expected: string) {
     return false;
   }
   return timingSafeEqual(actualBuffer, expectedBuffer);
-}
-
-function requireConfiguredValue(value: string | undefined, name: string) {
-  if (!value) {
-    throw new Error(`${name} is required.`);
-  }
-  return value;
 }
 
 function escapeHtml(value: string) {
