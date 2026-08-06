@@ -9,6 +9,7 @@ import { MemoryFileStore } from "../memory/fileStore.js";
 import { DigestViewService } from "../memory/digestViewService.js";
 import { IndexingService } from "../memory/indexingService.js";
 import { LlmRequestLogService } from "../memory/llmRequestLogService.js";
+import { NoteDiaryService } from "../memory/noteDiaryService.js";
 import { NoteService } from "../memory/noteService.js";
 import { RationaleService } from "../memory/rationaleService.js";
 import { RecapService } from "../memory/recapService.js";
@@ -41,6 +42,7 @@ const digestViewService = new DigestViewService(pool);
 const recapService = new RecapService(pool);
 const digestConfig = config.digest;
 const recapSnapshotService = new RecapSnapshotService(pool, digestConfig.enabled ? digestConfig : null);
+const noteDiaryService = new NoteDiaryService(pool, digestConfig.enabled ? digestConfig : null);
 const clientDirectory = path.resolve(process.cwd(), "dist/web/client");
 
 await runMigrations(pool);
@@ -199,6 +201,51 @@ async function routeApiRequest(
     const run = await recapSnapshotService.getRun(recapRunMatch.id);
     if (!run) {
       writeJson(response, 404, { error: "Recap run not found" });
+      return;
+    }
+    writeJson(response, 200, run);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/diary/chapters") {
+    const chapters = await noteDiaryService.listChapters();
+    writeJson(response, 200, {
+      chapters,
+      synthesisEnabled: noteDiaryService.synthesisEnabled
+    });
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/diary/snapshot") {
+    const snapshot = await noteDiaryService.getSnapshot(
+      readDiaryWeekStart(url.searchParams.get("weekStart"))
+    );
+    writeJson(response, 200, {
+      ...snapshot,
+      synthesisEnabled: noteDiaryService.synthesisEnabled
+    });
+    return;
+  }
+
+  if (method === "POST" && url.pathname === "/api/diary/refresh") {
+    if (!noteDiaryService.synthesisEnabled) {
+      writeJson(response, 503, { error: "Diary synthesis requires DIGEST_ENABLED=true." });
+      return;
+    }
+    const body = await readJsonBody(request);
+    const result = await noteDiaryService.requestRefresh(
+      readDiaryRefreshWeekStart(body),
+      readDiaryForceFlag(body)
+    );
+    writeJson(response, 202, result);
+    return;
+  }
+
+  const diaryRunMatch = matchDiaryRunPath(url.pathname);
+  if (diaryRunMatch && method === "GET") {
+    const run = await noteDiaryService.getRun(diaryRunMatch.id);
+    if (!run) {
+      writeJson(response, 404, { error: "Diary run not found" });
       return;
     }
     writeJson(response, 200, run);
@@ -399,6 +446,40 @@ function readRecapForceFlag(body: unknown) {
     throw new Error("force must be a boolean.");
   }
   return body.force;
+}
+
+function readDiaryWeekStart(value: string | null) {
+  if (value === null || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`weekStart must be a YYYY-MM-DD date string: ${value}`);
+  }
+  return value;
+}
+
+function readDiaryRefreshWeekStart(body: unknown) {
+  if (!isRecord(body)) {
+    throw new Error("Diary refresh body must be an object.");
+  }
+  const weekStart = body.weekStart;
+  if (typeof weekStart !== "string") {
+    throw new Error("weekStart must be a YYYY-MM-DD date string.");
+  }
+  return readDiaryWeekStart(weekStart);
+}
+
+function readDiaryForceFlag(body: unknown) {
+  if (!isRecord(body) || body.force === undefined) {
+    return false;
+  }
+  if (typeof body.force !== "boolean") {
+    throw new Error("force must be a boolean.");
+  }
+  return body.force;
+}
+
+function matchDiaryRunPath(pathname: string) {
+  const match = /^\/api\/diary\/runs\/([^/]+)$/.exec(pathname);
+  const id = match?.[1];
+  return id ? { id: decodeURIComponent(id) } : undefined;
 }
 
 function matchRecapRunPath(pathname: string) {

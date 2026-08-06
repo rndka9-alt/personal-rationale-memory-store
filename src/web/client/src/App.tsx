@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
@@ -18,6 +18,16 @@ import {
   type DigestOperation,
   type DigestRun
 } from "./api/digest";
+import {
+  fetchDiaryChapters,
+  fetchDiaryRun,
+  fetchDiarySnapshot,
+  requestDiaryRefresh,
+  type DiaryChapter,
+  type DiaryEpisode,
+  type DiaryJournal,
+  type DiarySnapshot
+} from "./api/diary";
 import {
   fetchLlmRequests,
   fetchLlmRequestSummary,
@@ -54,6 +64,7 @@ import {
   ArrowLeftIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  DiaryIcon,
   DigestIcon,
   LlmIcon,
   MemoryIcon,
@@ -67,7 +78,7 @@ import type { NoteRecord } from "./types/note";
 import type { Pagination } from "./types/pagination";
 import type { ProjectContext, UsageFeedbackCounts } from "./types/review";
 
-type MainView = "memories" | "notes" | "digest" | "llm" | "recap";
+type MainView = "memories" | "notes" | "diary" | "digest" | "llm" | "recap";
 
 type ToastState = {
   message: string;
@@ -172,6 +183,7 @@ export function App() {
       <AppHeader mainView={mainView} onViewChange={handleViewChange} />
       {mainView === "memories" ? <MemoryLibrary /> : null}
       {mainView === "notes" ? <NotesLibrary /> : null}
+      {mainView === "diary" ? <DiaryDashboard /> : null}
       {mainView === "digest" ? <DigestDashboard /> : null}
       {mainView === "llm" ? <LlmDashboard /> : null}
       {mainView === "recap" ? <RecapDashboard /> : null}
@@ -181,7 +193,7 @@ export function App() {
 
 function readMainViewFromLocation(): MainView {
   const tab = new URLSearchParams(window.location.search).get("tab");
-  if (tab === "notes" || tab === "digest" || tab === "llm" || tab === "recap") {
+  if (tab === "notes" || tab === "diary" || tab === "digest" || tab === "llm" || tab === "recap") {
     return tab;
   }
   return "memories";
@@ -215,6 +227,12 @@ function AppHeader(props: {
             icon={<NoteIcon className="h-4 w-4" />}
             label="Notes"
             onClick={() => props.onViewChange("notes")}
+          />
+          <NavigationButton
+            active={props.mainView === "diary"}
+            icon={<DiaryIcon className="h-4 w-4" />}
+            label="Diary"
+            onClick={() => props.onViewChange("diary")}
           />
           <NavigationButton
             active={props.mainView === "digest"}
@@ -826,6 +844,381 @@ function NotesLibrary() {
       ) : null}
     </section>
   );
+}
+
+function DiaryDashboard() {
+  const [selectedWeekStart, setSelectedWeekStart] = useState<string | null>(null);
+  const chaptersQuery = useQuery({
+    queryKey: ["diary-chapters"],
+    queryFn: fetchDiaryChapters
+  });
+
+  if (chaptersQuery.isLoading) {
+    return (
+      <section className="mx-auto max-w-5xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8" aria-label="Loading diary">
+        <div className="h-12 w-52 animate-pulse rounded-xl bg-stroke" />
+        <div className="mt-10 h-10 w-full animate-pulse rounded-full bg-stroke" />
+        <div className="mt-6 h-96 animate-pulse rounded-3xl bg-white shadow-soft" />
+      </section>
+    );
+  }
+  if (chaptersQuery.error) {
+    return (
+      <section className="mx-auto max-w-5xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <InlineError message={chaptersQuery.error.message} />
+      </section>
+    );
+  }
+  const chaptersResponse = chaptersQuery.data;
+  if (!chaptersResponse) {
+    throw new Error("Diary chapters query completed without data.");
+  }
+  const chapters = chaptersResponse.chapters;
+  // 기본 선택은 가장 최근의 완결된 주: 일기를 바로 읽거나 바로 만들 수 있는 챕터다.
+  const selectedChapter = chapters.find((chapter) => chapter.weekStart === selectedWeekStart)
+    ?? chapters.find((chapter) => chapter.completed)
+    ?? chapters[0];
+
+  return (
+    <section className="mx-auto max-w-5xl px-4 pb-24 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+      <header className="mb-8 sm:mb-10">
+        <p className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.17em] text-muted">Weekly diary</p>
+        <h1 className="font-display text-[2.7rem] leading-none tracking-[-0.045em] text-ink sm:text-5xl">일기장</h1>
+        <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
+          한 주의 노트를 에피소드로 엮어 다시 읽습니다. Asia/Seoul 기준, 월요일에 새 주가 시작돼요.
+        </p>
+      </header>
+
+      {chapters.length === 0 ? (
+        <EmptyState
+          title="아직 일기로 엮을 노트가 없어요"
+          description="노트가 쌓이면 주 단위 챕터가 여기에 나타납니다."
+        />
+      ) : (
+        <>
+          <DiaryChapterPicker
+            chapters={chapters}
+            selectedWeekStart={selectedChapter?.weekStart}
+            onSelect={setSelectedWeekStart}
+          />
+          {selectedChapter ? (
+            <DiaryChapterSection
+              key={selectedChapter.weekStart}
+              chapter={selectedChapter}
+              synthesisEnabled={chaptersResponse.synthesisEnabled}
+            />
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+function DiaryChapterPicker(props: {
+  chapters: DiaryChapter[];
+  selectedWeekStart?: string;
+  onSelect: (weekStart: string) => void;
+}) {
+  return (
+    <div className="mb-8 flex gap-2 overflow-x-auto pb-2" role="group" aria-label="Diary weeks">
+      {props.chapters.map((chapter) => {
+        const selected = chapter.weekStart === props.selectedWeekStart;
+        return (
+          <button
+            key={chapter.weekStart}
+            type="button"
+            className={`flex h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-xs font-semibold transition-all ${
+              selected ? "border-ink bg-ink text-white" : "border-stroke bg-white text-muted hover:text-ink"
+            }`}
+            aria-pressed={selected}
+            onClick={() => props.onSelect(chapter.weekStart)}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                chapter.snapshot
+                  ? "bg-sage"
+                  : chapter.completed
+                    ? selected ? "bg-white/40" : "bg-stroke-strong"
+                    : "bg-amber-400"
+              }`}
+              aria-hidden="true"
+            />
+            {formatDiaryWeekLabel(chapter.weekStart)}
+            <span className={`tabular-nums ${selected ? "text-white/60" : "text-faint"}`}>
+              {chapter.noteCount}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DiaryChapterSection(props: { chapter: DiaryChapter; synthesisEnabled: boolean }) {
+  const queryClient = useQueryClient();
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  // 종료 처리한 run을 기억해, 스냅샷 응답의 stale runningRunId가 완료된 run을 되살리는 루프를 막는다.
+  const handledRunsRef = useRef(new Set<string>());
+  const weekStart = props.chapter.weekStart;
+
+  const snapshotQuery = useQuery({
+    queryKey: ["diary-snapshot", weekStart],
+    queryFn: () => fetchDiarySnapshot(weekStart)
+  });
+  const runQuery = useQuery({
+    queryKey: ["diary-run", activeRunId],
+    queryFn: () => {
+      if (activeRunId === null) {
+        throw new Error("Diary run polling started without a run id.");
+      }
+      return fetchDiaryRun(activeRunId);
+    },
+    enabled: activeRunId !== null,
+    refetchInterval: (query) => (query.state.data?.status === "running" || query.state.data === undefined ? 2500 : false)
+  });
+
+  // 새로고침·주 이동으로 activeRunId를 잃어도, 서버가 알려주는 진행 중 run에 다시 붙는다.
+  const discoveredRunId = snapshotQuery.data?.runningRunId;
+  useEffect(() => {
+    if (discoveredRunId && activeRunId === null && !handledRunsRef.current.has(discoveredRunId)) {
+      setActiveRunId(discoveredRunId);
+    }
+  }, [activeRunId, discoveredRunId]);
+
+  useEffect(() => {
+    const run = runQuery.data;
+    if (!run || run.id !== activeRunId) {
+      return;
+    }
+    if (run.status === "succeeded") {
+      handledRunsRef.current.add(run.id);
+      setActiveRunId(null);
+      void queryClient.invalidateQueries({ queryKey: ["diary-snapshot", weekStart] });
+      void queryClient.invalidateQueries({ queryKey: ["diary-chapters"] });
+    }
+    if (run.status === "failed") {
+      handledRunsRef.current.add(run.id);
+      setActiveRunId(null);
+      setRunError(run.error ?? "일기 생성에 실패했어요. 잠시 후 다시 시도해 주세요.");
+    }
+  }, [activeRunId, queryClient, runQuery.data, weekStart]);
+
+  const refreshMutation = useMutation({
+    mutationFn: (force: boolean) => requestDiaryRefresh(weekStart, force),
+    onSuccess: (result) => {
+      setRunError(null);
+      if (result.status === "exists") {
+        void queryClient.invalidateQueries({ queryKey: ["diary-snapshot", weekStart] });
+        return;
+      }
+      setActiveRunId(result.runId);
+    },
+    onError: (error) => {
+      setRunError(error.message);
+    }
+  });
+
+  if (snapshotQuery.isLoading) {
+    return <div className="h-96 animate-pulse rounded-3xl bg-white shadow-soft" />;
+  }
+  if (snapshotQuery.error) {
+    return <InlineError message={snapshotQuery.error.message} />;
+  }
+  const snapshotResponse = snapshotQuery.data;
+  if (!snapshotResponse) {
+    throw new Error("Diary snapshot query completed without data.");
+  }
+
+  const snapshot = snapshotResponse.snapshot;
+  const generating = activeRunId !== null;
+
+  return (
+    <section>
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted">Chapter</p>
+          <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">
+            {formatDiaryWeekRange(props.chapter.weekStart, props.chapter.weekEnd)}
+          </h2>
+          <p className="mt-1 text-xs text-faint">
+            노트 {formatInteger(props.chapter.noteCount)}개
+            {snapshot ? ` · ${formatRequestDateTime(snapshot.generatedAt)} 생성` : ""}
+          </p>
+        </div>
+        {!props.synthesisEnabled ? (
+          <p className="text-xs text-faint">합성은 DIGEST_ENABLED=true에서만 가능해요</p>
+        ) : !props.chapter.completed ? (
+          <p className="text-xs text-faint">
+            이번 주가 끝나면 쓸 수 있어요 ({formatDiaryDayLabel(props.chapter.weekEnd)}부터)
+          </p>
+        ) : (
+          <button
+            type="button"
+            className={snapshot === null
+              ? "h-10 rounded-full bg-ink px-5 text-xs font-semibold text-white transition-opacity disabled:opacity-40"
+              : "h-10 rounded-full border border-stroke px-5 text-xs font-semibold text-muted transition-colors hover:border-ink hover:text-ink disabled:opacity-40"}
+            disabled={generating || refreshMutation.isPending}
+            onClick={() => refreshMutation.mutate(snapshot !== null)}
+          >
+            {generating || refreshMutation.isPending
+              ? "일기 쓰는 중..."
+              : snapshot === null
+                ? "일기 만들기"
+                : "다시 만들기"}
+          </button>
+        )}
+      </div>
+
+      {runError ? <div className="mb-4"><InlineError message={runError} /></div> : null}
+      {generating ? (
+        <div className="mb-4 rounded-3xl border border-stroke bg-white p-5 text-xs text-muted shadow-soft">
+          그 주의 노트를 다시 읽으며 일기를 쓰는 중이에요... 완성되면 여기 나타나요. 페이지를 떠나도 생성은 계속돼요.
+        </div>
+      ) : null}
+
+      {snapshot === null ? (
+        !generating ? (
+          <div className="rounded-3xl border border-dashed border-stroke bg-white/60 p-8 text-center">
+            <p className="text-sm font-semibold text-ink">아직 이 주의 일기가 없어요</p>
+            <p className="mt-2 text-xs text-muted">
+              {props.chapter.completed
+                ? `버튼을 누르면 노트 ${formatInteger(props.chapter.noteCount)}개를 에피소드로 엮어 드려요.`
+                : "이 주가 완결되면 일기를 만들 수 있어요."}
+            </p>
+          </div>
+        ) : null
+      ) : (
+        <DiaryEntry snapshot={snapshot} />
+      )}
+    </section>
+  );
+}
+
+function DiaryEntry(props: { snapshot: DiarySnapshot }) {
+  const result = props.snapshot.result;
+  return (
+    <article className="rounded-3xl border border-stroke bg-white shadow-soft">
+      <div className="px-5 py-8 sm:px-10 sm:py-10">
+        <blockquote className="border-b border-stroke pb-8">
+          <p className="font-display text-xl leading-relaxed tracking-[-0.02em] text-ink sm:text-2xl">
+            {result.intro}
+          </p>
+        </blockquote>
+
+        {result.episodes.map((episode, index) => (
+          <DiaryEpisodeSection key={index} episode={episode} index={index} />
+        ))}
+
+        {result.journal ? <DiaryJournalSection journal={result.journal} /> : null}
+
+        <p className="mt-10 border-t border-stroke pt-6 text-right font-display text-lg italic leading-relaxed text-ink/80">
+          {result.closing}
+        </p>
+        <p className="mt-6 text-[0.68rem] text-faint">
+          그 주의 노트 {formatInteger(result.stats.noteCount)}개 중 {formatInteger(result.stats.curatedNoteCount)}개 수록
+          · 활동 {formatInteger(result.stats.activeDayCount)}일
+          {result.stats.droppedNoteCount > 0
+            ? ` · 분량 제한으로 ${formatInteger(result.stats.droppedNoteCount)}개는 큐레이션에서 제외`
+            : ""}
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function DiaryEpisodeSection(props: { episode: DiaryEpisode; index: number }) {
+  return (
+    <section className="mt-10">
+      <p className="text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-faint">
+        Episode {String(props.index + 1).padStart(2, "0")}
+      </p>
+      <h3 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">{props.episode.title}</h3>
+      <p className="mt-2 text-sm leading-6 text-muted">{props.episode.caption}</p>
+
+      <div className="mt-5 space-y-3">
+        {props.episode.notes.map((note) => (
+          <div key={note.id} className="rounded-2xl bg-canvas px-4 py-3.5 sm:px-5">
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[0.66rem] text-faint">
+              <span className="font-semibold tabular-nums">{formatDiaryDayLabel(note.day)}</span>
+              {note.topic ? (
+                <span className="rounded-full bg-white px-2.5 py-0.5 font-semibold text-muted">{note.topic}</span>
+              ) : null}
+            </div>
+            <p className="whitespace-pre-wrap break-words text-sm leading-7 text-ink">{note.content}</p>
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-5 border-l-2 border-sage pl-4 text-sm italic leading-6 text-muted">
+        {props.episode.comment}
+      </p>
+    </section>
+  );
+}
+
+function DiaryJournalSection(props: { journal: DiaryJournal }) {
+  return (
+    <section className="mt-10 rounded-2xl bg-canvas px-5 py-6 sm:px-7 sm:py-7">
+      <p className="text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-faint">Journal</p>
+      <h3 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">기자수첩</h3>
+      <p className="mt-1 text-xs text-muted">이번 주, 기록자 자신의 이야기</p>
+
+      <div className="mt-5 space-y-3">
+        {props.journal.notes.map((note) => (
+          <div key={note.id} className="rounded-2xl bg-white px-4 py-3.5 sm:px-5">
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[0.66rem] text-faint">
+              <span className="font-semibold tabular-nums">{formatDiaryDayLabel(note.day)}</span>
+              {note.topic ? (
+                <span className="rounded-full bg-canvas px-2.5 py-0.5 font-semibold text-muted">{note.topic}</span>
+              ) : null}
+            </div>
+            <p className="whitespace-pre-wrap break-words text-sm leading-7 text-ink">{note.content}</p>
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-5 border-l-2 border-sage pl-4 text-sm italic leading-6 text-muted">
+        {props.journal.comment}
+      </p>
+    </section>
+  );
+}
+
+const diaryWeekdayLabels = ["일", "월", "화", "수", "목", "금", "토"];
+
+function formatDiaryWeekLabel(weekStart: string) {
+  return `${formatDiaryShortDate(weekStart)} – ${formatDiaryShortDate(shiftDiaryDate(weekStart, 6))}`;
+}
+
+function formatDiaryWeekRange(weekStart: string, weekEndExclusive: string) {
+  const lastDay = shiftDiaryDate(weekEndExclusive, -1);
+  return `${formatDiaryLongDate(weekStart)} – ${formatDiaryLongDate(lastDay)}`;
+}
+
+function formatDiaryLongDate(date: string) {
+  return `${Number(date.slice(5, 7))}월 ${Number(date.slice(8, 10))}일`;
+}
+
+function formatDiaryShortDate(date: string) {
+  return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+}
+
+function formatDiaryDayLabel(day: string) {
+  const weekday = diaryWeekdayLabels[new Date(`${day}T00:00:00Z`).getUTCDay()];
+  return weekday === undefined
+    ? formatDiaryShortDate(day)
+    : `${formatDiaryShortDate(day)} (${weekday})`;
+}
+
+// 일기 날짜는 서버가 이미 KST 달력 날짜 문자열로 내려주므로 UTC 자정으로 해석해 산술만 한다.
+function shiftDiaryDate(date: string, days: number) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid diary date: ${date}`);
+  }
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
 }
 
 function DigestDashboard() {
