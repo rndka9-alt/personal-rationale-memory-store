@@ -51,7 +51,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
   const definitions: ToolDefinition[] = [
     {
       name: "search_rationales",
-      description: "Search rationale memories with lexical, vector, and metadata signals. Result ids identify the current revision snapshot. Write natural-language queries in Korean while keeping code identifiers, exact search terms, and proper nouns unchanged. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
+      description: "Search rationale memories with lexical, vector, and metadata signals. Result ids identify the current revision snapshot. Each result summary is an excerpt anchored to the query terms (or the body head when no term matches), with `…` marking trimmed edges — never conclude information is absent from a summary alone; read the full body with get_rationale first. Write natural-language queries in Korean while keeping code identifiers, exact search terms, and proper nouns unchanged. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
       schema: searchToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,

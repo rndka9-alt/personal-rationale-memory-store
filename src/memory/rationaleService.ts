@@ -12,6 +12,7 @@ import {
   listAllMemoryEntriesByAcceptanceState,
   listMemoryCatalogPage,
   listMemoryEntriesByAcceptanceState,
+  listMemoryRevisionContents,
   listRecentMemoryEntries,
   listReviewQueueMemoryEntries,
   listReviewQueueMemoryPage,
@@ -55,6 +56,7 @@ import {
   type SearchProjectFilter
 } from "./schema.js";
 import { fingerprintRationaleContent } from "./rationaleContentFingerprint.js";
+import { buildHeadSnippet, buildQuerySnippet } from "./querySnippet.js";
 import { parseRationaleMarkdown, serializeRationaleEntry } from "./fileStore.js";
 
 const rationalePatchSchema = z.object({
@@ -898,6 +900,10 @@ export class RationaleService {
       filters,
       usageFeedbackCounts
     ).slice(0, parsedInput.limit);
+    // compose 경로는 정적 summary를 유지한다 — 발췌 적용 여부는 미결
+    if (sourceKind === "search") {
+      await this.applyQueryAnchoredSummaries(results, parsedInput.query);
+    }
     logInfo("Searching rationales completed.", {
       query: parsedInput.query,
       resultCount: results.length,
@@ -926,6 +932,28 @@ export class RationaleService {
     }
 
     return { results, warnings };
+  }
+
+  // 본문 SSOT는 memory_revisions.content — 발췌도 리비전 스냅샷에서 읽는다
+  private async applyQueryAnchoredSummaries(
+    results: Array<{ currentRevisionId?: string; summary?: string }>,
+    query: string
+  ) {
+    const revisionIds = results
+      .map((entry) => entry.currentRevisionId)
+      .filter((revisionId): revisionId is string => typeof revisionId === "string");
+    const revisionContents = await listMemoryRevisionContents(this.pool, revisionIds);
+    for (const entry of results) {
+      const content = entry.currentRevisionId
+        ? revisionContents.get(entry.currentRevisionId)
+        : undefined;
+      if (content === undefined) {
+        // 리비전 미백필 legacy entry는 저장된 summary를 그대로 둔다
+        continue;
+      }
+      const body = parseRationaleMarkdown(content).body;
+      entry.summary = buildQuerySnippet(body, query) ?? buildHeadSnippet(body);
+    }
   }
 
   async recordUsageEvents(events: RecordUsageEventInput[]) {

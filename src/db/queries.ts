@@ -1296,6 +1296,18 @@ export async function searchMemoryEntriesVector(
   return result.rows.map(mapMemoryEntryRow);
 }
 
+export async function listMemoryRevisionContents(pool: pg.Pool, revisionIds: string[]) {
+  if (revisionIds.length === 0) {
+    return new Map<string, string>();
+  }
+
+  const result = await pool.query(
+    "SELECT id, content FROM memory_revisions WHERE id = ANY($1)",
+    [revisionIds]
+  );
+  return new Map<string, string>(result.rows.map((row) => [String(row.id), String(row.content)]));
+}
+
 function appendSearchFilters(conditions: string[], values: unknown[], filters: MemorySearchFilters) {
   if (!filters.includeDeprecated) {
     conditions.push("e.acceptance_state <> 'deprecated'");

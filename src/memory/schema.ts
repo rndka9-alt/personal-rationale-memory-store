@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { flattenBodyText } from "./querySnippet.js";
 
 export const sourceMetadataSchema = z.object({
   kind: z.string().min(1),
@@ -274,12 +275,7 @@ export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string
 }
 
 export function summarizeRationale(entry: RationaleEntry) {
-  return entry.body
-    .split("\n")
-    .map((line) => line.replace(/^#{1,6}\s+/, "").replace(/^[-*]\s+/, "").trim())
-    .filter((line) => line.length > 0)
-    .join(" ")
-    .slice(0, 500);
+  return flattenBodyText(entry.body).slice(0, 500);
 }
 
 function readOptionalMetadataString(metadata: Record<string, unknown>, key: string) {
