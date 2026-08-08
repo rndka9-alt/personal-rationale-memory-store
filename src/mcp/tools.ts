@@ -79,7 +79,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task. The task field is a retrieval query, not an instruction to an agent: state the topic in 1-3 Korean sentences packed with key entities and terms, keeping code identifiers and proper nouns unchanged, and do not ask for judgment or actions. Pass project (current repo) to boost rationale memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
+      description: "Compose bounded prompt-ready rationale context for a task. Each retrieved memory appears as an excerpt anchored to the task terms, with `…` marking trimmed edges — never conclude information is absent from an excerpt alone; read the full body with get_rationale first. The task field is a retrieval query, not an instruction to an agent: state the topic in 1-3 Korean sentences packed with key entities and terms, keeping code identifiers and proper nouns unchanged, and do not ask for judgment or actions. Pass project (current repo) to boost rationale memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
       schema: composeInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,

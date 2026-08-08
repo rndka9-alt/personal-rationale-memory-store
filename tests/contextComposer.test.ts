@@ -38,6 +38,19 @@ describe("compose context relevance floor", () => {
     expect(recordedEvents.map((event) => event.revisionId)).toEqual(["V-relevant", "V-lexical"]);
   });
 
+  it("renders every retrieved memory as an excerpt summary with a get_rationale hint", async () => {
+    const excerptEntry = createSearchResult("R-relevant", "Relevant memory", 0.9);
+    excerptEntry.summary = "…query-anchored excerpt…";
+    const { service } = createRationaleServiceStub([excerptEntry]);
+
+    const composer = new ContextComposer(dataDirectory, service);
+    const context = await composer.compose({ task: "test task" });
+
+    expect(context).not.toContain("Retrieved full rationale");
+    expect(context).toContain("get_rationale");
+    expect(context).toContain("- summary: …query-anchored excerpt…");
+  });
+
   it("appends a feedback footer so clients have an in-context trigger", async () => {
     const { service } = createRationaleServiceStub([
       createSearchResult("R-relevant", "Relevant memory", 0.9)
@@ -95,30 +108,6 @@ function createRationaleServiceStub(results: MemoryEntryRecord[]) {
   const recordedEvents: RecordedUsageEvent[] = [];
   const stub = {
     searchWithDiagnostics: async () => ({ results, warnings: [] }),
-    getRationaleRevision: async (id: string) => ({
-      id,
-      entryId: "R-internal",
-      revisionNumber: 0,
-      entry: {
-        frontmatter: {
-          id: "R-internal",
-          type: "rationale",
-          status: "candidate",
-          acceptanceState: "candidate",
-          reviewState: "unreviewed",
-          decisionState: "unknown",
-          scope: "general",
-          domains: [],
-          intents: [],
-          modes: [],
-          confidence: 0.5,
-          metadata: {}
-        },
-        title: `Title for ${id}`,
-        body: "Full entry body.",
-        rawMarkdown: ""
-      }
-    }),
     recordUsageEvents: async (events: RecordedUsageEvent[]) => {
       recordedEvents.push(...events);
       return events.length;

@@ -900,10 +900,7 @@ export class RationaleService {
       filters,
       usageFeedbackCounts
     ).slice(0, parsedInput.limit);
-    // compose 경로는 정적 summary를 유지한다 — 발췌 적용 여부는 미결
-    if (sourceKind === "search") {
-      await this.applyQueryAnchoredSummaries(results, parsedInput.query);
-    }
+    await this.applyQueryAnchoredSummaries(results, parsedInput.query);
     logInfo("Searching rationales completed.", {
       query: parsedInput.query,
       resultCount: results.length,

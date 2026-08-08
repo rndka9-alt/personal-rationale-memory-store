@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
 import type { RationaleSearchWarning, RationaleService } from "./rationaleService.js";
-import type { MemoryEntryRecord, RationaleEntry, SearchProjectFilter } from "./schema.js";
+import type { MemoryEntryRecord, SearchProjectFilter } from "./schema.js";
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
 // Historical note-typed memory entries predate the separate plain note store.
@@ -22,18 +22,19 @@ const feedbackFooter = [
   "## Feedback",
   "- After acting on this pack, call rate_memory per memory id: eventType \"applied\" if it shaped your work, \"dismissed\" if it was retrieved but not useful."
 ].join("\n");
+// Tool descriptions alone rarely change client behavior (see feedbackFooter), so the pack carries the hint.
+const excerptHint =
+  "- Each summary below is an excerpt anchored to the task terms; `…` marks trimmed text. Read the full body with get_rationale before concluding information is absent.";
 
 export type ComposeContextInput = {
   task: string;
   project?: SearchProjectFilter;
   tokenBudget?: number;
-  includeFullTopK?: number;
 };
 
 export type ContinueContextInput = {
   cursor: string;
   tokenBudget?: number;
-  includeFullTopK?: number;
 };
 
 export class ContextComposer {
@@ -46,12 +47,10 @@ export class ContextComposer {
 
   async compose(input: ComposeContextInput) {
     const tokenBudget = input.tokenBudget ?? 1200;
-    const includeFullTopK = input.includeFullTopK ?? 2;
     logInfo("Composing rationale context started.", {
       task: input.task,
       project: input.project,
-      tokenBudget,
-      includeFullTopK
+      tokenBudget
     });
     const kernel = await this.loadKernel(tokenBudget);
     const searchResult = await this.rationaleService.searchWithDiagnostics({
@@ -80,7 +79,8 @@ export class ContextComposer {
       "## Stable kernel",
       kernel,
       "",
-      "## Retrieved rationales"
+      "## Retrieved rationales",
+      excerptHint
     ];
 
     // Reserve footer tokens up front so appending it never overshoots the budget.
@@ -90,12 +90,8 @@ export class ContextComposer {
 
     for (const result of relevantResults) {
       const revisionId = readCurrentRevisionId(result);
-      const rationaleSnapshot = await this.rationaleService.getRationaleRevision(revisionId);
-      const includeKind = index < includeFullTopK ? "full" : "summary";
-      const fullText = includeKind === "full"
-        ? formatFullEntry(rationaleSnapshot.entry, result, revisionId)
-        : formatSummary(result, revisionId);
-      const nextTokens = estimateTokens(fullText);
+      const summaryText = formatSummary(result, revisionId);
+      const nextTokens = estimateTokens(summaryText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context stopped at token budget.", {
           usedTokens,
@@ -106,13 +102,12 @@ export class ContextComposer {
         break;
       }
 
-      lines.push(fullText);
+      lines.push(summaryText);
       usedTokens += nextTokens;
       usageEvents.push(createComposedUsageEvent(result, {
         revisionId,
         sourceKind: "compose_context",
         task: input.task,
-        includeKind,
         retrievalRank: index + 1,
         tokenEstimate: nextTokens
       }));
@@ -146,7 +141,6 @@ export class ContextComposer {
 
   async continueContext(input: ContinueContextInput) {
     const tokenBudget = input.tokenBudget ?? 1200;
-    const includeFullTopK = input.includeFullTopK ?? 0;
     const snapshot = this.continuationCache.get(input.cursor);
     if (!snapshot) {
       throw new Error("Continuation cursor was evicted. Run compose_context again.");
@@ -156,7 +150,6 @@ export class ContextComposer {
       cursor: input.cursor,
       task: snapshot.task,
       tokenBudget,
-      includeFullTopK,
       position: snapshot.position,
       candidateCount: snapshot.candidates.length
     });
@@ -164,7 +157,8 @@ export class ContextComposer {
     const lines = [
       "# Rationale Context Continuation",
       "",
-      "## Retrieved rationales"
+      "## Retrieved rationales",
+      excerptHint
     ];
 
     let usedTokens = estimateTokens(lines.join("\n"));
@@ -178,12 +172,8 @@ export class ContextComposer {
       }
 
       const revisionId = readCurrentRevisionId(result);
-      const rationaleSnapshot = await this.rationaleService.getRationaleRevision(revisionId);
-      const includeKind = includedCount < includeFullTopK ? "full" : "summary";
-      const fullText = includeKind === "full"
-        ? formatFullEntry(rationaleSnapshot.entry, result, revisionId)
-        : formatSummary(result, revisionId);
-      const nextTokens = estimateTokens(fullText);
+      const summaryText = formatSummary(result, revisionId);
+      const nextTokens = estimateTokens(summaryText);
       if (usedTokens + nextTokens > tokenBudget) {
         logInfo("Rationale context continuation stopped at token budget.", {
           cursor: input.cursor,
@@ -196,14 +186,13 @@ export class ContextComposer {
         break;
       }
 
-      lines.push(fullText);
+      lines.push(summaryText);
       usedTokens += nextTokens;
       usageEvents.push(createComposedUsageEvent(result, {
         revisionId,
         sourceKind: "continue_context",
         sourceRef: input.cursor,
         task: snapshot.task,
-        includeKind,
         retrievalRank: position + 1,
         tokenEstimate: nextTokens,
         continuationPosition: position
@@ -291,22 +280,6 @@ function formatContinuationManifest(cursor: string, candidates: MemoryEntryRecor
   ].join("\n");
 }
 
-function formatFullEntry(entry: RationaleEntry, result: MemoryEntryRecord, revisionId: string) {
-  return [
-    "### Retrieved full rationale",
-    "",
-    `- id: ${revisionId}`,
-    `- type: ${result.type}`,
-    `- acceptance state: ${result.acceptanceState}`,
-    `- review state: ${result.reviewState}`,
-    `- decision state: ${result.decisionState}`,
-    "",
-    `# ${entry.title}`,
-    "",
-    entry.body.trim()
-  ].join("\n");
-}
-
 function createComposedUsageEvent(
   result: MemoryEntryRecord,
   options: {
@@ -314,7 +287,6 @@ function createComposedUsageEvent(
     sourceKind: string;
     sourceRef?: string;
     task: string;
-    includeKind: "full" | "summary";
     retrievalRank: number;
     tokenEstimate: number;
     continuationPosition?: number;
@@ -328,7 +300,8 @@ function createComposedUsageEvent(
     sourceRef: options.sourceRef,
     task: options.task,
     metadata: {
-      include_kind: options.includeKind,
+      // 과거 full/summary 혼합기 이벤트와의 비교 축을 유지하기 위한 상수
+      include_kind: "summary",
       retrieval_rank: options.retrievalRank,
       token_estimate: options.tokenEstimate,
       continuation_position: options.continuationPosition,
