@@ -9,6 +9,7 @@ import { MemoryFileStore } from "../memory/fileStore.js";
 import { DigestViewService } from "../memory/digestViewService.js";
 import { IndexingService } from "../memory/indexingService.js";
 import { LlmRequestLogService } from "../memory/llmRequestLogService.js";
+import { MemoryIndexService } from "../memory/memoryIndexService.js";
 import { NoteDiaryService } from "../memory/noteDiaryService.js";
 import { NoteService } from "../memory/noteService.js";
 import { RationaleService } from "../memory/rationaleService.js";
@@ -35,7 +36,9 @@ const pool = createPool(config.databaseUrl);
 const fileStore = new MemoryFileStore(config.dataDirectory);
 const embeddingProvider = createEmbeddingProvider(config);
 const indexingService = new IndexingService(pool, fileStore, embeddingProvider, config);
-const rationaleService = new RationaleService(pool, fileStore, indexingService, embeddingProvider, config);
+// 리뷰 UI의 deprecate/restore도 메모리 색인 수명주기를 굴려야 하므로 웹 프로세스에도 배선한다.
+const memoryIndexService = new MemoryIndexService(pool, config.digest.enabled ? config.digest : null);
+const rationaleService = new RationaleService(pool, fileStore, indexingService, embeddingProvider, config, memoryIndexService);
 const noteService = new NoteService(pool);
 const llmRequestLogService = new LlmRequestLogService(pool);
 const digestViewService = new DigestViewService(pool);

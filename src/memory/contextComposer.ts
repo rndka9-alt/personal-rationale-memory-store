@@ -2,8 +2,13 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logInfo } from "../diagnostics/index.js";
+import type { MemoryIndexComposeLine } from "../db/queries.js";
 import type { RationaleSearchWarning, RationaleService } from "./rationaleService.js";
 import type { MemoryEntryRecord, SearchProjectFilter } from "./schema.js";
+
+type MemoryIndexSource = {
+  listComposeLines(): Promise<MemoryIndexComposeLine[]>;
+};
 
 type UsageEventInput = Parameters<RationaleService["recordUsageEvents"]>[0][number];
 // Historical note-typed memory entries predate the separate plain note store.
@@ -42,7 +47,8 @@ export class ContextComposer {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly rationaleService: RationaleService
+    private readonly rationaleService: RationaleService,
+    private readonly memoryIndexService?: MemoryIndexSource
   ) {}
 
   async compose(input: ComposeContextInput) {
@@ -53,6 +59,7 @@ export class ContextComposer {
       tokenBudget
     });
     const kernel = await this.loadKernel(tokenBudget);
+    const memoryIndexLines = await this.memoryIndexService?.listComposeLines() ?? [];
     const searchResult = await this.rationaleService.searchWithDiagnostics({
       query: input.task,
       project: input.project,
@@ -75,6 +82,7 @@ export class ContextComposer {
     const lines = [
       "# Rationale Context Pack",
       ...formatSearchWarnings(searchResult.warnings),
+      ...formatMemoryIndexSection(memoryIndexLines),
       "",
       "## Stable kernel",
       kernel,
@@ -235,6 +243,32 @@ export class ContextComposer {
     const text = await readFile(kernelPath, "utf8");
     return truncateToTokens(text.trim(), Math.min(250, Math.floor(tokenBudget / 4)));
   }
+}
+
+function formatMemoryIndexSection(indexLines: MemoryIndexComposeLine[]) {
+  if (indexLines.length === 0) {
+    return [];
+  }
+
+  const output = [
+    "",
+    "## Memory index",
+    "- Recurring-knowledge trigger lines. When one matches the current situation, read its memory with get_rationale."
+  ];
+  let currentGroup: string | null | undefined;
+  for (const indexLine of indexLines) {
+    if (currentGroup === undefined || currentGroup !== indexLine.projectName) {
+      currentGroup = indexLine.projectName;
+      output.push(`### ${flattenToSingleLine(indexLine.projectName ?? "프로젝트 무관")}`);
+    }
+    output.push(`- ${flattenToSingleLine(indexLine.triggerPhrase)} (${indexLine.anchorRevisionId})`);
+  }
+  return output;
+}
+
+// 색인 문구·프로젝트명은 LLM·외부 입력이라, 렌더링에서도 팩 구조를 깨지 못하게 한 줄로 강제한다.
+function flattenToSingleLine(text: string) {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function formatSearchWarnings(warnings: RationaleSearchWarning[]) {

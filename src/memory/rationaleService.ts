@@ -150,6 +150,12 @@ export type RationaleWriteResult = {
   existingId?: string;
 };
 
+// 순환 의존을 피하려고 MemoryIndexService 대신 구조적 타입으로 받는다.
+export type MemoryIndexHooks = {
+  handleEntryChange(entryId: string): Promise<void>;
+  handleEntryDeprecated(entryId: string): Promise<void>;
+};
+
 export type MemoryRevisionBackfillResult = {
   scanned: number;
   indexed: number;
@@ -192,7 +198,9 @@ export class RationaleService {
     private readonly fileStore: MemoryFileStore,
     private readonly indexingService: IndexingService,
     private readonly embeddingProvider: EmbeddingProvider,
-    private readonly config: AppConfig
+    private readonly config: AppConfig,
+    // 메모리 색인 파이프라인은 저장의 side-effect라 fire-and-forget으로만 부른다.
+    private readonly memoryIndexService?: MemoryIndexHooks
   ) {}
 
   async recordCandidate(input: RecordCandidateInput): Promise<RationaleWriteResult> {
@@ -297,6 +305,7 @@ export class RationaleService {
         entryId: id,
         canonicalPath
       });
+      void this.memoryIndexService?.handleEntryChange(id);
       return { id, revisionId: revision.id, canonicalPath, entry };
     } catch (error) {
       await failRationaleContentFingerprint(this.pool, contentFingerprint, id, formatErrorMessage(error));
@@ -569,6 +578,7 @@ export class RationaleService {
       entryId: baseRevision.entryId,
       revisionId
     });
+    void this.memoryIndexService?.handleEntryChange(baseRevision.entryId);
     return {
       ok: true as const,
       revisionId
@@ -597,6 +607,7 @@ export class RationaleService {
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
     await updateMemoryStatus(this.pool, id, "deprecated", { deprecatedBy: replacementId ?? reason });
+    void this.memoryIndexService?.handleEntryDeprecated(id);
     logInfo("Deprecating rationale completed.", {
       entryId: id,
       canonicalPath
@@ -628,6 +639,7 @@ export class RationaleService {
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
     await restoreMemoryStatus(this.pool, id, restoredState);
+    void this.memoryIndexService?.handleEntryChange(id);
     logInfo("Restoring deprecated rationale completed.", {
       entryId: id,
       restoredState,

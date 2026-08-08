@@ -51,6 +51,46 @@ describe("compose context relevance floor", () => {
     expect(context).toContain("- summary: …query-anchored excerpt…");
   });
 
+  it("serves memory index lines grouped by project at the top of the pack", async () => {
+    const { service } = createRationaleServiceStub([
+      createSearchResult("R-relevant", "Relevant memory", 0.9)
+    ]);
+    const memoryIndexService = {
+      listComposeLines: async () => [
+        {
+          triggerPhrase: "git push가 hook에서 실패하면 → uncommitted changes 확인",
+          projectName: null,
+          anchorRevisionId: "V20260808T000000000Z-anchor"
+        },
+        {
+          triggerPhrase: "severity 매핑 변경 시 → RPC null 접기 확인",
+          projectName: "cancun-market-front",
+          anchorRevisionId: "V20260808T000000001Z-anchor"
+        }
+      ]
+    };
+
+    const composer = new ContextComposer(dataDirectory, service, memoryIndexService);
+    const context = await composer.compose({ task: "test task" });
+
+    expect(context).toContain("## Memory index");
+    expect(context).toContain("### 프로젝트 무관");
+    expect(context).toContain("- git push가 hook에서 실패하면 → uncommitted changes 확인 (V20260808T000000000Z-anchor)");
+    expect(context).toContain("### cancun-market-front");
+    expect(context.indexOf("## Memory index")).toBeLessThan(context.indexOf("## Stable kernel"));
+  });
+
+  it("omits the memory index section when no line is active", async () => {
+    const { service } = createRationaleServiceStub([
+      createSearchResult("R-relevant", "Relevant memory", 0.9)
+    ]);
+
+    const composer = new ContextComposer(dataDirectory, service, { listComposeLines: async () => [] });
+    const context = await composer.compose({ task: "test task" });
+
+    expect(context).not.toContain("## Memory index");
+  });
+
   it("shows the content-update date so staleness is judgeable", async () => {
     const datedEntry = createSearchResult("R-relevant", "Relevant memory", 0.9);
     datedEntry.updatedAt = "2026-08-07T16:16:56.763Z";

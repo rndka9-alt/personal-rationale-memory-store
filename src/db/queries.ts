@@ -1579,3 +1579,257 @@ function readProjectContext(value: unknown): ProjectContext | undefined {
   }
   return project;
 }
+
+// ── 메모리 색인 (memory index) ──────────────────────────────────────────────
+
+export type MemoryIndexLineRecord = {
+  id: string;
+  triggerPhrase: string;
+  anchorEntryId: string;
+  projectName: string | null;
+  status: "active" | "retired";
+  memberEntryIds: string[];
+};
+
+export type MemoryIndexComposeLine = {
+  triggerPhrase: string;
+  projectName: string | null;
+  anchorRevisionId: string;
+};
+
+function mapMemoryIndexLineRow(row: pg.QueryResultRow): MemoryIndexLineRecord {
+  return {
+    id: String(row.id),
+    triggerPhrase: String(row.trigger_phrase),
+    anchorEntryId: String(row.anchor_entry_id),
+    projectName: typeof row.project_name === "string" ? row.project_name : null,
+    status: row.status === "retired" ? "retired" : "active",
+    memberEntryIds: Array.isArray(row.member_entry_ids) ? row.member_entry_ids.map(String) : []
+  };
+}
+
+export async function insertMemoryIndexLineWithExecutor(
+  executor: QueryExecutor,
+  line: { id: string; triggerPhrase: string; anchorEntryId: string; projectName: string | null; memberEntryIds: string[] }
+) {
+  await executor.query(
+    `INSERT INTO memory_index_lines (id, trigger_phrase, anchor_entry_id, project_name)
+      VALUES ($1, $2, $3, $4)`,
+    [line.id, line.triggerPhrase, line.anchorEntryId, line.projectName]
+  );
+  for (const entryId of line.memberEntryIds) {
+    await executor.query(
+      `INSERT INTO memory_index_line_members (line_id, entry_id)
+        VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [line.id, entryId]
+    );
+  }
+  logInfo("DB memory index line inserted.", {
+    lineId: line.id,
+    memberCount: line.memberEntryIds.length
+  });
+}
+
+export async function listActiveMemoryIndexLinesByMemberEntryIds(pool: pg.Pool, entryIds: string[]) {
+  if (entryIds.length === 0) {
+    return [];
+  }
+  const result = await pool.query(
+    `SELECT l.id, l.trigger_phrase, l.anchor_entry_id, l.project_name, l.status,
+        (SELECT array_agg(entry_id) FROM memory_index_line_members WHERE line_id = l.id) AS member_entry_ids
+      FROM memory_index_lines l
+      WHERE l.status = 'active'
+        AND EXISTS (
+          SELECT 1 FROM memory_index_line_members m
+          WHERE m.line_id = l.id AND m.entry_id = ANY($1)
+        )`,
+    [entryIds]
+  );
+  return result.rows.map(mapMemoryIndexLineRow);
+}
+
+export async function listEntryIdsInAnyActiveMemoryIndexLine(executor: QueryExecutor, entryIds: string[]) {
+  if (entryIds.length === 0) {
+    return new Set<string>();
+  }
+  const result = await executor.query(
+    `SELECT DISTINCT m.entry_id
+      FROM memory_index_line_members m
+      JOIN memory_index_lines l ON l.id = m.line_id
+      WHERE l.status = 'active' AND m.entry_id = ANY($1)`,
+    [entryIds]
+  );
+  return new Set<string>(result.rows.map((row) => String(row.entry_id)));
+}
+
+// 줄 잠금 후 활성 상태와 대상 문서의 생존을 재확인하고 편입한다 —
+// 동시 deprecate/퇴역과 겹쳐도 retired 줄이나 죽은 문서로 매핑이 새지 않게.
+export async function addMemoryIndexLineMemberIfActive(pool: pg.Pool, lineId: string, entryId: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const lineResult = await client.query(
+      "SELECT status FROM memory_index_lines WHERE id = $1 FOR UPDATE",
+      [lineId]
+    );
+    const entryResult = await client.query(
+      "SELECT acceptance_state FROM memory_entries WHERE id = $1",
+      [entryId]
+    );
+    if (
+      lineResult.rows[0]?.status !== "active" ||
+      entryResult.rows[0]?.acceptance_state === "deprecated" ||
+      entryResult.rows.length === 0
+    ) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query(
+      `INSERT INTO memory_index_line_members (line_id, entry_id)
+        VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [lineId, entryId]
+    );
+    await client.query(
+      "UPDATE memory_index_lines SET updated_at = now() WHERE id = $1",
+      [lineId]
+    );
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updateMemoryIndexLineAnchor(pool: pg.Pool, lineId: string, anchorEntryId: string) {
+  await pool.query(
+    `UPDATE memory_index_lines
+      SET anchor_entry_id = $2, updated_at = now()
+      WHERE id = $1`,
+    [lineId, anchorEntryId]
+  );
+}
+
+export async function updateMemoryIndexLineProject(pool: pg.Pool, lineId: string, projectName: string | null) {
+  await pool.query(
+    `UPDATE memory_index_lines
+      SET project_name = $2, updated_at = now()
+      WHERE id = $1`,
+    [lineId, projectName]
+  );
+}
+
+export async function updateMemoryIndexLineStatus(pool: pg.Pool, lineId: string, status: "active" | "retired") {
+  await pool.query(
+    `UPDATE memory_index_lines
+      SET status = $2, updated_at = now()
+      WHERE id = $1`,
+    [lineId, status]
+  );
+  logInfo("DB memory index line status updated.", { lineId, status });
+}
+
+export async function removeMemoryIndexMemberships(pool: pg.Pool, entryId: string) {
+  const result = await pool.query(
+    "DELETE FROM memory_index_line_members WHERE entry_id = $1 RETURNING line_id",
+    [entryId]
+  );
+  const lineIds = [...new Set(result.rows.map((row) => String(row.line_id)))];
+  if (lineIds.length === 0) {
+    return [];
+  }
+  const lines = await pool.query(
+    `SELECT l.id, l.trigger_phrase, l.anchor_entry_id, l.project_name, l.status,
+        (SELECT array_agg(entry_id) FROM memory_index_line_members WHERE line_id = l.id) AS member_entry_ids
+      FROM memory_index_lines l
+      WHERE l.id = ANY($1)`,
+    [lineIds]
+  );
+  return lines.rows.map(mapMemoryIndexLineRow);
+}
+
+export async function listActiveMemoryIndexLinesForCompose(pool: pg.Pool): Promise<MemoryIndexComposeLine[]> {
+  const result = await pool.query(
+    `SELECT l.trigger_phrase, l.project_name, e.current_revision_id AS anchor_revision_id
+      FROM memory_index_lines l
+      JOIN memory_entries e ON e.id = l.anchor_entry_id
+      WHERE l.status = 'active' AND e.current_revision_id IS NOT NULL
+      ORDER BY l.project_name NULLS FIRST, l.created_at ASC`
+  );
+  return result.rows.map((row) => ({
+    triggerPhrase: String(row.trigger_phrase),
+    projectName: typeof row.project_name === "string" ? row.project_name : null,
+    anchorRevisionId: String(row.anchor_revision_id)
+  }));
+}
+
+// 색인 유사도 판정은 저장 요약이 아닌 본문 청크만 쓴다(summary 청크는 파생물).
+export async function listEntryChunkEmbeddings(pool: pg.Pool, entryIds: string[]) {
+  const embeddingsByEntryId = new Map<string, number[][]>();
+  if (entryIds.length === 0) {
+    return embeddingsByEntryId;
+  }
+  const result = await pool.query(
+    `SELECT entry_id, embedding::text AS embedding
+      FROM memory_chunks
+      WHERE entry_id = ANY($1) AND embedding IS NOT NULL AND chunk_kind <> 'summary'
+      ORDER BY entry_id, chunk_index`,
+    [entryIds]
+  );
+  for (const row of result.rows) {
+    const entryId = String(row.entry_id);
+    const vector = JSON.parse(String(row.embedding));
+    if (!Array.isArray(vector)) {
+      throw new Error(`Expected a vector array for entry chunk embedding: ${entryId}`);
+    }
+    const vectors = embeddingsByEntryId.get(entryId) ?? [];
+    vectors.push(vector);
+    embeddingsByEntryId.set(entryId, vectors);
+  }
+  return embeddingsByEntryId;
+}
+
+export async function searchMemoryIndexNeighbors(
+  pool: pg.Pool,
+  embedding: number[],
+  options: { excludeEntryIds: string[]; minSimilarity: number; limit: number }
+) {
+  const vector = `[${embedding.join(",")}]`;
+  const result = await pool.query(
+    `SELECT entry_id, similarity FROM (
+        SELECT DISTINCT ON (c.entry_id) c.entry_id, 1 - (c.embedding <=> $1::vector) AS similarity
+        FROM memory_chunks c
+        JOIN memory_entries e ON e.id = c.entry_id
+        WHERE c.embedding IS NOT NULL AND c.chunk_kind <> 'summary'
+          AND e.acceptance_state <> 'deprecated'
+          AND NOT (c.entry_id = ANY($2))
+        ORDER BY c.entry_id, c.embedding <=> $1::vector
+      ) candidates
+      WHERE similarity >= $3
+      ORDER BY similarity DESC
+      LIMIT $4`,
+    [vector, options.excludeEntryIds, options.minSimilarity, options.limit]
+  );
+  return result.rows.map((row) => ({
+    entryId: String(row.entry_id),
+    similarity: Number(row.similarity)
+  }));
+}
+
+export async function listMemoryIndexCandidateEntries(pool: pg.Pool, entryIds: string[]) {
+  if (entryIds.length === 0) {
+    return [];
+  }
+  const result = await pool.query(
+    "SELECT id, title, current_revision_id, metadata FROM memory_entries WHERE id = ANY($1)",
+    [entryIds]
+  );
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    title: String(row.title),
+    currentRevisionId: typeof row.current_revision_id === "string" ? row.current_revision_id : null,
+    projectName: readProjectContext(isRecord(row.metadata) ? row.metadata.project : undefined)?.name ?? null
+  }));
+}
