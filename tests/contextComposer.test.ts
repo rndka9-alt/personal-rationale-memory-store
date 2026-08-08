@@ -51,6 +51,17 @@ describe("compose context relevance floor", () => {
     expect(context).toContain("- summary: …query-anchored excerpt…");
   });
 
+  it("shows the content-update date so staleness is judgeable", async () => {
+    const datedEntry = createSearchResult("R-relevant", "Relevant memory", 0.9);
+    datedEntry.updatedAt = "2026-08-07T16:16:56.763Z";
+    const { service } = createRationaleServiceStub([datedEntry]);
+
+    const composer = new ContextComposer(dataDirectory, service);
+    const context = await composer.compose({ task: "test task" });
+
+    expect(context).toContain("- updated: 2026-08-07");
+  });
+
   it("appends a feedback footer so clients have an in-context trigger", async () => {
     const { service } = createRationaleServiceStub([
       createSearchResult("R-relevant", "Relevant memory", 0.9)

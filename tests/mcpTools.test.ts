@@ -20,6 +20,7 @@ describe("MCP write tool results", () => {
       "compose_notes_context",
       "auto_capture_rationale",
       "update_rationale",
+      "deprecate_rationale",
       "rate_memory"
     ]);
   });
@@ -31,6 +32,7 @@ describe("MCP write tool results", () => {
       ["compose_context", ["메모 훑어보는 중..", "메모 훑어보기 완료!"]],
       ["compose_notes_context", ["쪽지 꺼내는 중..", "쪽지 꺼냇어요!"]],
       ["continue_context", ["계속해서 훑어보는 중..", "추가 확인 완료!"]],
+      ["deprecate_rationale", ["낡은 메모 정리하는 중..", "메모 정리 완료!"]],
       ["get_rationale", ["특정 메모 확인하는 중..", "메모 확인 완료!"]],
       ["rate_note", ["쪽지 평가 중..", "쪽지 평가 완료!"]],
       ["rate_memory", ["메모를 평가하는 중..", "평가 완료!"]],
@@ -82,10 +84,12 @@ describe("MCP write tool results", () => {
     expect(Object.keys(getTool(services, "record_note").schema)).toEqual(["content", "topic", "sourceContext"]);
     expect(Object.keys(getTool(services, "auto_capture_rationale").schema)).toEqual(["title", "body", "project"]);
     expect(Object.keys(getTool(services, "update_rationale").schema)).toEqual(["id", "reason", "title", "body"]);
+    expect(Object.keys(getTool(services, "deprecate_rationale").schema)).toEqual(["id", "reason", "replacementId", "restore"]);
     expect(Object.keys(getTool(services, "rate_memory").schema)).toEqual(["id", "eventType"]);
     expect(getRequiredInputKeys(getTool(services, "record_note"))).toEqual(["content", "topic"]);
     expect(getRequiredInputKeys(getTool(services, "auto_capture_rationale"))).toEqual(["title", "body"]);
     expect(getRequiredInputKeys(getTool(services, "update_rationale"))).toEqual(["id", "reason", "title", "body"]);
+    expect(getRequiredInputKeys(getTool(services, "deprecate_rationale"))).toEqual(["id", "reason"]);
     expect(getRequiredInputKeys(getTool(services, "rate_memory"))).toEqual(["id", "eventType"]);
   });
 
@@ -120,6 +124,7 @@ describe("MCP write tool results", () => {
     expect(updateTool.schema.reason.description).toContain("Korean");
     expect(updateTool.schema.title.description).toContain("Korean");
     expect(updateTool.schema.body.description).toContain("Korean");
+    expect(getTool(services, "deprecate_rationale").schema.reason.description).toContain("Korean");
   });
 
   it("returns compact search results without internal ranking or storage metadata", async () => {
@@ -141,6 +146,7 @@ describe("MCP write tool results", () => {
         sourceRef: "test",
         confidence: 0.5,
         useCount: 3,
+        updatedAt: "2026-06-04T12:34:56.000Z",
         metadata: { domains: ["development"] },
         lexicalRank: 1,
         vectorScore: 0.8,
@@ -166,6 +172,7 @@ describe("MCP write tool results", () => {
         id: "V20260604T000000000Z-search",
         title: "Keep search responses compact",
         type: "rationale",
+        updatedAt: "2026-06-04",
         summary: "Search callers only need enough detail to choose a follow-up read."
       }],
       warnings: [{
@@ -300,6 +307,40 @@ describe("MCP write tool results", () => {
     });
   });
 
+  it("returns only ok for rationale deprecations", async () => {
+    const services = createToolServices();
+    const result = await getTool(services, "deprecate_rationale").handler({
+      id: "V20260604T000000000Z-outdated",
+      reason: "백로그가 완료되어 더 이상 유효하지 않다.",
+      replacementId: "V20260604T000000000Z-current"
+    });
+
+    expect(parseToolJson(result)).toEqual({ ok: true });
+  });
+
+  it("routes restore requests to the restore service path", async () => {
+    const services = createToolServices();
+    let restoredInput: unknown;
+    services.rationaleService.restoreRationaleFromRevision = async (input) => {
+      restoredInput = input;
+      return { ok: true as const };
+    };
+    services.rationaleService.deprecateRationaleFromRevision = unusedServiceMethod;
+
+    const result = await getTool(services, "deprecate_rationale").handler({
+      id: "V20260604T000000000Z-outdated",
+      reason: "실수로 무효화한 메모를 되살린다.",
+      restore: true
+    });
+
+    expect(parseToolJson(result)).toEqual({ ok: true });
+    expect(restoredInput).toEqual({
+      id: "V20260604T000000000Z-outdated",
+      reason: "실수로 무효화한 메모를 되살린다.",
+      restore: true
+    });
+  });
+
   it("returns only ok for recorded notes", async () => {
     const services = createToolServices();
     const result = await getTool(services, "record_note").handler({
@@ -399,6 +440,12 @@ function createToolServices(): ToolServices {
       updateRationaleFromRevision: async () => ({
         ok: true as const,
         id: "V20260604T000000000Z-next"
+      }),
+      deprecateRationaleFromRevision: async () => ({
+        ok: true as const
+      }),
+      restoreRationaleFromRevision: async () => ({
+        ok: true as const
       }),
       autoCaptureRationale: async () => ({
         id: recordedEntry.frontmatter.id,

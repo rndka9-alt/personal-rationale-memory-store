@@ -249,6 +249,7 @@ Tools:
 - `compose_notes_context`
 - `auto_capture_rationale`
 - `update_rationale`
+- `deprecate_rationale`
 - `rate_memory`
 
 Resources:
@@ -295,11 +296,11 @@ Use `rate_memory` after a memory is actually applied, judged helpful, judged unh
 
 The Review UI surfaces aggregated feedback counts for `applied`, `user_helpful`, `user_unhelpful`, and `dismissed` events. These aggregates are displayed for review context and are intended as the basis for later ranking weight tuning.
 
-Rationale body changes are versioned in `memory_revisions`. Agent-facing tools expose one `id`, which always identifies a revision snapshot; internal entry ids remain server-side. `get_rationale` accepts any revision id for a memory and returns the latest content together with its latest id. `update_rationale` accepts a base `id`, a required reason, and the complete replacement title and body; successful updates create a new full-content revision and return only `{ ok: true, id }`. If the base revision is stale, it returns `{ ok: false, reason: "stale", latestId }` without applying the replacement.
+Rationale body changes are versioned in `memory_revisions`. Agent-facing tools expose one `id`, which always identifies a revision snapshot; internal entry ids remain server-side. `get_rationale` accepts any revision id for a memory and returns the latest content together with its latest id. `update_rationale` accepts a base `id`, a required reason, and the complete replacement title and body; successful updates create a new full-content revision and return only `{ ok: true, id }`. If the base revision is stale, it returns `{ ok: false, reason: "stale", latestId }` without applying the replacement. `deprecate_rationale` retires a whole memory from any of its revision ids with a required reason and an optional superseding revision id; deprecated memories leave default search and compose retrieval but stay readable through `get_rationale`. Passing `restore: true` undoes a mistaken deprecation and returns the memory to its pre-deprecation acceptance state.
 
 When more relevant candidates exist than fit the initial context, it appends a compact continuation manifest with an in-memory cursor and omitted count. `continue_context` uses that cursor to return the next retrieved candidates without rerunning the search; cursors are process-local and kept in a small FIFO cache, so evicted cursors require rerunning `compose_context`.
 
-Candidate review and lifecycle mutation are intentionally not exposed as MCP tools. Keep agent-facing MCP context small by exposing only tools that an LLM needs during active work. Administrative operations such as reviewing, accepting, deprecating, promoting, and ontology changes should be handled through internal services or a management dashboard.
+Candidate review and lifecycle mutation are mostly not exposed as MCP tools. Keep agent-facing MCP context small by exposing only tools that an LLM needs during active work. Administrative operations such as reviewing, accepting, promoting, and ontology changes should be handled through internal services or a management dashboard. Deprecation is the exception: agents are the ones who notice mid-work that a memory no longer holds, so `deprecate_rationale` keeps the decision chain maintainable at that moment.
 
 LLMs may autonomously call `auto_capture_rationale` when they encounter a reusable decision rationale. Auto-captured memories are stored with lifecycle fields such as:
 

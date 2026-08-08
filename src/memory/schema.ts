@@ -93,6 +93,14 @@ export const updateRationaleInputSchema = z.object({
   body: recordCandidateInputSchema.shape.body
 });
 
+// 무효화는 삭제가 아니다: 기본 검색·compose에서만 빠지고 get_rationale로는 계속 읽힌다.
+export const deprecateRationaleInputSchema = z.object({
+  id: z.string().min(1),
+  reason: z.string().min(1).max(1000),
+  replacementId: z.string().min(1).optional(),
+  restore: z.boolean().optional()
+});
+
 export const recordUsageFeedbackInputSchema = z.object({
   id: z.string().min(1),
   eventType: usageFeedbackEventTypeSchema
@@ -171,6 +179,7 @@ export type CapturedMemoryType = z.infer<typeof capturedMemoryTypeSchema>;
 export type RecordCandidateInput = z.infer<typeof recordCandidateInputSchema>;
 export type AutoCaptureRationaleInput = z.infer<typeof autoCaptureRationaleInputSchema>;
 export type UpdateRationaleInput = z.infer<typeof updateRationaleInputSchema>;
+export type DeprecateRationaleInput = z.infer<typeof deprecateRationaleInputSchema>;
 export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type SearchProjectFilter = z.infer<typeof searchProjectFilterSchema>;
 export type MemorySearchFilters = Omit<z.infer<typeof searchInputSchema>, "query">;
@@ -232,6 +241,11 @@ export type MemoryEntryRecord = {
   lastUsedAt?: string;
   /** ISO creation timestamp from the DB row; only present on records loaded from the database. */
   createdAt?: string;
+  /**
+   * 본문이 마지막으로 갱신된 시각 = 현재 리비전의 created_at. 검색 경로에서만 채워진다.
+   * memory_entries.updated_at은 use_count 증가로도 바뀌어 최신성 신호로 쓰지 않는다.
+   */
+  updatedAt?: string;
   metadata: Record<string, unknown>;
   lexicalRank?: number;
   vectorScore?: number;

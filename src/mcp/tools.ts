@@ -5,6 +5,7 @@ import type { RationaleService, RationaleWriteResult } from "../memory/rationale
 import {
   autoCaptureRationaleInputSchema,
   composeNotesContextInputSchema,
+  deprecateRationaleInputSchema,
   noteSourceConversationSchema,
   noteTopicSchema,
   rateNoteInputSchema,
@@ -21,6 +22,8 @@ export type ToolServices = {
     | "searchWithDiagnostics"
     | "getLatestRationaleFromRevision"
     | "updateRationaleFromRevision"
+    | "deprecateRationaleFromRevision"
+    | "restoreRationaleFromRevision"
     | "autoCaptureRationale"
     | "recordUsageFeedback"
   >;
@@ -155,6 +158,21 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
         jsonToolResult(await services.rationaleService.updateRationaleFromRevision(updateRationaleToolInputSchema.parse(input)))
     },
     {
+      name: "deprecate_rationale",
+      description: "Retire an outdated rationale memory instead of deleting it: it drops out of default search and compose retrieval but stays readable via get_rationale. Call it when a memory no longer holds — a superseded decision, a finished backlog, an invalidated analysis — ideally right after capturing or updating the memory that replaces it. Accepts any revision id of the memory; the whole memory is retired, not one revision. Pass restore true to undo a mistaken deprecation.",
+      schema: deprecateRationaleToolInputSchema.shape,
+      outputSchema: jsonOutputSchema,
+      annotations: writeToolAnnotations,
+      metadata: toolInvocationMetadata("낡은 메모 정리하는 중..", "메모 정리 완료!"),
+      handler: async (input: unknown) => {
+        const parsedInput = deprecateRationaleToolInputSchema.parse(input);
+        // 응답은 ok만: 대상 id와 사유는 호출자 입력 에코라 싣지 않는다.
+        return jsonToolResult(parsedInput.restore
+          ? await services.rationaleService.restoreRationaleFromRevision(parsedInput)
+          : await services.rationaleService.deprecateRationaleFromRevision(parsedInput));
+      }
+    },
+    {
       name: "rate_memory",
       description: "Rate a rationale memory after acting on retrieved context, using the revision id shown by compose_context or search_rationales. Call it once per memory you actually weighed: \"applied\" if it shaped your answer or work, \"dismissed\" if it was retrieved but not useful this time, \"user_helpful\"/\"user_unhelpful\" only when the user explicitly reacted to an outcome the memory influenced. Ranking aggregates feedback across all revisions of the memory.",
       schema: rateMemoryToolInputSchema.shape,
@@ -208,6 +226,17 @@ const composeInputSchema = z.object({
 
 const continueInputSchema = z.object({
   cursor: z.string().min(1)
+});
+
+const deprecateRationaleToolInputSchema = z.object({
+  id: deprecateRationaleInputSchema.shape.id
+    .describe("Any revision snapshot id of the memory to retire."),
+  reason: deprecateRationaleInputSchema.shape.reason
+    .describe("Why the memory no longer holds (or why it is being restored), in Korean; keep code identifiers and proper nouns unchanged."),
+  replacementId: deprecateRationaleInputSchema.shape.replacementId
+    .describe("Revision id of the memory that supersedes this one, when it exists; links the decision chain for later readers."),
+  restore: deprecateRationaleInputSchema.shape.restore
+    .describe("Set true to undo a mistaken deprecation; the memory returns to its pre-deprecation state.")
 });
 
 const recordNoteToolInputSchema = z.object({
@@ -286,6 +315,7 @@ function compactSearchResult(result: {
     title: string;
     summary?: string;
     type: string;
+    updatedAt?: string;
   }>;
   warnings: Array<{
     kind: string;
@@ -328,12 +358,14 @@ function compactSearchEntry(entry: {
   title: string;
   summary?: string;
   type: string;
+  updatedAt?: string;
 }) {
   const revisionId = readCurrentRevisionId(entry);
   const response: {
     id: string;
     title: string;
     type: string;
+    updatedAt?: string;
     summary?: string;
   } = {
     id: revisionId,
@@ -341,6 +373,9 @@ function compactSearchEntry(entry: {
     type: entry.type
   };
 
+  if (entry.updatedAt) {
+    response.updatedAt = entry.updatedAt.slice(0, 10);
+  }
   if (entry.summary) {
     response.summary = entry.summary;
   }

@@ -19,6 +19,7 @@ import {
   lockMemoryEntryForUpdate,
   recordMemoryUsageEvents,
   recordRetrievalQueryEvent,
+  restoreMemoryStatus,
   searchMemoryEntriesLexical,
   searchMemoryEntriesVector,
   setMemoryEntryCurrentRevision,
@@ -38,6 +39,7 @@ import { IndexingService } from "./indexingService.js";
 import {
   acceptanceStateSchema,
   autoCaptureRationaleInputSchema,
+  deprecateRationaleInputSchema,
   memoryUsageEventTypeSchema,
   projectContextSchema,
   recordCandidateInputSchema,
@@ -579,13 +581,18 @@ export class RationaleService {
       replacementId
     });
     const entry = await this.getRationale(id);
+    // 이중 deprecate 시 최초 상태 stash를 보존해야 복원이 원래 상태로 돌아간다.
+    const stashedAcceptanceState = entry.frontmatter.acceptanceState === "deprecated"
+      ? entry.frontmatter.metadata.pre_deprecation_acceptance_state
+      : entry.frontmatter.acceptanceState;
     entry.frontmatter.acceptanceState = "deprecated";
     entry.frontmatter.status = "deprecated";
     entry.frontmatter.deprecatedBy = replacementId ?? reason;
     entry.frontmatter.metadata = {
       ...entry.frontmatter.metadata,
       deprecation_reason: reason,
-      replacement_id: replacementId
+      replacement_id: replacementId,
+      pre_deprecation_acceptance_state: stashedAcceptanceState
     };
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
@@ -595,6 +602,80 @@ export class RationaleService {
       canonicalPath
     });
     return entry;
+  }
+
+  async restoreRationale(id: string, reason: string) {
+    logInfo("Restoring deprecated rationale started.", {
+      entryId: id
+    });
+    const entry = await this.getRationale(id);
+    if (entry.frontmatter.acceptanceState !== "deprecated") {
+      throw new Error(`Memory is not deprecated: ${id}`);
+    }
+    const stashedState = acceptanceStateSchema.safeParse(entry.frontmatter.metadata.pre_deprecation_acceptance_state);
+    // 구형 deprecate 경로에는 stash가 없다 — 재검토 대상인 candidate로 복귀시킨다.
+    const restoredState = stashedState.success && stashedState.data !== "deprecated"
+      ? stashedState.data
+      : "candidate";
+    entry.frontmatter.acceptanceState = restoredState;
+    entry.frontmatter.status = restoredState;
+    entry.frontmatter.deprecatedBy = undefined;
+    const metadata: Record<string, unknown> = { ...entry.frontmatter.metadata, restore_reason: reason };
+    delete metadata.deprecation_reason;
+    delete metadata.replacement_id;
+    delete metadata.pre_deprecation_acceptance_state;
+    entry.frontmatter.metadata = metadata;
+    const canonicalPath = await this.fileStore.writeEntry(entry);
+    await this.indexingService.indexEntry(entry, canonicalPath);
+    await restoreMemoryStatus(this.pool, id, restoredState);
+    logInfo("Restoring deprecated rationale completed.", {
+      entryId: id,
+      restoredState,
+      canonicalPath
+    });
+    return entry;
+  }
+
+  async restoreRationaleFromRevision(input: unknown) {
+    const parsedInput = deprecateRationaleInputSchema.parse(input);
+    if (parsedInput.replacementId) {
+      throw new Error("replacementId cannot be combined with restore.");
+    }
+    logInfo("Restoring rationale from revision started.", {
+      revisionId: parsedInput.id
+    });
+    const revision = await findMemoryRevision(this.pool, parsedInput.id);
+    if (!revision) {
+      throw new Error(`Memory revision not found: ${parsedInput.id}`);
+    }
+    await this.restoreRationale(revision.entryId, parsedInput.reason);
+    return { ok: true as const };
+  }
+
+  // MCP 계약대로 리비전 id를 받지만 무효화 대상은 메모리 전체다 — stale 리비전 id도 그대로 통한다.
+  async deprecateRationaleFromRevision(input: unknown) {
+    const parsedInput = deprecateRationaleInputSchema.parse(input);
+    logInfo("Deprecating rationale from revision started.", {
+      revisionId: parsedInput.id,
+      replacementRevisionId: parsedInput.replacementId
+    });
+    const revision = await findMemoryRevision(this.pool, parsedInput.id);
+    if (!revision) {
+      throw new Error(`Memory revision not found: ${parsedInput.id}`);
+    }
+    let replacementEntryId: string | undefined;
+    if (parsedInput.replacementId) {
+      const replacementRevision = await findMemoryRevision(this.pool, parsedInput.replacementId);
+      if (!replacementRevision) {
+        throw new Error(`Replacement memory revision not found: ${parsedInput.replacementId}`);
+      }
+      if (replacementRevision.entryId === revision.entryId) {
+        throw new Error(`Replacement must reference a different memory: ${parsedInput.replacementId}`);
+      }
+      replacementEntryId = replacementRevision.entryId;
+    }
+    await this.deprecateRationale(revision.entryId, parsedInput.reason, replacementEntryId);
+    return { ok: true as const };
   }
 
   async promoteToPrinciple(id: string, title: string | undefined, reason: string) {
@@ -900,7 +981,7 @@ export class RationaleService {
       filters,
       usageFeedbackCounts
     ).slice(0, parsedInput.limit);
-    await this.applyQueryAnchoredSummaries(results, parsedInput.query);
+    await this.applyRevisionDerivedFields(results, parsedInput.query);
     logInfo("Searching rationales completed.", {
       query: parsedInput.query,
       resultCount: results.length,
@@ -931,9 +1012,9 @@ export class RationaleService {
     return { results, warnings };
   }
 
-  // 본문 SSOT는 memory_revisions.content — 발췌도 리비전 스냅샷에서 읽는다
-  private async applyQueryAnchoredSummaries(
-    results: Array<{ currentRevisionId?: string; summary?: string }>,
+  // 본문 SSOT는 memory_revisions.content — 발췌와 본문 갱신일 모두 리비전 스냅샷에서 읽는다
+  private async applyRevisionDerivedFields(
+    results: Array<{ currentRevisionId?: string; summary?: string; updatedAt?: string }>,
     query: string
   ) {
     const revisionIds = results
@@ -941,15 +1022,16 @@ export class RationaleService {
       .filter((revisionId): revisionId is string => typeof revisionId === "string");
     const revisionContents = await listMemoryRevisionContents(this.pool, revisionIds);
     for (const entry of results) {
-      const content = entry.currentRevisionId
+      const revision = entry.currentRevisionId
         ? revisionContents.get(entry.currentRevisionId)
         : undefined;
-      if (content === undefined) {
+      if (revision === undefined) {
         // 리비전 미백필 legacy entry는 저장된 summary를 그대로 둔다
         continue;
       }
-      const body = parseRationaleMarkdown(content).body;
+      const body = parseRationaleMarkdown(revision.content).body;
       entry.summary = buildQuerySnippet(body, query) ?? buildHeadSnippet(body);
+      entry.updatedAt = revision.createdAt;
     }
   }
 

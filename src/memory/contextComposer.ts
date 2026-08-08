@@ -257,11 +257,13 @@ function formatSummary(result: {
   acceptanceState: string;
   reviewState: string;
   decisionState: string;
+  updatedAt?: string;
 }, revisionId: string) {
   return [
     `### ${result.title}`,
     `- id: ${revisionId}`,
     `- type: ${result.type}`,
+    ...(result.updatedAt ? [`- updated: ${result.updatedAt.slice(0, 10)}`] : []),
     `- acceptance state: ${result.acceptanceState}`,
     `- review state: ${result.reviewState}`,
     `- decision state: ${result.decisionState}`,

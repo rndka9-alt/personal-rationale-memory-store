@@ -796,6 +796,27 @@ export async function updateMemoryStatus(
   });
 }
 
+// updateMemoryStatus의 COALESCE는 deprecated_by를 비울 수 없어 복원 전용 쿼리를 둔다.
+export async function restoreMemoryStatus(pool: pg.Pool, id: string, acceptanceState: string) {
+  logInfo("DB restore memory status started.", {
+    entryId: id,
+    acceptanceState
+  });
+  await pool.query(
+    `UPDATE memory_entries
+      SET status = $2,
+          acceptance_state = $2,
+          deprecated_by = NULL,
+          updated_at = now()
+      WHERE id = $1`,
+    [id, acceptanceState]
+  );
+  logInfo("DB restore memory status completed.", {
+    entryId: id,
+    acceptanceState
+  });
+}
+
 export async function listRecentMemoryEntries(pool: pg.Pool, limit: number) {
   logInfo("DB list recent memory entries started.", {
     limit
@@ -1296,16 +1317,24 @@ export async function searchMemoryEntriesVector(
   return result.rows.map(mapMemoryEntryRow);
 }
 
+export type MemoryRevisionContent = {
+  content: string;
+  createdAt: string;
+};
+
 export async function listMemoryRevisionContents(pool: pg.Pool, revisionIds: string[]) {
   if (revisionIds.length === 0) {
-    return new Map<string, string>();
+    return new Map<string, MemoryRevisionContent>();
   }
 
   const result = await pool.query(
-    "SELECT id, content FROM memory_revisions WHERE id = ANY($1)",
+    "SELECT id, content, created_at FROM memory_revisions WHERE id = ANY($1)",
     [revisionIds]
   );
-  return new Map<string, string>(result.rows.map((row) => [String(row.id), String(row.content)]));
+  return new Map<string, MemoryRevisionContent>(result.rows.map((row) => [String(row.id), {
+    content: String(row.content),
+    createdAt: readTimestamp(row.created_at, "created_at")
+  }]));
 }
 
 function appendSearchFilters(conditions: string[], values: unknown[], filters: MemorySearchFilters) {
