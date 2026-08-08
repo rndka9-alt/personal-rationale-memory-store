@@ -54,7 +54,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
   const definitions: ToolDefinition[] = [
     {
       name: "search_rationales",
-      description: "Search rationale memories with lexical, vector, and metadata signals. Result ids identify the current revision snapshot. Each result summary is an excerpt anchored to the query terms (or the body head when no term matches), with `…` marking trimmed edges — never conclude information is absent from a summary alone; read the full body with get_rationale first. Write natural-language queries in Korean while keeping code identifiers, exact search terms, and proper nouns unchanged. Optionally pass project (current repo) to boost same-project memories; other projects are never penalized.",
+      description: "Search rationale memories. Each result summary is an excerpt anchored to the query terms (or the body head when no term matches), with `…` marking trimmed edges — never conclude information is absent from a summary alone; read the full body with get_rationale first.",
       schema: searchToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -65,7 +65,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "get_rationale",
-      description: "Read the latest revision of the rationale memory identified by a revision id. If the supplied revision id is stale, returns the latest revision's content and id.",
+      description: "Read the latest revision of the rationale memory identified by a revision id. Stale ids resolve to the latest revision.",
       schema: { id: z.string().min(1) },
       outputSchema: jsonOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -82,7 +82,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_context",
-      description: "Compose bounded prompt-ready rationale context for a task. Each retrieved memory appears as an excerpt anchored to the task terms, with `…` marking trimmed edges — never conclude information is absent from an excerpt alone; read the full body with get_rationale first. The task field is a retrieval query, not an instruction to an agent: state the topic in 1-3 Korean sentences packed with key entities and terms, keeping code identifiers and proper nouns unchanged, and do not ask for judgment or actions. Pass project (current repo) to boost rationale memories captured in the active project; other projects are never penalized. Plain notes are a separate context source; use compose_notes_context for those.",
+      description: "Compose bounded prompt-ready rationale context for a task. Each retrieved memory appears as an excerpt anchored to the task terms, with `…` marking trimmed edges — never conclude information is absent from an excerpt alone; read the full body with get_rationale first. Plain notes are a separate context source; use compose_notes_context for those.",
       schema: composeInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -91,7 +91,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "continue_context",
-      description: "Continue a previous compose_context retrieval from a stateful ephemeral server-side cursor.",
+      description: "Continue a previous compose_context result using its cursor.",
       schema: continueInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -116,7 +116,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "rate_note",
-      description: "Add one upvote or downvote to a note using its short slot id, shown by compose_notes_context in each note's '━━━ <slot> ━━━' header line. Slots are ephemeral (LRU, capacity 40); rating an expired slot returns ok:false with httpStatus 410 instead of an error, so just re-fetch the notes and rate again.",
+      description: "Add one upvote or downvote to a note using its short slot id, shown by compose_notes_context in each note's '━━━ <slot> ━━━' header line. Slots are ephemeral; if a slot has expired, call compose_notes_context again and rate the fresh slot.",
       schema: rateNoteInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -126,7 +126,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "compose_notes_context",
-      description: "Retrieve the synthesized user digest — who they are (current interests, recent context, long-term background, personality and preferences) — followed by original personal notes. Call this early in a conversation to ground responses in what is already known about the user. Notes are selected by weighted random first, then score ordering, within a character budget. The output ends with a rate_note nudge; note bodies are never rewritten.",
+      description: "Retrieve the synthesized user digest — who they are (current interests, recent context, long-term background, personality and preferences) — followed by original personal notes. Call this early in a conversation to ground responses in what is already known about the user.",
       schema: composeNotesContextInputSchema.shape,
       outputSchema: textOutputSchema,
       annotations: readOnlyToolAnnotations,
@@ -137,7 +137,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     {
       name: "auto_capture_rationale",
       description:
-        "Record a reusable rationale memory as a title and self-contained Markdown body. Write title and body in Korean while keeping code identifiers and proper nouns unchanged. Use record_note for casual or lightweight personal notes.",
+        "Record a reusable rationale memory as a title and self-contained Markdown body. Use record_note for casual or lightweight personal notes.",
       schema: autoCaptureRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -149,7 +149,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "update_rationale",
-      description: "Replace a rationale memory's title and body from a base revision snapshot id. A stale id returns the latest id without applying the replacement. Write reason, title, and body in Korean while keeping code identifiers and proper nouns unchanged.",
+      description: "Replace a rationale memory's title and body from a base revision snapshot id. If the base is stale, read the latest revision, merge your replacement on top of it, and retry with the latest id.",
       schema: updateRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -159,7 +159,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "deprecate_rationale",
-      description: "Retire an outdated rationale memory instead of deleting it: it drops out of default search and compose retrieval but stays readable via get_rationale. Call it when a memory no longer holds — a superseded decision, a finished backlog, an invalidated analysis — ideally right after capturing or updating the memory that replaces it. Accepts any revision id of the memory; the whole memory is retired, not one revision. Pass restore true to undo a mistaken deprecation.",
+      description: "Retire an outdated rationale memory instead of deleting it: it drops out of default search and compose retrieval but stays readable via get_rationale. Call it when a memory no longer holds — a superseded decision, a finished backlog, an invalidated analysis — ideally right after capturing or updating the memory that replaces it.",
       schema: deprecateRationaleToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -174,7 +174,7 @@ export function toolDefinitions(services: ToolServices): ToolDefinition[] {
     },
     {
       name: "rate_memory",
-      description: "Rate a rationale memory after acting on retrieved context, using the revision id shown by compose_context or search_rationales. Call it once per memory you actually weighed: \"applied\" if it shaped your answer or work, \"dismissed\" if it was retrieved but not useful this time, \"user_helpful\"/\"user_unhelpful\" only when the user explicitly reacted to an outcome the memory influenced. Ranking aggregates feedback across all revisions of the memory.",
+      description: "Rate a rationale memory after acting on retrieved context, using the revision id shown by compose_context or search_rationales. Call it once per memory you actually weighed: \"applied\" if it shaped your answer or work, \"dismissed\" if it was retrieved but not useful this time, \"user_helpful\"/\"user_unhelpful\" only when the user explicitly reacted to an outcome the memory influenced.",
       schema: rateMemoryToolInputSchema.shape,
       outputSchema: jsonOutputSchema,
       annotations: writeToolAnnotations,
@@ -215,6 +215,7 @@ const searchToolInputSchema = z.object({
     .min(1)
     .describe("Natural-language search query in Korean; keep code identifiers, exact search terms, and proper nouns unchanged."),
   project: searchProjectFilterSchema.optional()
+    .describe("Current repo. Boosts memories captured in the same project; other projects are never penalized.")
 });
 
 const composeInputSchema = z.object({
@@ -222,6 +223,7 @@ const composeInputSchema = z.object({
     .min(1)
     .describe("Retrieval query, not an instruction to an agent: 1-3 Korean sentences stating the topic with its key entities and terms; keep code identifiers and proper nouns unchanged. Questions, requests for judgment, and long narratives degrade matching."),
   project: searchProjectFilterSchema.optional()
+    .describe("Current repo. Boosts memories captured in the same project; other projects are never penalized.")
 });
 
 const continueInputSchema = z.object({
@@ -241,7 +243,7 @@ const deprecateRationaleToolInputSchema = z.object({
 
 const recordNoteToolInputSchema = z.object({
   content: recordNoteInputSchema.shape.content
-    .describe("Lightweight note in Korean; keep code identifiers and proper nouns unchanged. When stating a judgment or trait about the user, attach the observed grounds (mechanism → conclusion, e.g. \"남에게 줄 영향을 고민하는 편이다. 그래서 메타인지가 뛰어나다\"), never a bare label — fragmentary conclusions without their reasons cannot be re-verified against later observations. Mark your own inferences as such, distinct from the user's direct statements."),
+    .describe("Lightweight note in Korean; keep code identifiers and proper nouns unchanged, and write Korean as literal characters — never hand-transcribe it into \\uXXXX escapes. When stating a judgment or trait about the user, attach the observed grounds (mechanism → conclusion, e.g. \"남에게 줄 영향을 고민하는 편이다. 그래서 메타인지가 뛰어나다\"), never a bare label — fragmentary conclusions without their reasons cannot be re-verified against later observations. Mark your own inferences as such, distinct from the user's direct statements."),
   // topic은 항상 필수. digest 합성이 노트를 묶는 그룹 라벨이라 폴더명처럼 짧고 구체적으로 짓게 유도한다.
   topic: noteTopicSchema
     .describe("Required. Short Korean label for what this note is about, like a folder name — specific but not a full sentence (e.g. '발주GAP 하위호환 검증')."),
@@ -258,8 +260,9 @@ const autoCaptureRationaleToolInputSchema = z.object({
   title: autoCaptureRationaleInputSchema.shape.title
     .describe("Concise rationale title in Korean; keep code identifiers and proper nouns unchanged."),
   body: autoCaptureRationaleInputSchema.shape.body
-    .describe("Self-contained Markdown body in Korean; keep code identifiers and proper nouns unchanged."),
+    .describe("Self-contained Markdown body in Korean; keep code identifiers and proper nouns unchanged. Write Korean as literal characters — never hand-transcribe it into \\uXXXX escapes."),
   project: searchProjectFilterSchema.optional()
+    .describe("Current repo, stored as the memory's project context.")
 });
 
 const updateRationaleToolInputSchema = z.object({
@@ -269,7 +272,7 @@ const updateRationaleToolInputSchema = z.object({
   title: updateRationaleInputSchema.shape.title
     .describe("Complete replacement title in Korean; keep code identifiers and proper nouns unchanged."),
   body: updateRationaleInputSchema.shape.body
-    .describe("Complete replacement Markdown body in Korean; keep code identifiers and proper nouns unchanged.")
+    .describe("Complete replacement Markdown body in Korean; keep code identifiers and proper nouns unchanged. Write Korean as literal characters — never hand-transcribe it into \\uXXXX escapes.")
 });
 
 const rateMemoryToolInputSchema = z.object({
@@ -434,8 +437,25 @@ function withToolLogging(definition: ToolDefinition): ToolDefinition {
         logError("MCP tool failed.", error, {
           tool: definition.name
         });
-        throw error;
+        throw translateUnicodeStorageError(error);
       }
     }
   };
+}
+
+// zod 방어를 뚫고 DB(jsonb)까지 간 깨진 유니코드는 사고 시점에 재시도 지침으로 변환한다 —
+// 상시 설명보다 in-context 안내가 소비자 LLM의 행동을 바꾼다(feedbackFooter 전례).
+function translateUnicodeStorageError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return error;
+  }
+  const errorCode = (error as { code?: unknown }).code;
+  const combinedText = `${error.message} ${(error as { detail?: unknown }).detail ?? ""}`;
+  const isUnicodeJsonbFailure = errorCode === "22P02" && /surrogate|unicode|\\u0000/i.test(combinedText);
+  if (!isUnicodeJsonbFailure) {
+    return error;
+  }
+  return new Error(
+    `${error.message} — the input reached storage with broken Unicode. Do not hand-transcribe Korean into \\uXXXX escapes; resend the text as literal characters.`
+  );
 }

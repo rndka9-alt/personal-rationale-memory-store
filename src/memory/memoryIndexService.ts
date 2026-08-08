@@ -103,21 +103,24 @@ export class MemoryIndexService {
 
     const ownEmbeddings = (await listEntryChunkEmbeddings(this.pool, [entryId])).get(entryId);
     let joinedLineIds = new Set<string>();
+    let neighborCount = 0;
     if (ownEmbeddings && ownEmbeddings.length > 0) {
       const neighborSimilarities = await this.searchNeighbors(ownEmbeddings, [entryId]);
+      neighborCount = neighborSimilarities.size;
       if (neighborSimilarities.size > 0) {
         joinedLineIds = await this.joinQuorumLines(entryId, ownEmbeddings, neighborSimilarities);
-        logInfo("Memory index entry-change processed.", {
-          entryId,
-          neighborCount: neighborSimilarities.size,
-          joinedLineCount: joinedLineIds.size
-        });
         if (joinedLineIds.size === 0) {
           // 편입으로 소속이 생겼으면 같은 주제의 줄을 또 만들지 않는다.
           await this.promoteNewLine(entryId, neighborSimilarities);
         }
       }
     }
+    // 이웃 0건도 반드시 남긴다 — 침묵하면 파이프라인이 돌았는지조차 관측할 수 없다.
+    logInfo("Memory index entry-change processed.", {
+      entryId,
+      neighborCount,
+      joinedLineCount: joinedLineIds.size
+    });
 
     await this.reconcileLines(
       previousLines.filter((line) => !joinedLineIds.has(line.id)),

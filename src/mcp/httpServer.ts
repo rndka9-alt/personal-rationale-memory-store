@@ -279,7 +279,15 @@ async function readJsonBody(request: IncomingMessage) {
     throw new Error("Request body is empty.");
   }
 
-  return JSON.parse(rawBody);
+  try {
+    return JSON.parse(rawBody);
+  } catch (error) {
+    // 손으로 이어붙인 \uXXXX 전사가 깨질 때 가장 흔한 유입 지점 — 재시도 지침을 에러에 싣는다.
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Request body is not valid JSON: ${message}. If the payload spelled Korean text as hand-built \\uXXXX escapes, resend it with literal characters instead.`
+    );
+  }
 }
 
 function isOauthDiscoveryPath(request: IncomingMessage) {

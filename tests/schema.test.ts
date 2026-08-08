@@ -126,4 +126,29 @@ describe("note input schemas", () => {
     expect(rateNoteInputSchema.parse({ slot: "a3", rating: "up" }).rating).toBe("up");
     expect(() => rateNoteInputSchema.parse({ slot: "a3", rating: "sideways" })).toThrow();
   });
+
+  it("rejects broken Unicode from hand-transcribed escapes before it reaches storage", () => {
+    const loneSurrogate = "\uD835 잘린 서로게이트";
+    const replacementCharacter = "오염된 � 문자";
+
+    expect(() => recordNoteInputSchema.parse({ content: loneSurrogate, topic: "검증" })).toThrow(/literal characters/);
+    expect(() => recordNoteInputSchema.parse({ content: "정상", topic: replacementCharacter })).toThrow(/literal characters/);
+    expect(() => recordNoteInputSchema.parse({
+      content: "정상",
+      topic: "검증",
+      sourceConversation: { messages: [{ role: "user", text: loneSurrogate }] }
+    })).toThrow(/literal characters/);
+    expect(recordNoteInputSchema.parse({ content: "이모지 🐛 정상 서로게이트 쌍", topic: "검증" }).content).toContain("🐛");
+  });
+
+  it("guards rationale write inputs against broken Unicode", () => {
+    expect(() => autoCaptureRationaleInputSchema.parse({
+      title: "제목 \uDD35 깨짐",
+      body: "정상 본문"
+    })).toThrow(/literal characters/);
+    expect(() => autoCaptureRationaleInputSchema.parse({
+      title: "정상 제목",
+      body: "본문에 \u0000 널 문자"
+    })).toThrow(/literal characters/);
+  });
 });

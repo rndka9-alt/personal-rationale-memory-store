@@ -69,9 +69,18 @@ export const capturedMemoryTypeSchema = z.enum([
   "constraint"
 ]);
 
+// LLM 소비자가 한글을 \uXXXX로 직접 전사하다 깨뜨린 입력을 DB(jsonb) 도달 전에 거부한다.
+// 단독 surrogate·U+0000은 Postgres가 거부하고, U+FFFD는 원문 보존 정책상 오염 신호로 취급한다.
+const malformedUnicodePattern = /\p{Cs}|\0|�/u;
+const malformedUnicodeMessage = "Input contains broken Unicode (a lone surrogate, U+0000, or U+FFFD). Do not hand-transcribe Korean into \\uXXXX escapes — resend the text as literal characters.";
+
+export function unicodeSafeText<T extends z.ZodType<string>>(schema: T) {
+  return schema.refine((value) => !malformedUnicodePattern.test(value), malformedUnicodeMessage);
+}
+
 export const recordCandidateInputSchema = z.object({
-  title: z.string().min(1),
-  body: rationaleEntrySchema.shape.body,
+  title: unicodeSafeText(z.string().min(1)),
+  body: unicodeSafeText(rationaleEntrySchema.shape.body),
   type: capturedMemoryTypeSchema.optional(),
   source: sourceMetadataSchema.optional(),
   project: projectContextSchema.optional(),
@@ -88,7 +97,7 @@ export const autoCaptureRationaleInputSchema = z.object({
 
 export const updateRationaleInputSchema = z.object({
   id: z.string().min(1),
-  reason: z.string().min(1).max(1000),
+  reason: unicodeSafeText(z.string().min(1).max(1000)),
   title: recordCandidateInputSchema.shape.title,
   body: recordCandidateInputSchema.shape.body
 });
@@ -96,7 +105,7 @@ export const updateRationaleInputSchema = z.object({
 // 무효화는 삭제가 아니다: 기본 검색·compose에서만 빠지고 get_rationale로는 계속 읽힌다.
 export const deprecateRationaleInputSchema = z.object({
   id: z.string().min(1),
-  reason: z.string().min(1).max(1000),
+  reason: unicodeSafeText(z.string().min(1).max(1000)),
   replacementId: z.string().min(1).optional(),
   restore: z.boolean().optional()
 });
@@ -106,26 +115,26 @@ export const recordUsageFeedbackInputSchema = z.object({
   eventType: usageFeedbackEventTypeSchema
 });
 
-export const noteContentSchema = z.string()
+export const noteContentSchema = unicodeSafeText(z.string()
   .min(1)
   .max(1000)
-  .refine((value) => value.trim().length > 0, "Note content cannot be blank.");
+  .refine((value) => value.trim().length > 0, "Note content cannot be blank."));
 
 export const noteSourceConversationRoleSchema = z.enum(["user", "assistant"]);
 
 export const noteSourceConversationMessageSchema = z.object({
   role: noteSourceConversationRoleSchema,
-  text: z.string()
+  text: unicodeSafeText(z.string()
     .min(1)
     .max(1500)
-    .refine((value) => value.trim().length > 0, "Source conversation text cannot be blank.")
+    .refine((value) => value.trim().length > 0, "Source conversation text cannot be blank."))
 });
 
 export const noteSourceConversationSchema = z.object({
   messages: z.array(noteSourceConversationMessageSchema).min(1).max(4)
 });
 
-export const noteTopicSchema = z.string().min(1).max(120);
+export const noteTopicSchema = unicodeSafeText(z.string().min(1).max(120));
 
 export const recordNoteInputSchema = z.object({
   content: noteContentSchema,
