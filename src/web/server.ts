@@ -168,7 +168,8 @@ async function routeApiRequest(
 
   if (method === "GET" && url.pathname === "/api/recap") {
     const recap = await recapService.getRecap({
-      days: readRecapDays(url.searchParams.get("days"))
+      days: readRecapDays(url.searchParams.get("days")),
+      window: readRecapWindow(url.searchParams)
     });
     writeJson(response, 200, recap);
     return;
@@ -428,6 +429,33 @@ function readRecapDays(value: string | null) {
     throw new Error(`days cannot exceed ${maximumRecapDays}.`);
   }
   return days;
+}
+
+// 대시보드를 회고 스냅샷 기간에 맞추려고 클라이언트가 넘기는 명시 창.
+// 스냅샷의 period_start/period_end를 그대로 전달받으므로 end는 exclusive다.
+function readRecapWindow(params: URLSearchParams) {
+  const start = params.get("start");
+  const end = params.get("end");
+  if (start === null && end === null) {
+    return undefined;
+  }
+  if (start === null || end === null) {
+    throw new Error("start and end must be provided together.");
+  }
+  if (!isDateString(start) || !isDateString(end)) {
+    throw new Error("start and end must be YYYY-MM-DD date strings.");
+  }
+  const spanDays = Math.round(
+    (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / (24 * 60 * 60 * 1000)
+  );
+  if (!Number.isFinite(spanDays) || spanDays < 1 || spanDays > maximumRecapDays) {
+    throw new Error(`The recap window must span between 1 and ${maximumRecapDays} days.`);
+  }
+  return { start, end };
+}
+
+function isDateString(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 }
 
 function readRecapRefreshDays(body: unknown) {

@@ -10,7 +10,7 @@ import {
   type DigestTextGenerator
 } from "./digestService.js";
 import { LlmRequestLogService } from "./llmRequestLogService.js";
-import { rationaleActivitiesSubquery } from "./recapService.js";
+import { rationaleActivitiesSubquery, shiftDate, windowCondition } from "./recapService.js";
 
 const reportTimeZone = "Asia/Seoul";
 // result jsonb의 구조가 바뀌면 올린다. 과거 스냅샷은 재해석하지 않고 버전으로 구분만 한다.
@@ -1413,20 +1413,6 @@ function withDayBreakdown(candidate: RecapCandidate, breakdown: RecapDayBreakdow
     evidence: breakdown.evidence,
     brief: `${candidate.brief} ${breakdown.summary}`
   };
-}
-
-function windowCondition(column: string) {
-  return `${column} >= ($1::date::timestamp AT TIME ZONE '${reportTimeZone}')
-    AND ${column} < ($2::date::timestamp AT TIME ZONE '${reportTimeZone}')`;
-}
-
-function shiftDate(date: string, days: number) {
-  const parsed = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`Invalid recap date: ${date}`);
-  }
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
 }
 
 function kstWeekday(date: string) {

@@ -4,9 +4,21 @@ import { z } from "zod";
 // 서버(컨테이너)는 UTC라 기본 date 경계로는 KST 새벽 활동이 전날로 집계된다.
 const reportTimeZone = "Asia/Seoul";
 
-// KST 자정 기준으로 (days - 1)일 전부터 지금까지를 돌아보기 창으로 삼는다.
-const windowStartExpression =
-  `(((now() AT TIME ZONE '${reportTimeZone}')::date - ($1::int - 1))::timestamp AT TIME ZONE '${reportTimeZone}')`;
+// 돌아보기의 모든 집계는 KST 달력 날짜 창 [start, end)로 잰다.
+// 회고 스냅샷도 같은 조건을 쓰기 때문에 두 영역의 기간이 어긋나지 않는다.
+export function windowCondition(column: string) {
+  return `${column} >= ($1::date::timestamp AT TIME ZONE '${reportTimeZone}')
+    AND ${column} < ($2::date::timestamp AT TIME ZONE '${reportTimeZone}')`;
+}
+
+export function shiftDate(date: string, days: number) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid recap date: ${date}`);
+  }
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
 
 // rev0(신규 캡처)의 활동 시각은 revision row 생성 시각이 아니라 entry의 원 캡처 시각으로 센다.
 // 백필·재적재로 revision row가 뒤늦게 생겨도(예: 012 백필 876건이 2분에 몰림) 활동이
@@ -91,8 +103,17 @@ const recapLlmRowSchema = z.object({
   total_tokens: z.coerce.number().int().nonnegative()
 });
 
+export type RecapWindow = {
+  // KST 달력 날짜(YYYY-MM-DD). end는 exclusive라 "그 날 자정 전까지"를 뜻한다.
+  start: string;
+  end: string;
+};
+
 export type RecapOptions = {
   days: number;
+  // 회고 스냅샷 기간에 맞춰 집계할 때 넘기는 명시 창.
+  // 생략하면 스냅샷과 동일한 정의(오늘 자정을 exclusive end로 둔 지난 days일)로 계산한다.
+  window?: RecapWindow;
 };
 
 type RecapDailyEntry = {
@@ -109,7 +130,9 @@ export class RecapService {
   constructor(private readonly pool: Pick<pg.Pool, "query">) {}
 
   async getRecap(options: RecapOptions) {
-    const parameters = [options.days];
+    const window = await this.resolveWindow(options);
+    const periodDays = daysBetween(window.start, window.end);
+    const parameters = [window.start, window.end];
     const [
       dailyResult,
       weekdayResult,
@@ -136,7 +159,7 @@ export class RecapService {
       this.pool.query(
         `SELECT topic, COUNT(*)::int AS note_count
         FROM notes
-        WHERE created_at >= ${windowStartExpression}
+        WHERE ${windowCondition("created_at")}
         GROUP BY topic
         ORDER BY note_count DESC, topic ASC NULLS LAST
         LIMIT 12`,
@@ -148,7 +171,7 @@ export class RecapService {
           COUNT(*) FILTER (WHERE result_count = 0)::int AS zero_hit_count,
           AVG(top_score) AS avg_top_score
         FROM retrieval_query_events
-        WHERE created_at >= ${windowStartExpression}`,
+        WHERE ${windowCondition("created_at")}`,
         parameters
       ),
       this.pool.query(
@@ -158,7 +181,7 @@ export class RecapService {
           COUNT(*)::int AS query_count
         FROM retrieval_query_events
         LEFT JOIN mcp_sessions ON mcp_sessions.id = retrieval_query_events.session_id
-        WHERE retrieval_query_events.created_at >= ${windowStartExpression}
+        WHERE ${windowCondition("retrieval_query_events.created_at")}
         GROUP BY 1
         ORDER BY query_count DESC, client_name ASC NULLS LAST
         LIMIT 10`,
@@ -167,7 +190,7 @@ export class RecapService {
       this.pool.query(
         `SELECT project_name, COUNT(*)::int AS query_count
         FROM retrieval_query_events
-        WHERE created_at >= ${windowStartExpression}
+        WHERE ${windowCondition("created_at")}
         GROUP BY project_name
         ORDER BY query_count DESC, project_name ASC NULLS LAST
         LIMIT 10`,
@@ -176,7 +199,7 @@ export class RecapService {
       this.pool.query(
         `SELECT query, source_kind, project_name, result_count, created_at
         FROM retrieval_query_events
-        WHERE created_at >= ${windowStartExpression}
+        WHERE ${windowCondition("created_at")}
         ORDER BY created_at DESC, id DESC
         LIMIT 10`,
         parameters
@@ -187,7 +210,7 @@ export class RecapService {
           COUNT(*) FILTER (WHERE revision_number = 0)::int AS captured_count,
           COUNT(*) FILTER (WHERE revision_number > 0)::int AS revised_count
         FROM ${rationaleActivitiesSubquery}
-        WHERE created_at >= ${windowStartExpression}`,
+        WHERE ${windowCondition("created_at")}`,
         parameters
       ),
       this.pool.query(
@@ -195,7 +218,7 @@ export class RecapService {
           rationale_activities.project_name,
           COUNT(*)::int AS revision_count
         FROM ${rationaleActivitiesSubquery}
-        WHERE created_at >= ${windowStartExpression}
+        WHERE ${windowCondition("created_at")}
         GROUP BY 1
         ORDER BY revision_count DESC, rationale_activities.project_name ASC NULLS LAST
         LIMIT 10`,
@@ -204,7 +227,7 @@ export class RecapService {
       this.pool.query(
         `SELECT event_type, COUNT(*)::int AS event_count
         FROM memory_usage_events
-        WHERE created_at >= ${windowStartExpression}
+        WHERE ${windowCondition("created_at")}
         GROUP BY event_type
         ORDER BY event_count DESC, event_type ASC`,
         parameters
@@ -215,7 +238,7 @@ export class RecapService {
           COALESCE(SUM(cost_usd), 0)::text AS cost_usd,
           COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens
         FROM llm_request_logs
-        WHERE requested_at >= ${windowStartExpression}`,
+        WHERE ${windowCondition("requested_at")}`,
         parameters
       )
     ]);
@@ -235,7 +258,9 @@ export class RecapService {
     const llmStats = readSingleRow(llmResult, recapLlmRowSchema, "recap LLM stats");
 
     return {
-      periodDays: options.days,
+      periodDays,
+      periodStart: window.start,
+      periodEnd: window.end,
       timeZone: reportTimeZone,
       totals: {
         noteCount: sumDaily(daily, "noteCount"),
@@ -301,38 +326,51 @@ export class RecapService {
       }
     };
   }
+
+  private async resolveWindow(options: RecapOptions): Promise<RecapWindow> {
+    if (options.window) {
+      return options.window;
+    }
+    // 경계 계산은 앱 서버가 아니라 DB 시계로 한다. 회고 스냅샷의 readBoundary와 같은 정의라
+    // 스냅샷이 아직 없어도 두 영역이 같은 기간을 가리킨다.
+    const result = await this.pool.query(
+      `SELECT to_char((now() AT TIME ZONE '${reportTimeZone}')::date, 'YYYY-MM-DD') AS period_end`
+    );
+    const row = result.rows[0];
+    if (!row || typeof row.period_end !== "string") {
+      throw new Error("Recap boundary query returned no rows.");
+    }
+    return { start: shiftDate(row.period_end, -options.days), end: row.period_end };
+  }
 }
 
 function createDailyQuery() {
+  // end는 exclusive라 마지막 날은 $2 - 1일이다.
   return `WITH days AS (
-    SELECT generate_series(
-      (now() AT TIME ZONE '${reportTimeZone}')::date - ($1::int - 1),
-      (now() AT TIME ZONE '${reportTimeZone}')::date,
-      interval '1 day'
-    )::date AS day
+    SELECT generate_series($1::date, $2::date - 1, interval '1 day')::date AS day
   ),
   note_counts AS (
     SELECT (created_at AT TIME ZONE '${reportTimeZone}')::date AS day, COUNT(*)::int AS note_count
     FROM notes
-    WHERE created_at >= ${windowStartExpression}
+    WHERE ${windowCondition("created_at")}
     GROUP BY 1
   ),
   retrieval_counts AS (
     SELECT (created_at AT TIME ZONE '${reportTimeZone}')::date AS day, COUNT(*)::int AS retrieval_count
     FROM retrieval_query_events
-    WHERE created_at >= ${windowStartExpression}
+    WHERE ${windowCondition("created_at")}
     GROUP BY 1
   ),
   usage_counts AS (
     SELECT (created_at AT TIME ZONE '${reportTimeZone}')::date AS day, COUNT(*)::int AS usage_event_count
     FROM memory_usage_events
-    WHERE created_at >= ${windowStartExpression}
+    WHERE ${windowCondition("created_at")}
     GROUP BY 1
   ),
   revision_counts AS (
     SELECT (created_at AT TIME ZONE '${reportTimeZone}')::date AS day, COUNT(*)::int AS rationale_revision_count
     FROM ${rationaleActivitiesSubquery}
-    WHERE created_at >= ${windowStartExpression}
+    WHERE ${windowCondition("created_at")}
     GROUP BY 1
   )
   SELECT
@@ -352,13 +390,13 @@ function createDailyQuery() {
 function createCombinedEventQuery(bucketExpression: string, bucketName: string) {
   // 노트·질의·재사용·rationale 활동을 하나의 시각 축으로 합쳐 "언제 움직였는지"를 본다.
   return `WITH events AS (
-    SELECT created_at FROM notes WHERE created_at >= ${windowStartExpression}
+    SELECT created_at FROM notes WHERE ${windowCondition("created_at")}
     UNION ALL
-    SELECT created_at FROM retrieval_query_events WHERE created_at >= ${windowStartExpression}
+    SELECT created_at FROM retrieval_query_events WHERE ${windowCondition("created_at")}
     UNION ALL
-    SELECT created_at FROM memory_usage_events WHERE created_at >= ${windowStartExpression}
+    SELECT created_at FROM memory_usage_events WHERE ${windowCondition("created_at")}
     UNION ALL
-    SELECT created_at FROM ${rationaleActivitiesSubquery} WHERE created_at >= ${windowStartExpression}
+    SELECT created_at FROM ${rationaleActivitiesSubquery} WHERE ${windowCondition("created_at")}
   )
   SELECT ${bucketExpression}, COUNT(*)::int AS event_count
   FROM events
@@ -376,6 +414,15 @@ function readSingleRow<TSchema extends z.ZodTypeAny>(
     throw new Error(`${label} query returned no rows.`);
   }
   return schema.parse(row);
+}
+
+function daysBetween(start: string, endExclusive: string) {
+  const startMs = Date.parse(`${start}T00:00:00Z`);
+  const endMs = Date.parse(`${endExclusive}T00:00:00Z`);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+    throw new Error(`Invalid recap window: ${start} ~ ${endExclusive}`);
+  }
+  return Math.round((endMs - startMs) / (24 * 60 * 60 * 1000));
 }
 
 function sumDaily(daily: RecapDailyEntry[], key: keyof Omit<RecapDailyEntry, "date">) {

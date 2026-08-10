@@ -9,10 +9,15 @@ describe("recap report", () => {
 
     const recap = await service.getRecap({ days: 30 });
 
-    for (const [, parameters] of query.mock.calls) {
-      expect(parameters).toEqual([30]);
+    for (const [sql, parameters] of query.mock.calls) {
+      if (String(sql).includes("AS period_end")) {
+        continue;
+      }
+      expect(parameters).toEqual(["2026-06-19", "2026-07-19"]);
     }
     expect(recap.periodDays).toBe(30);
+    expect(recap.periodStart).toBe("2026-06-19");
+    expect(recap.periodEnd).toBe("2026-07-19");
     expect(recap.totals).toEqual({
       noteCount: 2,
       retrievalCount: 1,
@@ -49,15 +54,33 @@ describe("recap report", () => {
     expect(recap.llm).toEqual({ requestCount: 2, costUsd: 0.5, totalTokens: 1234 });
   });
 
-  it("computes the window from a KST date boundary", async () => {
+  it("ends the default window at the KST date boundary so today is excluded", async () => {
     const query = vi.fn().mockImplementation((sql) => Promise.resolve(resolveRecapQuery(String(sql))));
     const service = new RecapService({ query });
 
-    await service.getRecap({ days: 7 });
+    const recap = await service.getRecap({ days: 7 });
 
+    // 회고 스냅샷과 같은 정의: 오늘 자정이 exclusive end라 진행 중인 오늘은 집계에서 빠진다.
+    expect(recap.periodStart).toBe("2026-07-12");
+    expect(recap.periodEnd).toBe("2026-07-19");
     for (const [sql] of query.mock.calls) {
       expect(String(sql)).toContain("Asia/Seoul");
-      expect(String(sql)).toContain("$1::int - 1");
+    }
+  });
+
+  it("aggregates the explicit window without asking the database for a boundary", async () => {
+    const query = vi.fn().mockImplementation((sql) => Promise.resolve(resolveRecapQuery(String(sql))));
+    const service = new RecapService({ query });
+
+    // 대시보드를 회고 스냅샷 기간에 맞출 때 쓰는 경로.
+    const recap = await service.getRecap({ days: 30, window: { start: "2026-06-01", end: "2026-06-15" } });
+
+    expect(recap.periodDays).toBe(14);
+    expect(recap.periodStart).toBe("2026-06-01");
+    expect(recap.periodEnd).toBe("2026-06-15");
+    for (const [sql, parameters] of query.mock.calls) {
+      expect(String(sql)).not.toContain("AS period_end");
+      expect(parameters).toEqual(["2026-06-01", "2026-06-15"]);
     }
   });
 
@@ -80,6 +103,9 @@ describe("recap report", () => {
 });
 
 function resolveRecapQuery(sql: string): pg.QueryResult {
+  if (sql.includes("AS period_end")) {
+    return createQueryResult([{ period_end: "2026-07-19" }]);
+  }
   if (sql.includes("WITH days AS")) {
     return createQueryResult([
       {

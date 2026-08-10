@@ -1932,22 +1932,21 @@ function LlmRequestTable(props: {
 
 function RecapDashboard() {
   const [periodDays, setPeriodDays] = useState(30);
+  // RecapSnapshotSection과 같은 쿼리 키라 캐시를 공유한다.
+  // 아래 SQL 집계를 회고 스냅샷과 같은 기간으로 맞추려고 여기서도 스냅샷을 읽는다.
+  const snapshotQuery = useQuery({
+    queryKey: ["recap-snapshot", periodDays],
+    queryFn: () => fetchRecapSnapshot(periodDays)
+  });
+  const snapshot = snapshotQuery.data?.snapshot ?? null;
+  const alignedWindow = snapshot === null ? null : { start: snapshot.periodStart, end: snapshot.periodEnd };
   const recapQuery = useQuery({
-    queryKey: ["recap", periodDays],
-    queryFn: () => fetchRecap(periodDays),
+    queryKey: ["recap", periodDays, alignedWindow?.start ?? null, alignedWindow?.end ?? null],
+    queryFn: () => fetchRecap(periodDays, alignedWindow ?? undefined),
+    // 스냅샷 응답 전에 먼저 집계하면 기본 창으로 한 번 그렸다가 기간이 튄다.
+    enabled: !snapshotQuery.isPending,
     placeholderData: (previousData) => previousData
   });
-
-  if (recapQuery.isLoading) {
-    return (
-      <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8" aria-label="Loading recap">
-        <div className="h-12 w-52 animate-pulse rounded-xl bg-stroke" />
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((item) => <div key={item} className="h-28 animate-pulse rounded-3xl bg-white shadow-soft" />)}
-        </div>
-      </section>
-    );
-  }
 
   if (recapQuery.error) {
     return (
@@ -1959,7 +1958,14 @@ function RecapDashboard() {
 
   const recap = recapQuery.data;
   if (!recap) {
-    throw new Error("Recap query completed without data.");
+    return (
+      <section className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8" aria-label="Loading recap">
+        <div className="h-12 w-52 animate-pulse rounded-xl bg-stroke" />
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((item) => <div key={item} className="h-28 animate-pulse rounded-3xl bg-white shadow-soft" />)}
+        </div>
+      </section>
+    );
   }
 
   const totalActivityCount = recap.totals.noteCount
@@ -2009,7 +2015,7 @@ function RecapDashboard() {
             <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
               <div>
                 <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted">
-                  최근 {recap.periodDays}일
+                  {recap.periodDays}일 · {formatRecapPeriodRange(recap.periodStart, recap.periodEnd)}
                 </p>
                 <h2 className="mt-1 font-display text-2xl tracking-[-0.03em] text-ink">일별 활동</h2>
               </div>

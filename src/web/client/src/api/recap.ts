@@ -16,8 +16,16 @@ export type RecapDailyPoint = {
   rationaleRevisionCount: number;
 };
 
+/** 집계 창(KST 달력 날짜). end는 exclusive라 마지막 날은 end 하루 전이다. */
+export type RecapWindow = {
+  start: string;
+  end: string;
+};
+
 export type RecapReport = {
   periodDays: number;
+  periodStart: string;
+  periodEnd: string;
   timeZone: string;
   totals: RecapTotals;
   daily: RecapDailyPoint[];
@@ -51,8 +59,12 @@ export type RecapReport = {
   };
 };
 
-export async function fetchRecap(days: number): Promise<RecapReport> {
+export async function fetchRecap(days: number, window?: RecapWindow): Promise<RecapReport> {
   const params = new URLSearchParams({ days: String(days) });
+  if (window) {
+    params.set("start", window.start);
+    params.set("end", window.end);
+  }
   const data = await requestJson(`/api/recap?${params.toString()}`);
   if (
     !isRecord(data)
@@ -81,6 +93,8 @@ export async function fetchRecap(days: number): Promise<RecapReport> {
 
   return {
     periodDays: readNumber(data, "periodDays"),
+    periodStart: readString(data, "periodStart"),
+    periodEnd: readString(data, "periodEnd"),
     timeZone: readString(data, "timeZone"),
     totals: {
       noteCount: readNumber(data.totals, "noteCount"),
