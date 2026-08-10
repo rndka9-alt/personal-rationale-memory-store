@@ -5,12 +5,14 @@ import type { AppConfig } from "../config.js";
 import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import {
   addMemoryIndexLineMemberIfActive,
+  getMemoryIndexLineDetail,
   insertMemoryIndexLineWithExecutor,
   listActiveMemoryIndexLinesByMemberEntryIds,
   listActiveMemoryIndexLinesForCompose,
   listEntryChunkEmbeddings,
   listEntryIdsInAnyActiveMemoryIndexLine,
   listMemoryIndexCandidateEntries,
+  listMemoryIndexLinesPage,
   listMemoryRevisionContents,
   removeMemoryIndexMemberships,
   searchMemoryIndexNeighbors,
@@ -18,6 +20,7 @@ import {
   updateMemoryIndexLineProject,
   updateMemoryIndexLineStatus,
   type MemoryIndexComposeLine,
+  type MemoryIndexLinePageOptions,
   type MemoryIndexLineRecord
 } from "../db/queries.js";
 import {
@@ -94,6 +97,24 @@ export class MemoryIndexService {
 
   async listComposeLines(): Promise<MemoryIndexComposeLine[]> {
     return listActiveMemoryIndexLinesForCompose(this.pool);
+  }
+
+  async listLinesPage(options: MemoryIndexLinePageOptions) {
+    return listMemoryIndexLinesPage(this.pool, options);
+  }
+
+  async getLineDetail(lineId: string) {
+    return getMemoryIndexLineDetail(this.pool, lineId);
+  }
+
+  // 수동 정리 경로: 오승격된 줄을 내리고, 잘못 내린 줄을 되살린다.
+  // 편입 후보는 active 줄만 보므로 수동 retire는 그대로 mute로 굳는다.
+  async setLineStatus(lineId: string, status: "active" | "retired") {
+    const updated = await updateMemoryIndexLineStatus(this.pool, lineId, status);
+    if (!updated) {
+      return null;
+    }
+    return getMemoryIndexLineDetail(this.pool, lineId);
   }
 
   private async processEntryChange(entryId: string) {

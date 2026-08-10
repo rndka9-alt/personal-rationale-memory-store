@@ -5,6 +5,7 @@ import { loadConfig } from "../config.js";
 import { createPool } from "../db/pool.js";
 import { runMigrations } from "../db/migrations.js";
 import { createEmbeddingProvider } from "../embeddings/embeddingProvider.js";
+import { formatMemoryIndexSection } from "../memory/contextComposer.js";
 import { MemoryFileStore } from "../memory/fileStore.js";
 import { DigestViewService } from "../memory/digestViewService.js";
 import { IndexingService } from "../memory/indexingService.js";
@@ -20,7 +21,11 @@ import type {
   ReviewQueueSortMode
 } from "../memory/rationaleService.js";
 import { logError, logInfo } from "../diagnostics/index.js";
-import type { MemoryCatalogSortMode, MemoryCatalogStatus } from "../db/queries.js";
+import type {
+  MemoryCatalogSortMode,
+  MemoryCatalogStatus,
+  MemoryIndexLineStatusFilter
+} from "../db/queries.js";
 
 const defaultPageSize = 25;
 const maximumPageSize = 100;
@@ -115,6 +120,50 @@ async function routeApiRequest(
       pageSize: readPageSize(url.searchParams.get("pageSize"))
     });
     writeJson(response, 200, result);
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/api/memory-index") {
+    const result = await memoryIndexService.listLinesPage({
+      status: readMemoryIndexStatus(url.searchParams.get("status")),
+      search: readSearchParam(url.searchParams.get("search")),
+      page: readPositiveInteger(url.searchParams.get("page"), 1, "page"),
+      pageSize: readPageSize(url.searchParams.get("pageSize"))
+    });
+    writeJson(response, 200, result);
+    return;
+  }
+
+  // detail 매처(/api/memory-index/:id)가 이 경로도 삼키므로 반드시 그 앞에 둔다.
+  if (method === "GET" && url.pathname === "/api/memory-index/compose-preview") {
+    const composeLines = await memoryIndexService.listComposeLines();
+    writeJson(response, 200, { text: formatMemoryIndexSection(composeLines).join("\n").trim() });
+    return;
+  }
+
+  const memoryIndexDetailMatch = matchMemoryIndexDetailPath(url.pathname);
+  if (memoryIndexDetailMatch && method === "GET") {
+    const detail = await memoryIndexService.getLineDetail(memoryIndexDetailMatch.id);
+    if (!detail) {
+      writeJson(response, 404, { error: "Memory index line not found" });
+      return;
+    }
+    writeJson(response, 200, detail);
+    return;
+  }
+
+  const memoryIndexStatusMatch = matchMemoryIndexStatusPath(url.pathname);
+  if (memoryIndexStatusMatch && method === "POST") {
+    const body = await readJsonBody(request);
+    const detail = await memoryIndexService.setLineStatus(
+      memoryIndexStatusMatch.id,
+      readMemoryIndexStatusAction(body)
+    );
+    if (!detail) {
+      writeJson(response, 404, { error: "Memory index line not found" });
+      return;
+    }
+    writeJson(response, 200, detail);
     return;
   }
 
@@ -356,6 +405,18 @@ function matchReviewQueueReviewPath(pathname: string) {
   return id ? { id: decodeURIComponent(id) } : undefined;
 }
 
+function matchMemoryIndexDetailPath(pathname: string) {
+  const match = /^\/api\/memory-index\/([^/]+)$/.exec(pathname);
+  const id = match?.[1];
+  return id ? { id: decodeURIComponent(id) } : undefined;
+}
+
+function matchMemoryIndexStatusPath(pathname: string) {
+  const match = /^\/api\/memory-index\/([^/]+)\/status$/.exec(pathname);
+  const id = match?.[1];
+  return id ? { id: decodeURIComponent(id) } : undefined;
+}
+
 function matchNoteArchivePath(pathname: string) {
   const match = /^\/api\/notes\/([^/]+)\/archive$/.exec(pathname);
   const id = match?.[1];
@@ -576,6 +637,26 @@ function readMemoryCatalogSortMode(value: string | null): MemoryCatalogSortMode 
     return value;
   }
   throw new Error(`Invalid memory catalog sort mode: ${value}`);
+}
+
+function readMemoryIndexStatus(value: string | null): MemoryIndexLineStatusFilter {
+  if (value === null || value === "active") {
+    return "active";
+  }
+  if (value === "retired" || value === "all") {
+    return value;
+  }
+  throw new Error(`Invalid memory index status: ${value}`);
+}
+
+function readMemoryIndexStatusAction(body: unknown): "active" | "retired" {
+  if (!isRecord(body)) {
+    throw new Error("Memory index status body must be an object.");
+  }
+  if (body.status !== "active" && body.status !== "retired") {
+    throw new Error("Memory index status must be active or retired.");
+  }
+  return body.status;
 }
 
 function readNoteSortMode(value: string | null): "newest" | "oldest" {

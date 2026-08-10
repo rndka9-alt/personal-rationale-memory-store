@@ -1721,14 +1721,21 @@ export async function updateMemoryIndexLineProject(pool: pg.Pool, lineId: string
   );
 }
 
+// 반환값은 대상 줄의 존재 여부다 — 자동 파이프라인은 방금 읽은 줄을 넘기지만
+// 웹 수동 조작은 사라진 줄을 가리킬 수 있어 404 판정에 쓴다.
 export async function updateMemoryIndexLineStatus(pool: pg.Pool, lineId: string, status: "active" | "retired") {
-  await pool.query(
+  const result = await pool.query(
     `UPDATE memory_index_lines
       SET status = $2, updated_at = now()
-      WHERE id = $1`,
+      WHERE id = $1
+      RETURNING id`,
     [lineId, status]
   );
-  logInfo("DB memory index line status updated.", { lineId, status });
+  const updated = result.rows.length > 0;
+  if (updated) {
+    logInfo("DB memory index line status updated.", { lineId, status });
+  }
+  return updated;
 }
 
 export async function removeMemoryIndexMemberships(pool: pg.Pool, entryId: string) {
@@ -1832,4 +1839,154 @@ export async function listMemoryIndexCandidateEntries(pool: pg.Pool, entryIds: s
     currentRevisionId: typeof row.current_revision_id === "string" ? row.current_revision_id : null,
     projectName: readProjectContext(isRecord(row.metadata) ? row.metadata.project : undefined)?.name ?? null
   }));
+}
+
+// ── 색인 조회(웹 UI) ────────────────────────────────────────────────────────
+
+export type MemoryIndexLineStatusFilter = "active" | "retired" | "all";
+
+export type MemoryIndexLinePageOptions = {
+  status: MemoryIndexLineStatusFilter;
+  search?: string;
+  page: number;
+  pageSize: number;
+};
+
+/** 색인 목록의 줄 한 행. anchorEntryId는 멤버 목록에서 medoid를 표시하는 데 쓴다. */
+export type MemoryIndexLineSummary = {
+  id: string;
+  triggerPhrase: string;
+  projectName: string | null;
+  status: "active" | "retired";
+  memberCount: number;
+  anchorEntryId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** 색인 줄 상세의 멤버 한 행. addedAt이 곧 그 문서가 이 줄로 수집된 시각이다. */
+export type MemoryIndexLineMember = {
+  entryId: string;
+  title: string;
+  projectName: string | null;
+  isAnchor: boolean;
+  deprecated: boolean;
+  addedAt: string;
+  capturedAt: string;
+};
+
+function mapMemoryIndexLineSummaryRow(row: pg.QueryResultRow): MemoryIndexLineSummary {
+  return {
+    id: String(row.id),
+    triggerPhrase: String(row.trigger_phrase),
+    projectName: typeof row.project_name === "string" ? row.project_name : null,
+    status: row.status === "retired" ? "retired" : "active",
+    memberCount: Number(row.member_count),
+    anchorEntryId: String(row.anchor_entry_id),
+    createdAt: readTimestamp(row.created_at, "memory_index_lines.created_at"),
+    updatedAt: readTimestamp(row.updated_at, "memory_index_lines.updated_at")
+  };
+}
+
+// anchor JOIN은 목록 표시가 아니라 앵커 문서 제목으로도 검색되게 하려고 남긴다.
+const memoryIndexLineSummarySelect = `SELECT l.id, l.trigger_phrase, l.project_name, l.status,
+    l.anchor_entry_id, l.created_at, l.updated_at,
+    (SELECT COUNT(*) FROM memory_index_line_members m WHERE m.line_id = l.id)::int AS member_count
+  FROM memory_index_lines l
+  JOIN memory_entries a ON a.id = l.anchor_entry_id`;
+
+export async function listMemoryIndexLinesPage(pool: pg.Pool, options: MemoryIndexLinePageOptions) {
+  logInfo("DB list paginated memory index lines started.", {
+    status: options.status,
+    hasSearch: Boolean(options.search),
+    page: options.page,
+    pageSize: options.pageSize
+  });
+
+  const conditions = ["TRUE"];
+  const values: unknown[] = [];
+  if (options.status !== "all") {
+    values.push(options.status);
+    conditions.push(`l.status = $${values.length}`);
+  }
+  if (options.search) {
+    values.push(`%${escapeLikePattern(options.search)}%`);
+    conditions.push(`(
+      l.trigger_phrase ILIKE $${values.length} ESCAPE '!'
+      OR l.project_name ILIKE $${values.length} ESCAPE '!'
+      OR a.title ILIKE $${values.length} ESCAPE '!'
+    )`);
+  }
+  const whereClause = conditions.join(" AND ");
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total_count
+      FROM memory_index_lines l
+      JOIN memory_entries a ON a.id = l.anchor_entry_id
+      WHERE ${whereClause}`,
+    values
+  );
+  const countRow = countResult.rows[0];
+  if (!countRow) {
+    throw new Error("Memory index line count query returned no rows.");
+  }
+
+  const totalItems = Number(countRow.total_count);
+  const totalPages = Math.max(1, Math.ceil(totalItems / options.pageSize));
+  const page = Math.min(options.page, totalPages);
+  const result = await pool.query(
+    `${memoryIndexLineSummarySelect}
+      WHERE ${whereClause}
+      ORDER BY l.updated_at DESC, l.id ASC
+      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, options.pageSize, (page - 1) * options.pageSize]
+  );
+
+  logInfo("DB list paginated memory index lines completed.", {
+    page,
+    totalItems,
+    resultCount: result.rows.length
+  });
+  return {
+    lines: result.rows.map(mapMemoryIndexLineSummaryRow),
+    pagination: {
+      page,
+      pageSize: options.pageSize,
+      totalItems,
+      totalPages
+    }
+  };
+}
+
+export async function getMemoryIndexLineDetail(pool: pg.Pool, lineId: string) {
+  const lineResult = await pool.query(
+    `${memoryIndexLineSummarySelect}
+      WHERE l.id = $1`,
+    [lineId]
+  );
+  const lineRow = lineResult.rows[0];
+  if (!lineRow) {
+    return null;
+  }
+  const line = mapMemoryIndexLineSummaryRow(lineRow);
+
+  const memberResult = await pool.query(
+    `SELECT m.entry_id, m.added_at, e.title, e.acceptance_state, e.created_at, e.metadata
+      FROM memory_index_line_members m
+      JOIN memory_entries e ON e.id = m.entry_id
+      WHERE m.line_id = $1
+      ORDER BY m.added_at ASC, m.entry_id ASC`,
+    [lineId]
+  );
+  const members: MemoryIndexLineMember[] = memberResult.rows.map((row) => ({
+    entryId: String(row.entry_id),
+    title: String(row.title),
+    projectName: readProjectContext(isRecord(row.metadata) ? row.metadata.project : undefined)?.name ?? null,
+    isAnchor: String(row.entry_id) === line.anchorEntryId,
+    deprecated: row.acceptance_state === "deprecated",
+    addedAt: readTimestamp(row.added_at, "memory_index_line_members.added_at"),
+    capturedAt: readTimestamp(row.created_at, "memory_entries.created_at")
+  }));
+
+  return { line, members };
 }

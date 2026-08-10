@@ -41,6 +41,15 @@ import {
   type MemoryCatalogStatus
 } from "./api/memories";
 import {
+  fetchMemoryIndexComposePreview,
+  fetchMemoryIndexLineDetail,
+  fetchMemoryIndexLines,
+  updateMemoryIndexLineStatus,
+  type MemoryIndexLine,
+  type MemoryIndexLineStatus,
+  type MemoryIndexStatusFilter
+} from "./api/memoryIndex";
+import {
   fetchRecap,
   fetchRecapRun,
   fetchRecapSnapshot,
@@ -66,6 +75,7 @@ import {
   ChevronRightIcon,
   DiaryIcon,
   DigestIcon,
+  IndexIcon,
   LlmIcon,
   MemoryIcon,
   NoteIcon,
@@ -78,7 +88,7 @@ import type { NoteRecord } from "./types/note";
 import type { Pagination } from "./types/pagination";
 import type { ProjectContext, UsageFeedbackCounts } from "./types/review";
 
-type MainView = "memories" | "notes" | "diary" | "digest" | "llm" | "recap";
+type MainView = "memories" | "index" | "notes" | "diary" | "digest" | "llm" | "recap";
 
 type ToastState = {
   message: string;
@@ -103,6 +113,12 @@ const memorySortModes: Array<{ value: MemoryCatalogSortMode; label: string }> = 
 const noteSortModes: Array<{ value: NoteSortMode; label: string }> = [
   { value: "newest", label: "Newest first" },
   { value: "oldest", label: "Oldest first" }
+];
+
+const memoryIndexStatuses: Array<{ value: MemoryIndexStatusFilter; label: string }> = [
+  { value: "active", label: "Active" },
+  { value: "retired", label: "Retired" },
+  { value: "all", label: "All" }
 ];
 
 const digestLayerDetails: Record<DigestLayer, { label: string; eyebrow: string }> = {
@@ -182,6 +198,7 @@ export function App() {
     <main className="min-h-screen bg-canvas text-ink">
       <AppHeader mainView={mainView} onViewChange={handleViewChange} />
       {mainView === "memories" ? <MemoryLibrary /> : null}
+      {mainView === "index" ? <MemoryIndexLibrary /> : null}
       {mainView === "notes" ? <NotesLibrary /> : null}
       {mainView === "diary" ? <DiaryDashboard /> : null}
       {mainView === "digest" ? <DigestDashboard /> : null}
@@ -193,7 +210,14 @@ export function App() {
 
 function readMainViewFromLocation(): MainView {
   const tab = new URLSearchParams(window.location.search).get("tab");
-  if (tab === "notes" || tab === "diary" || tab === "digest" || tab === "llm" || tab === "recap") {
+  if (
+    tab === "index"
+    || tab === "notes"
+    || tab === "diary"
+    || tab === "digest"
+    || tab === "llm"
+    || tab === "recap"
+  ) {
     return tab;
   }
   return "memories";
@@ -221,6 +245,12 @@ function AppHeader(props: {
             icon={<MemoryIcon className="h-4 w-4" />}
             label="Memories"
             onClick={() => props.onViewChange("memories")}
+          />
+          <NavigationButton
+            active={props.mainView === "index"}
+            icon={<IndexIcon className="h-4 w-4" />}
+            label="Index"
+            onClick={() => props.onViewChange("index")}
           />
           <NavigationButton
             active={props.mainView === "notes"}
@@ -843,6 +873,233 @@ function NotesLibrary() {
         />
       ) : null}
     </section>
+  );
+}
+
+function MemoryIndexLibrary() {
+  const queryClient = useQueryClient();
+  const [status, setStatus] = useState<MemoryIndexStatusFilter>("active");
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(1);
+  const [expandedLineId, setExpandedLineId] = useState<string | undefined>();
+  const search = useDebouncedValue(searchInput, searchDebounceMilliseconds);
+  const linesQuery = useQuery({
+    queryKey: ["memory-index", status, page, search],
+    queryFn: () => fetchMemoryIndexLines({
+      status,
+      search: search.length > 0 ? search : undefined,
+      page,
+      pageSize
+    })
+  });
+
+  useEffect(() => {
+    const responsePage = linesQuery.data?.pagination.page;
+    if (responsePage !== undefined && responsePage !== page) {
+      setPage(responsePage);
+    }
+  }, [linesQuery.data?.pagination.page, page]);
+
+  const statusMutation = useMutation({
+    mutationFn: (variables: { id: string; status: MemoryIndexLineStatus }) =>
+      updateMemoryIndexLineStatus(variables.id, variables.status),
+    onSuccess: async (detail) => {
+      await queryClient.invalidateQueries({ queryKey: ["memory-index"] });
+      await queryClient.invalidateQueries({ queryKey: ["memory-index-detail", detail.line.id] });
+      // 줄을 내리거나 되살리면 compose 팩에 실리는 목록도 달라진다.
+      await queryClient.invalidateQueries({ queryKey: ["memory-index-compose-preview"] });
+    }
+  });
+
+  return (
+    <section className="mx-auto max-w-5xl px-4 pb-20 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+      <header className="mb-8 sm:mb-12">
+        <p className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.17em] text-muted">Trigger lines promoted from repeated captures</p>
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="font-display text-[2.7rem] leading-none tracking-[-0.045em] text-ink sm:text-5xl">Index</h1>
+            <p className="mt-3 text-sm text-muted">{linesQuery.data?.pagination.totalItems ?? 0} lines in this view</p>
+          </div>
+        </div>
+      </header>
+
+      <MemoryIndexComposePreview />
+
+      <div className="mb-7 flex flex-col gap-3 rounded-2xl border border-stroke bg-white p-3 shadow-soft sm:flex-row sm:items-center">
+        <div className="min-w-0 flex-1">
+          <SearchField value={searchInput} placeholder="Search trigger phrases" onChange={(value) => {
+            setSearchInput(value);
+            setPage(1);
+          }} />
+        </div>
+        <label>
+          <span className="sr-only">Filter index lines</span>
+          <select
+            className="h-11 w-full rounded-xl border-0 bg-canvas py-0 pl-3 pr-9 text-xs font-semibold text-muted shadow-none focus:ring-1 focus:ring-ink sm:w-auto"
+            value={status}
+            onChange={(event) => {
+              setStatus(readMemoryIndexStatus(event.target.value));
+              setPage(1);
+            }}
+          >
+            {memoryIndexStatuses.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+      </div>
+
+      {statusMutation.error ? <InlineError message={statusMutation.error.message} /> : null}
+      {linesQuery.isLoading ? (
+        <MemoryListSkeleton />
+      ) : linesQuery.error ? (
+        <InlineError message={linesQuery.error.message} />
+      ) : (linesQuery.data?.lines.length ?? 0) === 0 ? (
+        <EmptyState
+          title="No index lines yet"
+          description="A line is promoted once three or more memories share the same retrieval trigger. Nothing has crossed that bar in this view."
+        />
+      ) : (
+        <div className="space-y-3">
+          {linesQuery.data?.lines.map((line) => (
+            <MemoryIndexLineCard
+              key={line.id}
+              line={line}
+              expanded={expandedLineId === line.id}
+              disabled={statusMutation.isPending}
+              onToggle={() => setExpandedLineId(expandedLineId === line.id ? undefined : line.id)}
+              onStatusChange={(nextStatus) => statusMutation.mutate({ id: line.id, status: nextStatus })}
+            />
+          ))}
+        </div>
+      )}
+
+      {linesQuery.data?.pagination ? (
+        <PaginationControls
+          pagination={linesQuery.data.pagination}
+          disabled={linesQuery.isLoading}
+          onPageChange={setPage}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function MemoryIndexComposePreview() {
+  const [open, setOpen] = useState(false);
+  const previewQuery = useQuery({
+    queryKey: ["memory-index-compose-preview"],
+    queryFn: fetchMemoryIndexComposePreview,
+    enabled: open
+  });
+
+  return (
+    <div className="mb-3 rounded-2xl border border-stroke bg-white p-4 shadow-soft">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[0.68rem] text-muted">The section active lines render into every compose_context pack.</p>
+        <button
+          type="button"
+          className="text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-faint transition-colors hover:text-ink"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "Hide preview" : "Compose preview"}
+        </button>
+      </div>
+      {open ? (
+        previewQuery.isLoading ? (
+          <p className="mt-4 text-xs text-faint">Loading…</p>
+        ) : previewQuery.error ? (
+          <InlineError message={previewQuery.error.message} />
+        ) : previewQuery.data && previewQuery.data.length > 0 ? (
+          <pre className="mt-4 overflow-x-auto whitespace-pre-wrap rounded-2xl bg-canvas px-4 py-3 text-[0.7rem] leading-5 text-ink">{previewQuery.data}</pre>
+        ) : (
+          <p className="mt-4 text-xs text-muted">No active line is attached to compose_context yet.</p>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+function MemoryIndexLineCard(props: {
+  line: MemoryIndexLine;
+  expanded: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  onStatusChange: (status: MemoryIndexLineStatus) => void;
+}) {
+  const detailQuery = useQuery({
+    queryKey: ["memory-index-detail", props.line.id],
+    queryFn: () => fetchMemoryIndexLineDetail(props.line.id),
+    enabled: props.expanded
+  });
+  const retired = props.line.status === "retired";
+
+  return (
+    <article className={`rounded-3xl border bg-white p-5 shadow-soft transition-opacity sm:p-7 ${
+      retired ? "border-stroke opacity-65" : "border-transparent"
+    }`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-[0.68rem]">
+            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 font-semibold ${
+              retired ? "bg-danger-soft text-danger" : "bg-sage-soft text-sage"
+            }`}>
+              <StatusDot status={retired ? "deprecated" : "active"} />
+              {retired ? "Retired" : "Active"}
+            </span>
+            <span className="rounded-full bg-canvas px-3 py-1 font-semibold text-muted">
+              {props.line.projectName ?? "All projects"}
+            </span>
+            <span className="text-faint">{props.line.memberCount} memories</span>
+          </div>
+          <p className="break-words text-sm font-semibold leading-7 text-ink">{props.line.triggerPhrase}</p>
+          <p className="mt-5 text-[0.68rem] text-faint">
+            Promoted {formatDateTime(props.line.createdAt)} · Updated {formatDateTime(props.line.updatedAt)}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-stroke text-muted transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
+          aria-label={retired ? "Restore index line" : "Retire index line"}
+          disabled={props.disabled}
+          onClick={() => props.onStatusChange(retired ? "active" : "retired")}
+        >
+          {retired ? <RestoreIcon className="h-4 w-4" /> : <ArchiveIcon className="h-4 w-4" />}
+        </button>
+      </div>
+
+      <div className="mt-5 border-t border-stroke pt-4">
+        <button
+          type="button"
+          className="text-[0.68rem] font-semibold uppercase tracking-[0.1em] text-faint transition-colors hover:text-ink"
+          aria-expanded={props.expanded}
+          onClick={props.onToggle}
+        >
+          {props.expanded ? "Hide backing memories" : "Backing memories"}
+        </button>
+        {props.expanded ? (
+          detailQuery.isLoading ? (
+            <p className="mt-4 text-xs text-faint">Loading…</p>
+          ) : detailQuery.error ? (
+            <InlineError message={detailQuery.error.message} />
+          ) : (
+            <ul className="mt-4 space-y-2">
+              {detailQuery.data?.members.map((member) => (
+                <li key={member.entryId} className="rounded-2xl bg-canvas px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2 text-[0.62rem] font-semibold uppercase tracking-[0.1em]">
+                    {member.isAnchor ? <span className="text-sage">Anchor</span> : null}
+                    {member.deprecated ? <span className="text-danger">Deprecated</span> : null}
+                  </div>
+                  <p className="mt-1 break-words text-xs leading-5 text-ink">{member.title}</p>
+                  <p className="mt-1 text-[0.65rem] text-faint">
+                    {member.projectName ?? "No project"} · Captured {formatDateTime(member.capturedAt)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : null}
+      </div>
+    </article>
   );
 }
 
@@ -2851,6 +3108,13 @@ function readMemorySortMode(value: string): MemoryCatalogSortMode {
     return value;
   }
   throw new Error(`Invalid memory sort mode: ${value}`);
+}
+
+function readMemoryIndexStatus(value: string): MemoryIndexStatusFilter {
+  if (value === "active" || value === "retired" || value === "all") {
+    return value;
+  }
+  throw new Error(`Unexpected memory index status: ${value}`);
 }
 
 function readNoteSortMode(value: string): NoteSortMode {

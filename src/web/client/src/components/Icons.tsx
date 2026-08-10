@@ -74,6 +74,15 @@ export function DigestIcon(props: IconProps) {
   );
 }
 
+export function IndexIcon(props: IconProps) {
+  return (
+    <IconFrame {...props}>
+      <path d="M4 6h9M4 12h9M4 18h6" />
+      <path d="M16.5 4.5h3.5v10l-1.75-1.4L16.5 14.5z" />
+    </IconFrame>
+  );
+}
+
 export function MemoryIcon(props: IconProps) {
   return (
     <IconFrame {...props}>

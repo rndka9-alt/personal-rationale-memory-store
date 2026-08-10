@@ -245,7 +245,8 @@ export class ContextComposer {
   }
 }
 
-function formatMemoryIndexSection(indexLines: MemoryIndexComposeLine[]) {
+// 웹 미리보기가 compose 팩과 같은 렌더러를 쓰도록 export한다 — 표시가 갈라지면 미리보기가 거짓말을 한다.
+export function formatMemoryIndexSection(indexLines: MemoryIndexComposeLine[]) {
   if (indexLines.length === 0) {
     return [];
   }
