@@ -12,8 +12,8 @@ import {
   type MemoryUsageEventType,
   type NoteRating,
   type NoteRecord,
-  noteSourceConversationSchema,
-  type ProjectContext
+  type ProjectContext,
+  storedNoteSourceConversationSchema
 } from "../memory/schema.js";
 
 export type MemoryChunkInsert = {
@@ -1480,7 +1480,7 @@ function readOptionalNoteSourceConversation(value: unknown) {
   if (value === null || typeof value === "undefined") {
     return undefined;
   }
-  return noteSourceConversationSchema.parse(value);
+  return storedNoteSourceConversationSchema.parse(value);
 }
 
 function createReviewQueueMemoryQuery(options: ReviewQueueMemoryListOptions) {

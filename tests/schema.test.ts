@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   autoCaptureRationaleInputSchema,
   memoryUsageEventTypeSchema,
+  noteSourceConversationSchema,
   rateNoteInputSchema,
   recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
-  rationaleEntrySchema
+  rationaleEntrySchema,
+  storedNoteSourceConversationSchema
 } from "../src/memory/schema.js";
 
 describe("rationaleEntrySchema", () => {
@@ -139,6 +141,20 @@ describe("note input schemas", () => {
       sourceConversation: { messages: [{ role: "user", text: loneSurrogate }] }
     })).toThrow(/literal characters/);
     expect(recordNoteInputSchema.parse({ content: "이모지 🐛 정상 서로게이트 쌍", topic: "검증" }).content).toContain("🐛");
+  });
+
+  it("reads back stored source conversations that predate the Unicode guard", () => {
+    // 실제 오염 데이터 형태: 한글 한 글자가 바이트 단위로 잘려 각 바이트가 U+FFFD로 치환됐다.
+    const storedConversation = { messages: [{ role: "user", text: "일단 넣어놓야���!!" }] };
+
+    expect(() => noteSourceConversationSchema.parse(storedConversation)).toThrow(/literal characters/);
+    expect(storedNoteSourceConversationSchema.parse(storedConversation).messages[0].text).toContain("넣어놓야");
+  });
+
+  it("still rejects structurally broken stored source conversations", () => {
+    expect(() => storedNoteSourceConversationSchema.parse({ messages: [{ role: "narrator", text: "정상" }] })).toThrow();
+    expect(() => storedNoteSourceConversationSchema.parse({ messages: [{ role: "user", text: 42 }] })).toThrow();
+    expect(() => storedNoteSourceConversationSchema.parse({ messages: "정상" })).toThrow();
   });
 
   it("guards rationale write inputs against broken Unicode", () => {

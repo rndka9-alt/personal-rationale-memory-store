@@ -134,6 +134,16 @@ export const noteSourceConversationSchema = z.object({
   messages: z.array(noteSourceConversationMessageSchema).min(1).max(4)
 });
 
+// 이미 저장된 행을 되읽는 전용 스키마. 유니코드 게이트와 길이 상한은 저장 시점에만 건다 —
+// 읽기에도 같은 스키마를 쓰다가, 방어 도입 이전에 들어온 U+FFFD 한 건이 노트 읽기 전체를
+// throw시켜 compose_notes_context가 통째로 죽는 사고가 났다. 구조 위반은 여기서도 throw한다.
+export const storedNoteSourceConversationSchema = z.object({
+  messages: z.array(z.object({
+    role: noteSourceConversationMessageSchema.shape.role,
+    text: z.string()
+  }))
+});
+
 export const noteTopicSchema = unicodeSafeText(z.string().min(1).max(120));
 
 export const recordNoteInputSchema = z.object({
