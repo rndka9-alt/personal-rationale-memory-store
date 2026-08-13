@@ -17,7 +17,7 @@ const environmentSchema = z.object({
   MCP_HOST: z.string().default("127.0.0.1"),
   MCP_PORT: z.coerce.number().int().positive().default(3443),
   MCP_PATH: z.string().default("/mcp"),
-  MCP_AUTH_TOKEN: z.string().optional(),
+  MCP_AUTH_TOKEN: optionalStringSchema,
   MCP_TLS_CERT_PATH: z.string().optional(),
   MCP_TLS_KEY_PATH: z.string().optional(),
   MCP_PUBLIC_URL: optionalUrlSchema,
@@ -65,6 +65,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   const shouldUseVoyageDefaults = provider === "voyage" && mode !== "mock";
   const oauthEnabled = parseBoolean(parsedEnvironment.MCP_OAUTH_ENABLED, "MCP_OAUTH_ENABLED");
   const digestEnabled = parseBoolean(parsedEnvironment.DIGEST_ENABLED, "DIGEST_ENABLED");
+  assertMcpAuthenticationConfigured(
+    parsedEnvironment.MCP_TRANSPORT,
+    parsedEnvironment.MCP_AUTH_TOKEN,
+    oauthEnabled
+  );
   const oauthRedirectUris = resolveOAuthRedirectUris(
     parsedEnvironment.MCP_OAUTH_REDIRECT_URI,
     parsedEnvironment.MCP_OAUTH_ALLOWED_REDIRECT_URIS
@@ -178,6 +183,18 @@ function parseBoolean(value: string, name: string) {
     return false;
   }
   throw new Error(`${name} must be "true" or "false".`);
+}
+
+function assertMcpAuthenticationConfigured(
+  transport: z.infer<typeof mcpTransportSchema>,
+  authToken: string | undefined,
+  oauthEnabled: boolean
+) {
+  if (transport !== "stdio" && !authToken && !oauthEnabled) {
+    throw new Error(
+      "MCP_AUTH_TOKEN or MCP_OAUTH_ENABLED=true is required when MCP_TRANSPORT is http or https."
+    );
+  }
 }
 
 function splitSpaceSeparatedList(value: string) {

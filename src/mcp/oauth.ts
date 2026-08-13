@@ -94,6 +94,72 @@ type RsaPublicJwk = {
 
 const authorizationCodeTtlMilliseconds = 5 * 60 * 1000;
 const loginSessionCookieName = "__Host-rationale_memory_oauth_session";
+const maximumOAuthFormBodyBytes = 16 * 1024;
+
+type RateLimitEntry = {
+  count: number;
+  resetAt: number;
+};
+
+type RateLimitDecision = {
+  allowed: boolean;
+  retryAfterSeconds: number;
+};
+
+class FixedWindowRateLimiter {
+  private readonly entries = new Map<string, RateLimitEntry>();
+
+  constructor(
+    private readonly maximumRequests: number,
+    private readonly windowMilliseconds: number,
+    private readonly maximumTrackedClients: number
+  ) {}
+
+  consume(identifier: string, now = Date.now()): RateLimitDecision {
+    const existingEntry = this.entries.get(identifier);
+    if (existingEntry && existingEntry.resetAt > now) {
+      if (existingEntry.count >= this.maximumRequests) {
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(1, Math.ceil((existingEntry.resetAt - now) / 1000))
+        };
+      }
+
+      existingEntry.count += 1;
+      return { allowed: true, retryAfterSeconds: 0 };
+    }
+
+    if (existingEntry) {
+      this.entries.delete(identifier);
+    }
+    if (this.entries.size >= this.maximumTrackedClients) {
+      this.pruneExpiredEntries(now);
+    }
+    if (this.entries.size >= this.maximumTrackedClients) {
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil(this.windowMilliseconds / 1000))
+      };
+    }
+
+    this.entries.set(identifier, {
+      count: 1,
+      resetAt: now + this.windowMilliseconds
+    });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  private pruneExpiredEntries(now: number) {
+    for (const [identifier, entry] of this.entries) {
+      if (entry.resetAt <= now) {
+        this.entries.delete(identifier);
+      }
+    }
+  }
+}
+
+const authorizationRateLimiter = new FixedWindowRateLimiter(20, 5 * 60 * 1000, 10_000);
+const tokenRateLimiter = new FixedWindowRateLimiter(60, 5 * 60 * 1000, 10_000);
 
 export class OAuthAuthorizationServer {
   private readonly authorizationCodes = new Map<string, AuthorizationCodeRecord>();
@@ -522,6 +588,7 @@ export async function handleOAuthRequest(
     return true;
   }
   if (request.method === "GET" && url.pathname === "/oauth/authorize") {
+    setAuthorizationResponseHeaders(response);
     try {
       const redirectUrl = oauthServer.authorizeWithLoginSession(url.searchParams, request.headers.cookie);
       if (redirectUrl) {
@@ -537,6 +604,10 @@ export async function handleOAuthRequest(
     return true;
   }
   if (request.method === "POST" && url.pathname === "/oauth/authorize") {
+    setAuthorizationResponseHeaders(response);
+    if (!applyRateLimit(request, response, authorizationRateLimiter)) {
+      return true;
+    }
     try {
       const authorizationResult = oauthServer.authorize(await readFormBody(request));
       response.statusCode = 302;
@@ -549,6 +620,10 @@ export async function handleOAuthRequest(
     return true;
   }
   if (request.method === "POST" && url.pathname === "/oauth/token") {
+    setSensitiveResponseHeaders(response);
+    if (!applyRateLimit(request, response, tokenRateLimiter)) {
+      return true;
+    }
     try {
       writeJsonResponse(response, 200, oauthServer.exchangeToken(await readFormBody(request)));
     } catch (error) {
@@ -557,6 +632,7 @@ export async function handleOAuthRequest(
     return true;
   }
   if (request.method === "GET" && url.pathname === "/oauth/userinfo") {
+    setSensitiveResponseHeaders(response);
     try {
       const token = readBearerToken(request);
       if (!token) {
@@ -639,14 +715,61 @@ function normalizeRootResourceIdentifier(resource: string) {
 
 async function readFormBody(request: IncomingMessage) {
   const chunks: Buffer[] = [];
+  let receivedBytes = 0;
   for await (const chunk of request) {
-    if (Buffer.isBuffer(chunk)) {
-      chunks.push(chunk);
-    } else {
-      chunks.push(Buffer.from(chunk));
+    const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    receivedBytes += chunkBuffer.length;
+    if (receivedBytes > maximumOAuthFormBodyBytes) {
+      throw new OAuthHttpError(413, "invalid_request", "OAuth request body is too large.");
     }
+    chunks.push(chunkBuffer);
   }
   return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+}
+
+function applyRateLimit(
+  request: IncomingMessage,
+  response: ServerResponse,
+  rateLimiter: FixedWindowRateLimiter
+) {
+  const decision = rateLimiter.consume(readClientIdentifier(request));
+  if (decision.allowed) {
+    return true;
+  }
+
+  response.setHeader("Retry-After", String(decision.retryAfterSeconds));
+  writeJsonResponse(response, 429, {
+    error: "slow_down",
+    error_description: "Too many OAuth requests."
+  });
+  return false;
+}
+
+function readClientIdentifier(request: IncomingMessage) {
+  const cloudflareConnectingIp = request.headers["cf-connecting-ip"];
+  if (typeof cloudflareConnectingIp === "string" && cloudflareConnectingIp.length > 0) {
+    return cloudflareConnectingIp;
+  }
+  if (Array.isArray(cloudflareConnectingIp) && cloudflareConnectingIp[0]) {
+    return cloudflareConnectingIp[0];
+  }
+  return request.socket.remoteAddress ?? "unknown";
+}
+
+function setAuthorizationResponseHeaders(response: ServerResponse) {
+  setSensitiveResponseHeaders(response);
+  response.setHeader(
+    "Content-Security-Policy",
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+  );
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+}
+
+function setSensitiveResponseHeaders(response: ServerResponse) {
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Pragma", "no-cache");
 }
 
 function readParams(searchParams: URLSearchParams, names: string[]) {

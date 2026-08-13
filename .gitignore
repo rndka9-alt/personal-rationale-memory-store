@@ -5,5 +5,6 @@ dist/
 !.env.example
 .certs/
 data/*.pem
+data/backups/
 data/memory/rationales/
 data/digest-seed.json

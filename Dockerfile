@@ -10,10 +10,13 @@ COPY package.json tsconfig.json tsconfig.web.json vite.config.ts tailwind.config
 COPY src ./src
 RUN npm run build
 
+FROM dependencies AS production-dependencies
+RUN npm prune --omit=dev
+
 FROM node:20-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY migrations ./migrations
 COPY package.json ./
