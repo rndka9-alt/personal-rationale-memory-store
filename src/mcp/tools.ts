@@ -317,7 +317,6 @@ function compactSearchResult(result: {
     currentRevisionId?: string;
     title: string;
     summary?: string;
-    type: string;
     updatedAt?: string;
   }>;
   warnings: Array<{
@@ -330,7 +329,6 @@ function compactSearchResult(result: {
     results: Array<{
       id: string;
       title: string;
-      type: string;
       summary?: string;
     }>;
     warnings?: Array<{
@@ -353,27 +351,23 @@ function compactSearchResult(result: {
   return response;
 }
 
-// acceptanceState·reviewState·decisionState는 리뷰 워크플로우를 실제로 돌리지 않아
-// 항상 초기값이라, 검색 응답에서는 제외한다(결과 개수만큼 곱해지는 노이즈).
+// 분류·리뷰 상태는 검색 후속 행동에 쓰이지 않으며 결과 개수만큼 노이즈를 늘린다.
 function compactSearchEntry(entry: {
   id: string;
   currentRevisionId?: string;
   title: string;
   summary?: string;
-  type: string;
   updatedAt?: string;
 }) {
   const revisionId = readCurrentRevisionId(entry);
   const response: {
     id: string;
     title: string;
-    type: string;
     updatedAt?: string;
     summary?: string;
   } = {
     id: revisionId,
-    title: entry.title,
-    type: entry.type
+    title: entry.title
   };
 
   if (entry.updatedAt) {

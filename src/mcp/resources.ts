@@ -80,10 +80,6 @@ function compactRecentEntry(entry: MemoryEntryRecord) {
   return {
     id: entry.currentRevisionId,
     title: entry.title,
-    type: entry.type,
-    acceptanceState: entry.acceptanceState,
-    reviewState: entry.reviewState,
-    decisionState: entry.decisionState,
     summary: entry.summary
   };
 }

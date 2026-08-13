@@ -171,7 +171,6 @@ describe("MCP write tool results", () => {
       results: [{
         id: "V20260604T000000000Z-search",
         title: "Keep search responses compact",
-        type: "rationale",
         updatedAt: "2026-06-04",
         summary: "Search callers only need enough detail to choose a follow-up read."
       }],
@@ -183,6 +182,10 @@ describe("MCP write tool results", () => {
     });
     expect(payload.results[0]).not.toHaveProperty("canonicalPath");
     expect(payload.results[0]).not.toHaveProperty("metadata");
+    expect(payload.results[0]).not.toHaveProperty("type");
+    expect(payload.results[0]).not.toHaveProperty("acceptanceState");
+    expect(payload.results[0]).not.toHaveProperty("reviewState");
+    expect(payload.results[0]).not.toHaveProperty("decisionState");
     expect(payload.results[0]).not.toHaveProperty("searchScore");
     expect(payload.results[0]).not.toHaveProperty("searchReasons");
     expect(payload.warnings[0]).not.toHaveProperty("details");

@@ -288,20 +288,12 @@ function formatSummary(result: {
   id: string;
   title: string;
   summary?: string;
-  type: string;
-  acceptanceState: string;
-  reviewState: string;
-  decisionState: string;
   updatedAt?: string;
 }, revisionId: string) {
   return [
     `### ${result.title}`,
     `- id: ${revisionId}`,
-    `- type: ${result.type}`,
     ...(result.updatedAt ? [`- updated: ${result.updatedAt.slice(0, 10)}`] : []),
-    `- acceptance state: ${result.acceptanceState}`,
-    `- review state: ${result.reviewState}`,
-    `- decision state: ${result.decisionState}`,
     ...(result.summary ? [`- summary: ${result.summary}`] : [])
   ].join("\n");
 }

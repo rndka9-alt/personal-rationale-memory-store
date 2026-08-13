@@ -49,6 +49,10 @@ describe("compose context relevance floor", () => {
     expect(context).not.toContain("Retrieved full rationale");
     expect(context).toContain("get_rationale");
     expect(context).toContain("- summary: …query-anchored excerpt…");
+    expect(context).not.toContain("- type:");
+    expect(context).not.toContain("- acceptance state:");
+    expect(context).not.toContain("- review state:");
+    expect(context).not.toContain("- decision state:");
   });
 
   it("serves memory index lines grouped by project at the top of the pack", async () => {
