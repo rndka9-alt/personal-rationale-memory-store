@@ -709,6 +709,59 @@ describe("digest service tier", () => {
   });
 });
 
+describe("digest model routing", () => {
+  it("uses Gemini only for diary and recap presentation purposes", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }
+    }), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const config = loadConfig({
+        DIGEST_ENABLED: "true",
+        DIGEST_LLM_PROVIDER: "vercel",
+        DIGEST_LLM_MODEL: "openai/gpt-5.6-terra",
+        DIGEST_LLM_PRESENTATION_MODEL: "google/gemini-3.7-flash",
+        DIGEST_LLM_API_KEY: "test-key",
+        DIGEST_LLM_SERVICE_TIER: "flex"
+      }).digest;
+      if (!config.enabled) {
+        throw new Error("Expected digest config to be enabled.");
+      }
+      const generator = createDigestTextGenerator(config);
+      const purposes = [
+        "digest_judgment",
+        "diary_curation",
+        "recap_topic_clustering",
+        "memory_index_promotion",
+        "diary_writing",
+        "recap_highlights",
+        "recap_opening"
+      ];
+
+      for (const purpose of purposes) {
+        await generator.generate("system", "user", purpose);
+      }
+
+      const requestBodies = fetchMock.mock.calls.map(([, requestInit]) => (
+        JSON.parse(String(requestInit?.body))
+      ));
+      expect(requestBodies.map((body) => body.model)).toEqual([
+        "openai/gpt-5.6-terra",
+        "openai/gpt-5.6-terra",
+        "openai/gpt-5.6-terra",
+        "openai/gpt-5.6-terra",
+        "google/gemini-3.7-flash",
+        "google/gemini-3.7-flash",
+        "google/gemini-3.7-flash"
+      ]);
+      expect(requestBodies.every((body) => body.service_tier === "flex")).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("digest config", () => {
   it("is disabled by default and validates merge hysteresis", () => {
     expect(loadConfig({}).digest.enabled).toBe(false);
@@ -742,6 +795,7 @@ describe("digest config", () => {
       DIGEST_ENABLED: "true",
       DIGEST_LLM_PROVIDER: "openai",
       DIGEST_LLM_MODEL: "gpt-test",
+      DIGEST_LLM_PRESENTATION_MODEL: "gpt-writing-test",
       DIGEST_LLM_API_KEY: "test-key",
       DIGEST_LLM_MAX_TOKENS: "16384",
       DIGEST_IMMEDIATE_NOTES: "12",
@@ -756,6 +810,7 @@ describe("digest config", () => {
       enabled: true,
       provider: "openai",
       model: "gpt-test",
+      presentationModel: "gpt-writing-test",
       apiKey: "test-key",
       maxTokens: 16384,
       immediateNotes: 12,

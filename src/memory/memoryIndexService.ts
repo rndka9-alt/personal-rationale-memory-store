@@ -26,6 +26,7 @@ import {
 import {
   createDigestTextGenerator,
   extractLlmRequestUsage,
+  resolveDigestLlmModel,
   type DigestTextGeneration,
   type DigestTextGenerator
 } from "./digestService.js";
@@ -395,7 +396,7 @@ export class MemoryIndexService {
         requestedAt,
         purpose,
         provider: config.provider,
-        model: config.model,
+        model: resolveDigestLlmModel(config, purpose),
         status: error === null ? "succeeded" : "failed",
         error,
         durationMs: Date.now() - startedAt,

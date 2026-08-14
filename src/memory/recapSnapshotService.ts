@@ -6,6 +6,7 @@ import { logError, logInfo, logWarn } from "../diagnostics/index.js";
 import {
   createDigestTextGenerator,
   extractLlmRequestUsage,
+  resolveDigestLlmModel,
   type DigestTextGeneration,
   type DigestTextGenerator
 } from "./digestService.js";
@@ -814,7 +815,7 @@ export class RecapSnapshotService {
         requestedAt,
         purpose,
         provider: config.provider,
-        model: config.model,
+        model: resolveDigestLlmModel(config, purpose),
         status: error === null ? "succeeded" : "failed",
         error,
         durationMs: Date.now() - startedAt,

@@ -152,6 +152,12 @@ export type DigestLlmPurpose = "digest_judgment" | "digest_render" | "digest_rep
 // recap 등 다른 합성 파이프라인도 같은 generator 인프라를 공유하므로 purpose는 열어 둔다.
 export type LlmPurpose = DigestLlmPurpose | (string & {});
 
+const presentationLlmPurposes = new Set<string>([
+  "diary_writing",
+  "recap_highlights",
+  "recap_opening"
+]);
+
 export type DigestTextGeneration = {
   text: string;
   usage?: LlmUsage;
@@ -169,6 +175,15 @@ export type DigestTextGenerator = {
 
 type EnabledDigestConfig = Extract<AppConfig["digest"], { enabled: true }>;
 type DigestQueryExecutor = Pick<pg.Pool, "query">;
+
+export function resolveDigestLlmModel(
+  config: EnabledDigestConfig,
+  purpose: string | undefined
+) {
+  return purpose !== undefined && presentationLlmPurposes.has(purpose)
+    ? config.presentationModel
+    : config.model;
+}
 
 type SynthesizedDigest = AppliedDigestOperations & {
   deferredPromotions: DigestDeferredPromotion[];
@@ -791,12 +806,35 @@ function normalizeDigestTextGeneration(generation: string | DigestTextGeneration
 }
 
 export function createDigestTextGenerator(config: EnabledDigestConfig): DigestTextGenerator {
+  const analysisGenerator = createDigestTextGeneratorForModel(config, config.model);
+  if (config.presentationModel === config.model) {
+    return analysisGenerator;
+  }
+
+  const presentationGenerator = createDigestTextGeneratorForModel(
+    config,
+    config.presentationModel
+  );
+  return {
+    generate: (systemPrompt, userPrompt, purpose) => {
+      const generator = resolveDigestLlmModel(config, purpose) === config.presentationModel
+        ? presentationGenerator
+        : analysisGenerator;
+      return generator.generate(systemPrompt, userPrompt, purpose);
+    }
+  };
+}
+
+function createDigestTextGeneratorForModel(
+  config: EnabledDigestConfig,
+  model: string
+): DigestTextGenerator {
   if (config.provider === "anthropic") {
     const responseCapture = createLlmResponseCapture();
     const llm = new Llm({
       fetch: responseCapture.fetch,
       format: new AnthropicMessagesFormat({
-        model: config.model,
+        model,
         maxTokens: config.maxTokens
       }),
       provider: new AnthropicProvider({ apiKey: config.apiKey })
@@ -823,7 +861,7 @@ export function createDigestTextGenerator(config: EnabledDigestConfig): DigestTe
   const llm = new Llm({
     fetch: responseCapture.fetch,
     format: new OpenAIChatCompletionsFormat({
-      model: config.model,
+      model,
       // Vercel AI Gateway도 chat completions body의 최상위 service_tier를 OpenAI로 전달하므로
       // provider 분기 없이 format extraBody 한 곳에서 처리한다.
       extraBody: config.serviceTier === undefined ? undefined : { service_tier: config.serviceTier }
@@ -925,7 +963,7 @@ function createLoggedDigestTextGenerator(
           requestedAt,
           purpose,
           provider: config.provider,
-          model: config.model,
+          model: resolveDigestLlmModel(config, purpose),
           status: responseError ? "failed" : "succeeded",
           error: responseError,
           durationMs: Date.now() - startedAt,
@@ -939,7 +977,7 @@ function createLoggedDigestTextGenerator(
           requestedAt,
           purpose,
           provider: config.provider,
-          model: config.model,
+          model: resolveDigestLlmModel(config, purpose),
           status: "failed",
           error: errorMessage(error),
           durationMs: Date.now() - startedAt,
