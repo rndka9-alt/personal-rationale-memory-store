@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyEntryLifecycleOverlay,
   autoCaptureRationaleInputSchema,
   memoryUsageEventTypeSchema,
   noteSourceConversationSchema,
@@ -7,7 +8,8 @@ import {
   recordNoteInputSchema,
   recordUsageFeedbackInputSchema,
   rationaleEntrySchema,
-  storedNoteSourceConversationSchema
+  storedNoteSourceConversationSchema,
+  type MemoryEntryRecord
 } from "../src/memory/schema.js";
 
 describe("rationaleEntrySchema", () => {
@@ -166,5 +168,111 @@ describe("note input schemas", () => {
       title: "정상 제목",
       body: "본문에 \u0000 널 문자"
     })).toThrow(/literal characters/);
+  });
+});
+
+describe("applyEntryLifecycleOverlay", () => {
+  function createSnapshotEntry(metadata: Record<string, unknown> = {}) {
+    return rationaleEntrySchema.parse({
+      frontmatter: {
+        id: "R20260828T000000000Z-abc123",
+        type: "rationale",
+        status: "candidate",
+        acceptanceState: "candidate",
+        reviewState: "unreviewed",
+        decisionState: "unknown",
+        scope: "general",
+        domains: ["development"],
+        intents: ["design"],
+        modes: ["planning"],
+        confidence: 0.8,
+        metadata: { capture_kind: "auto", ...metadata }
+      },
+      title: "Snapshot title",
+      body: "Snapshot body."
+    });
+  }
+
+  function createEntryRecord(overrides: Partial<MemoryEntryRecord> = {}): MemoryEntryRecord {
+    return {
+      id: "R20260828T000000000Z-abc123",
+      type: "rationale",
+      status: "candidate",
+      acceptanceState: "candidate",
+      reviewState: "unreviewed",
+      decisionState: "unknown",
+      title: "Snapshot title",
+      canonicalPath: "data/memory/rationales/R20260828T000000000Z-abc123.md",
+      scope: "general",
+      confidence: 0.8,
+      useCount: 0,
+      metadata: {},
+      ...overrides
+    };
+  }
+
+  it("overlays deprecation state and lifecycle metadata from the entry record", () => {
+    const entry = createSnapshotEntry();
+    const record = createEntryRecord({
+      status: "deprecated",
+      acceptanceState: "deprecated",
+      deprecatedBy: "R20260828T111111111Z-repl01",
+      metadata: {
+        deprecation_reason: "새 분석으로 대체됨",
+        replacement_id: "R20260828T111111111Z-repl01",
+        pre_deprecation_acceptance_state: "accepted"
+      }
+    });
+
+    const overlaid = applyEntryLifecycleOverlay(entry, record);
+
+    expect(overlaid.frontmatter.acceptanceState).toBe("deprecated");
+    expect(overlaid.frontmatter.status).toBe("deprecated");
+    expect(overlaid.frontmatter.deprecatedBy).toBe("R20260828T111111111Z-repl01");
+    expect(overlaid.frontmatter.metadata.deprecation_reason).toBe("새 분석으로 대체됨");
+    expect(overlaid.frontmatter.metadata.pre_deprecation_acceptance_state).toBe("accepted");
+    expect(overlaid.frontmatter.metadata.capture_kind).toBe("auto");
+    expect(overlaid.title).toBe("Snapshot title");
+    expect(overlaid.body).toBe("Snapshot body.");
+  });
+
+  it("clears stale lifecycle metadata when the entry record was restored", () => {
+    const entry = createSnapshotEntry({
+      deprecation_reason: "리비전에 남은 옛 사유",
+      replacement_id: "R20260828T111111111Z-repl01",
+      pre_deprecation_acceptance_state: "accepted"
+    });
+    entry.frontmatter.deprecatedBy = "R20260828T111111111Z-repl01";
+    const record = createEntryRecord({
+      status: "accepted",
+      acceptanceState: "accepted",
+      metadata: { restore_reason: "잘못 폐기해서 복원" }
+    });
+
+    const overlaid = applyEntryLifecycleOverlay(entry, record);
+
+    expect(overlaid.frontmatter.acceptanceState).toBe("accepted");
+    expect(overlaid.frontmatter.deprecatedBy).toBeUndefined();
+    expect(overlaid.frontmatter.metadata.deprecation_reason).toBeUndefined();
+    expect(overlaid.frontmatter.metadata.replacement_id).toBeUndefined();
+    expect(overlaid.frontmatter.metadata.pre_deprecation_acceptance_state).toBeUndefined();
+    expect(overlaid.frontmatter.metadata.restore_reason).toBe("잘못 폐기해서 복원");
+  });
+
+  it("overlays promotion state from the entry record", () => {
+    const entry = createSnapshotEntry();
+    const record = createEntryRecord({
+      type: "principle",
+      status: "accepted",
+      acceptanceState: "accepted",
+      promotedTo: "principle",
+      metadata: { promoted_reason: "반복 검증된 원칙" }
+    });
+
+    const overlaid = applyEntryLifecycleOverlay(entry, record);
+
+    expect(overlaid.frontmatter.type).toBe("principle");
+    expect(overlaid.frontmatter.promotedTo).toBe("principle");
+    expect(overlaid.frontmatter.metadata.promoted_reason).toBe("반복 검증된 원칙");
   });
 });

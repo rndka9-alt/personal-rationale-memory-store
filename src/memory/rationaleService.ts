@@ -17,6 +17,7 @@ import {
   listReviewQueueMemoryEntries,
   listReviewQueueMemoryPage,
   lockMemoryEntryForUpdate,
+  markMemoryDeprecated,
   recordMemoryUsageEvents,
   recordRetrievalQueryEvent,
   restoreMemoryStatus,
@@ -38,6 +39,7 @@ import { MemoryFileStore } from "./fileStore.js";
 import { IndexingService } from "./indexingService.js";
 import {
   acceptanceStateSchema,
+  applyEntryLifecycleOverlay,
   autoCaptureRationaleInputSchema,
   deprecateRationaleInputSchema,
   memoryUsageEventTypeSchema,
@@ -366,7 +368,7 @@ export class RationaleService {
     if (!currentRevision) {
       throw new Error(`Current memory revision not found: ${databaseEntry.currentRevisionId}`);
     }
-    const entry = parseRationaleMarkdown(currentRevision.content);
+    const entry = applyEntryLifecycleOverlay(parseRationaleMarkdown(currentRevision.content), databaseEntry);
     logInfo("Reading rationale completed.", {
       entryId: id,
       canonicalPath: databaseEntry.canonicalPath,
@@ -597,7 +599,7 @@ export class RationaleService {
       : entry.frontmatter.acceptanceState;
     entry.frontmatter.acceptanceState = "deprecated";
     entry.frontmatter.status = "deprecated";
-    entry.frontmatter.deprecatedBy = replacementId ?? reason;
+    entry.frontmatter.deprecatedBy = replacementId;
     entry.frontmatter.metadata = {
       ...entry.frontmatter.metadata,
       deprecation_reason: reason,
@@ -606,7 +608,7 @@ export class RationaleService {
     };
     const canonicalPath = await this.fileStore.writeEntry(entry);
     await this.indexingService.indexEntry(entry, canonicalPath);
-    await updateMemoryStatus(this.pool, id, "deprecated", { deprecatedBy: replacementId ?? reason });
+    await markMemoryDeprecated(this.pool, id, { reason, replacementId });
     void this.memoryIndexService?.handleEntryDeprecated(id);
     logInfo("Deprecating rationale completed.", {
       entryId: id,

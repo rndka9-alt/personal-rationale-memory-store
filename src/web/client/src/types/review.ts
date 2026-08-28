@@ -71,6 +71,12 @@ export type CandidateReview = {
   cautions: string[];
 };
 
+export type MemoryLifecycle = {
+  deprecationReason?: string;
+  replacementId?: string;
+  deprecatedAt?: string;
+};
+
 export type ReviewQueueDetail = {
   entry: RationaleEntry;
   review: CandidateReview;
@@ -79,6 +85,7 @@ export type ReviewQueueDetail = {
     lastUsedAt?: string;
     feedback: UsageFeedbackCounts;
   };
+  lifecycle: MemoryLifecycle;
 };
 
 export type ReviewAction = "accept" | "keep_candidate" | "needs_revision" | "deprecate";

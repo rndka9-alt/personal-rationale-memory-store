@@ -796,6 +796,32 @@ export async function updateMemoryStatus(
   });
 }
 
+// 재폐기 시 이전 replacement가 남지 않도록 deprecated_by는 COALESCE 없이 그대로 덮어쓴다.
+export async function markMemoryDeprecated(
+  pool: pg.Pool,
+  id: string,
+  updates: { reason: string; replacementId?: string }
+) {
+  logInfo("DB mark memory deprecated started.", {
+    entryId: id,
+    replacementId: updates.replacementId
+  });
+  await pool.query(
+    `UPDATE memory_entries
+      SET status = 'deprecated',
+          acceptance_state = 'deprecated',
+          deprecated_by = $3,
+          deprecation_reason = $2,
+          deprecated_at = now(),
+          updated_at = now()
+      WHERE id = $1`,
+    [id, updates.reason, updates.replacementId]
+  );
+  logInfo("DB mark memory deprecated completed.", {
+    entryId: id
+  });
+}
+
 // updateMemoryStatus의 COALESCE는 deprecated_by를 비울 수 없어 복원 전용 쿼리를 둔다.
 export async function restoreMemoryStatus(pool: pg.Pool, id: string, acceptanceState: string) {
   logInfo("DB restore memory status started.", {
@@ -807,6 +833,8 @@ export async function restoreMemoryStatus(pool: pg.Pool, id: string, acceptanceS
       SET status = $2,
           acceptance_state = $2,
           deprecated_by = NULL,
+          deprecation_reason = NULL,
+          deprecated_at = NULL,
           updated_at = now()
       WHERE id = $1`,
     [id, acceptanceState]
@@ -1406,6 +1434,8 @@ function mapMemoryEntryRow(row: pg.QueryResultRow): MemoryEntryRecord {
     confidence: Number(row.confidence),
     promotedTo: typeof row.promoted_to === "string" ? row.promoted_to : undefined,
     deprecatedBy: typeof row.deprecated_by === "string" ? row.deprecated_by : undefined,
+    deprecationReason: typeof row.deprecation_reason === "string" ? row.deprecation_reason : undefined,
+    deprecatedAt: row.deprecated_at instanceof Date ? row.deprecated_at.toISOString() : undefined,
     useCount: Number(row.use_count),
     lastUsedAt: row.last_used_at instanceof Date ? row.last_used_at.toISOString() : undefined,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : undefined,

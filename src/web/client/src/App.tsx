@@ -614,7 +614,7 @@ function MemoryDetailPane(props: {
     );
   }
 
-  const { entry, usage } = props.detail;
+  const { entry, usage, lifecycle } = props.detail;
   const deprecated = entry.frontmatter.acceptanceState === "deprecated";
   const captureKind = readMetadataString(entry.frontmatter.metadata, "capture_kind") ?? entry.frontmatter.source?.kind;
 
@@ -666,6 +666,22 @@ function MemoryDetailPane(props: {
             ) : null}
           </div>
         </header>
+
+        {deprecated ? (
+          <aside className="mt-6 rounded-2xl border border-danger/30 bg-danger-soft px-5 py-4">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-danger">
+              Deprecated{lifecycle.deprecatedAt ? ` · ${formatRelativeDate(lifecycle.deprecatedAt)}` : ""}
+            </p>
+            {lifecycle.deprecationReason ? (
+              <p className="mt-2 text-sm leading-6 text-ink">{lifecycle.deprecationReason}</p>
+            ) : null}
+            {lifecycle.replacementId ? (
+              <p className="mt-2 text-xs text-muted">
+                Replaced by <span className="font-mono">{lifecycle.replacementId}</span>
+              </p>
+            ) : null}
+          </aside>
+        ) : null}
 
         {props.actionError ? <InlineError message={props.actionError.message} /> : null}
 

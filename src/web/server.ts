@@ -349,6 +349,11 @@ async function routeApiRequest(
         useCount: indexedEntry.useCount,
         lastUsedAt: indexedEntry.lastUsedAt,
         feedback: usageFeedback
+      },
+      lifecycle: {
+        deprecationReason: indexedEntry.deprecationReason,
+        replacementId: indexedEntry.deprecatedBy,
+        deprecatedAt: indexedEntry.deprecatedAt
       }
     });
     return;

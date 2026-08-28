@@ -1,5 +1,6 @@
 import { requestJson } from "./http";
 import type {
+  MemoryLifecycle,
   ProjectContext,
   ReviewAction,
   ReviewQueueDetail,
@@ -151,7 +152,20 @@ function parseReviewQueueDetail(value: unknown): ReviewQueueDetail {
       strengths: readStringArray(value.review, "strengths"),
       cautions: readStringArray(value.review, "cautions")
     },
-    usage: parseUsage(value.usage)
+    usage: parseUsage(value.usage),
+    lifecycle: parseLifecycle(value.lifecycle)
+  };
+}
+
+function parseLifecycle(value: unknown): MemoryLifecycle {
+  if (!isRecord(value)) {
+    throw new Error("Invalid memory lifecycle facts.");
+  }
+
+  return {
+    deprecationReason: readOptionalString(value, "deprecationReason"),
+    replacementId: readOptionalString(value, "replacementId"),
+    deprecatedAt: readOptionalString(value, "deprecatedAt")
   };
 }
 

@@ -256,6 +256,9 @@ export type MemoryEntryRecord = {
   confidence: number;
   promotedTo?: string;
   deprecatedBy?: string;
+  deprecationReason?: string;
+  /** 컬럼 도입(2026-08) 이전에 폐기된 레거시 행은 비어 있을 수 있다. */
+  deprecatedAt?: string;
   useCount: number;
   lastUsedAt?: string;
   /** ISO creation timestamp from the DB row; only present on records loaded from the database. */
@@ -305,6 +308,36 @@ export function toMemoryEntryRecord(entry: RationaleEntry, canonicalPath: string
     useCount: 0,
     metadata
   };
+}
+
+// deprecate/restore/promote는 revision을 만들지 않아 이 메타데이터 키들은 스냅샷에 없다.
+const lifecycleMetadataKeys = [
+  "deprecation_reason",
+  "replacement_id",
+  "pre_deprecation_acceptance_state",
+  "restore_reason",
+  "promoted_reason"
+] as const;
+
+// revision 스냅샷은 콘텐츠 이력만 담는다 — lifecycle 전이는 memory_entries 행이 진실이라,
+// 스냅샷에서 파싱한 entry에 행의 상태를 덮어써야 현재 상태가 된다.
+export function applyEntryLifecycleOverlay(entry: RationaleEntry, record: MemoryEntryRecord): RationaleEntry {
+  entry.frontmatter.type = record.type;
+  entry.frontmatter.status = record.status;
+  entry.frontmatter.acceptanceState = record.acceptanceState;
+  entry.frontmatter.promotedTo = record.promotedTo;
+  entry.frontmatter.deprecatedBy = record.deprecatedBy;
+
+  const metadata = { ...entry.frontmatter.metadata };
+  for (const key of lifecycleMetadataKeys) {
+    if (record.metadata[key] === undefined) {
+      delete metadata[key];
+    } else {
+      metadata[key] = record.metadata[key];
+    }
+  }
+  entry.frontmatter.metadata = metadata;
+  return entry;
 }
 
 export function summarizeRationale(entry: RationaleEntry) {
